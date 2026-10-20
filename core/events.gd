@@ -21,5 +21,8 @@ signal tool_changed(tool_id: StringName)
 ## Contextual help or error text for the active tool ("" hides it).
 signal tool_hint_changed(text: String)
 
+## Ask the map camera to center on a world position.
+signal camera_focus_requested(world_position: Vector2)
+
 ## Short message shown briefly to the player (e.g. "Game saved").
 signal notification_posted(text: String)

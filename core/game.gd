@@ -41,6 +41,14 @@ func new_simulation(sim: Simulation = null) -> void:
 	Events.simulation_reset.emit()
 
 
+## Replaces the game with the "Bottleneck" playtest scenario (F7) and centers on it.
+func load_bottleneck_scenario() -> void:
+	new_simulation()
+	var info := Scenarios.build_bottleneck(simulation, Grid.world_to_cell(Grid.map_rect().get_center()))
+	Events.camera_focus_requested.emit(info.junction)
+	Events.notification_posted.emit("Scenario: Bottleneck. Relieve the stop-sign junction (F4 shows congestion)")
+
+
 func save_game(path := QUICKSAVE_PATH) -> Error:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
@@ -107,6 +115,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("quick_load"):
 		var error := load_game()
 		Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
+	elif event.is_action_pressed("debug_load_scenario"):
+		load_bottleneck_scenario()
 	elif event.is_action_pressed("debug_stress_traffic"):
 		var stress := simulation.stress
 		var step := (STRESS_TRAFFIC_STEPS.find(stress.target_count) + 1) % STRESS_TRAFFIC_STEPS.size()

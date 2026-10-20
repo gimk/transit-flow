@@ -14,6 +14,7 @@ const NOTIFICATION_SECONDS := 2.0
 	&"BulldozeTool": %BulldozeButton,
 	&"ResidentialTool": %ResidentialButton,
 	&"IndustrialTool": %IndustrialButton,
+	&"SignalTool": %SignalButton,
 	&"RouteTool": %RouteButton,
 }
 @onready var _hint_label: Label = %HintLabel

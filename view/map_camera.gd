@@ -13,6 +13,12 @@ var _dragging := false
 
 func _ready() -> void:
 	position = Grid.map_rect().get_center()
+	Events.camera_focus_requested.connect(_on_focus_requested)
+
+
+func _on_focus_requested(world_position: Vector2) -> void:
+	position = world_position
+	_clamp_to_map()
 
 
 func _process(delta: float) -> void:

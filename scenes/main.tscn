@@ -12,6 +12,9 @@
 [ext_resource type="Script" path="res://view/lot_renderer.gd" id="10_lots"]
 [ext_resource type="Script" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
 [ext_resource type="Script" path="res://tools/lot_tool.gd" id="12_lot_tool"]
+[ext_resource type="Script" path="res://view/intersection_renderer.gd" id="13_intersections"]
+[ext_resource type="Script" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
+[ext_resource type="Script" path="res://tools/signal_tool.gd" id="15_signal_tool"]
 
 [node name="Main" type="Node2D"]
 
@@ -22,6 +25,12 @@ script = ExtResource("1_grid")
 
 [node name="RoadRenderer" type="Node2D" parent="World"]
 script = ExtResource("4_roads")
+
+[node name="IntersectionRenderer" type="Node2D" parent="World"]
+script = ExtResource("13_intersections")
+
+[node name="HeatmapOverlay" type="Node2D" parent="World"]
+script = ExtResource("14_heatmap")
 
 [node name="LotRenderer" type="Node2D" parent="World"]
 script = ExtResource("10_lots")
@@ -52,6 +61,9 @@ hint = "Click or drag to place homes (green). Each home gets one commuter."
 script = ExtResource("12_lot_tool")
 lot_type = 2
 hint = "Click or drag to place workplaces (yellow)"
+
+[node name="SignalTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("15_signal_tool")
 
 [node name="MapCamera" type="Camera2D" parent="."]
 script = ExtResource("2_camera")

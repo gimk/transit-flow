@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2b done (performance decision pending, see Phase 2b). Next: Phase 2c.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2 done (2a–2c). Next: playtest checkpoint (see Phase 2c), then Phase 3.
 
 ---
 
@@ -210,17 +210,30 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 
 Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the per-vehicle passes (routing is cheap: ~1.4 ms per uncached A*, rarely needed). Budget: at 1× a tick runs every third frame and must fit in one frame with rendering (≲ 10 ms); at 4× ~1.3 ticks run per frame (≲ 7 ms each). So: **500 cars OK at every speed, ~1 000 OK at 1×, 2 000+ not OK** in GDScript. Per §5 this triggers moving `VehicleSystem` out of GDScript (options in §5).
 
+**Decision (2026-10-20): deferred.** Stay in GDScript and continue with gameplay; 500–1 000 vehicles is enough until zones create real demand. Re-run the benchmark once Phase 3 shows realistic city sizes, and try the cheap options (10 Hz tick, threaded tick) before a C#/GDExtension port.
+
 *Other notes carried forward:*
 - Vehicles on a junction's old connectors after a rebuild aren't counted against the new connectors' conflicts for the moment they take to clear it.
 - Gridlock around a block (A waits on B waits on … A) is still possible under heavy load; the 30 s "stuck" counter makes it visible. Patience-based despawn (Phase 3) is the release valve.
 - Lanes and vehicles reference each other: discarded networks/simulations must be `dispose()`d (see CLAUDE.md).
 
-### Phase 2c — Signals & the first jam
-- `StopSign` and `TrafficLight` controllers; `SignalTool` to toggle them per node.
-- Congestion feedback into routing costs.
-- Occupancy heatmap overlay.
+### Phase 2c — Signals & the first jam ✅ (playtest pending)
+- Junction control per node (`RoadNode.control`: none / stop sign / traffic lights, saved; only for 3+ roads, reset when a junction loses roads). `RoadNetwork.set_node_control()` command; `SignalTool` (L) cycles it.
+- Stop sign: a vehicle must stand at the stop line for 0.5 s before asking to enter; then the usual conflict / room / first-come rules apply.
+- Traffic lights: stateless `TrafficSignal` timing from sim time, two phases by road axis (`Lane.signal_phase`), 10 s green + 2 s clearance each; only green lanes may enter (left turns still yield via the conflict table). All lights share one clock.
+- `CongestionMonitor`: every 5 s, per road lane, `speed_limit / average speed − 1` (smoothed, capped at 10) becomes the lane's routing penalty; the path cache is cleared and up to 50 vehicles that have been held up (below 30% of the limit for 3 s+) re-route from where they are.
+- `HeatmapOverlay` (F4): congested lanes from yellow to red, under the vehicles. `IntersectionRenderer`: stop bars / live light colours at each stop line.
+- `Scenarios.build_bottleneck` (F7 in game, also used by tests): 28 commuters through one stop-sign T-junction; `build_bypass` adds a 3-road detour.
+- Measured (tests): queue of 18 on the approach, approach congestion 2.6; with the bypass the morning finishes in 53.9 s instead of 67.4 s (−20%), 12 of 28 commuters re-route onto it.
 
 **Done when:** a single bottleneck intersection visibly jams, adding a parallel road visibly relieves it, and rerouting is observable. ⭐ **First "is this fun?" checkpoint** — play it before going further.
+
+**How to playtest:** run the game, press **F7** (Bottleneck scenario), **F4** (heatmap), **3** (4× speed). Watch the queue form at the stop sign, then try: build your own bypass (R), switch the junction to lights or back to uncontrolled (L), add homes/industry (H/I), F6 for extra random traffic. Questions to answer: is watching and fixing the jam satisfying? Is it readable? What's missing to make it a game?
+
+*Notes carried forward:*
+- Only vehicles that are held up re-route, at most 50 per 5 s; free-flowing vehicles keep their routes until the network changes.
+- North-side homes on a road drive away from their destination to turn around (lane-side access, see Phase 1c notes). In the bottleneck scenario this sends half the commuters to the west dead end first; it reads oddly and is worth revisiting with Phase 3's zoning.
+- Light timings are fixed; per-junction timing/offsets and actuated lights are later polish.
 
 ### Phase 3 — The living city
 - `ZoneTool` + `TileMapLayer` zone painting for R/C/I; lots, access points.

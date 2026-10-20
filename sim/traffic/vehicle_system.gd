@@ -40,6 +40,12 @@ const LOOKAHEAD_MARGIN := 20.0
 const RESNAP_DISTANCE := 2.0
 ## Below this a vehicle counts as stopped (for stuck detection).
 const STOPPED_SPEED := 1.0
+## Below this fraction of the lane's limit a vehicle counts as held up (for re-routing).
+const SLOW_FRACTION := 0.3
+## A vehicle within this of its stop line counts as standing at it.
+const STOP_LINE_TOLERANCE := 2.0
+## How long a vehicle must stand at a stop sign before it may go.
+const STOP_DWELL := 0.5
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -133,6 +139,11 @@ func dispose() -> void:
 	_waiting.clear()
 
 
+## Lanes that currently have vehicles on them.
+func get_occupied_lanes() -> Array:
+	return _occupied_lanes.values()
+
+
 ## Number of vehicles that haven't moved for at least `seconds`.
 func get_stuck_count(seconds := 30.0) -> int:
 	var count := 0
@@ -153,7 +164,7 @@ func step(dt: float) -> void:
 	if _reroute_pending:
 		_reroute_pending = false
 		_reroute_all()
-	_prepare()
+	_prepare(dt)
 	var arrived: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
 		vehicle.previous_position = vehicle.position
@@ -163,6 +174,8 @@ func step(dt: float) -> void:
 			arrived.append(vehicle)
 		_update_pose(vehicle)
 		vehicle.stopped_time = vehicle.stopped_time + dt if vehicle.speed < STOPPED_SPEED else 0.0
+		var slow := vehicle.speed < SLOW_FRACTION * vehicle.lane.speed_limit
+		vehicle.slow_time = vehicle.slow_time + dt if slow else 0.0
 	for vehicle in arrived:
 		_detach(vehicle)
 		vehicles.erase(vehicle.id)
@@ -171,7 +184,7 @@ func step(dt: float) -> void:
 
 # --- Pass 1: what is ahead, junction requests ----------------------------------
 
-func _prepare() -> void:
+func _prepare(dt: float) -> void:
 	for lane: Lane in _occupied_lanes.values():
 		var queue := lane.queue
 		for i in queue.size():
@@ -182,7 +195,7 @@ func _prepare() -> void:
 				vehicle.leader_gap = leader.distance - vehicle.distance - Vehicle.LENGTH
 				vehicle.leader_speed = leader.speed
 			else:
-				_request_junction(vehicle)
+				_request_junction(vehicle, dt)
 				_scan_ahead(vehicle)
 
 
@@ -218,7 +231,7 @@ func _consider_leader(vehicle: Vehicle, gap: float, speed: float) -> void:
 
 
 ## A front-most vehicle close enough to its next junction asks to enter it.
-func _request_junction(vehicle: Vehicle) -> void:
+func _request_junction(vehicle: Vehicle, dt: float) -> void:
 	if vehicle.next_lanes.is_empty():
 		return
 	var connector := vehicle.next_lanes[0]
@@ -226,9 +239,15 @@ func _request_junction(vehicle: Vehicle) -> void:
 		return
 	var to_line := vehicle.lane.length - vehicle.distance - Vehicle.LENGTH * 0.5
 	if to_line > vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN:
+		vehicle.stop_dwell = 0.0
 		return
-	if _can_enter(vehicle, connector):
+	if to_line <= STOP_LINE_TOLERANCE and vehicle.speed < STOPPED_SPEED:
+		vehicle.stop_dwell += dt
+	else:
+		vehicle.stop_dwell = 0.0
+	if _control_allows(vehicle, connector) and _can_enter(vehicle, connector):
 		_grant(vehicle, connector)
+		vehicle.stop_dwell = 0.0
 	else:
 		_start_waiting(vehicle, connector)
 
@@ -245,8 +264,22 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 			continue
 		# Let an earlier arrival go first, unless it couldn't go anyway.
 		var wanted := other.requested_connector
-		if connector.conflicting_lane_ids.has(wanted.id) and _exit_has_room(wanted):
+		if connector.conflicting_lane_ids.has(wanted.id) and _control_allows(other, wanted) and _exit_has_room(wanted):
 			return false
+	return true
+
+
+## What the junction's control says: a stop sign needs a full stop at the line first;
+## a traffic light needs green for the lane the vehicle is on.
+func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
+	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
+	if node == null:
+		return true
+	match node.control:
+		RoadNode.JunctionControl.STOP_SIGN:
+			return vehicle.stop_dwell >= STOP_DWELL
+		RoadNode.JunctionControl.TRAFFIC_LIGHT:
+			return TrafficSignal.get_light(node, vehicle.lane.signal_phase, _time) == TrafficSignal.Light.GREEN
 	return true
 
 
@@ -438,30 +471,52 @@ func _request_reroute() -> void:
 
 func _reroute_all() -> void:
 	for vehicle: Vehicle in vehicles.values():
-		_stop_waiting(vehicle)
-		var old_lane := vehicle.lane
-		var ok := _reroute(vehicle)
-		if vehicle.lane != old_lane:
-			# Re-snapped onto a rebuilt lane: move it to that lane's queue.
-			var current := vehicle.lane
-			vehicle.lane = old_lane
-			_dequeue(vehicle)
-			if old_lane.is_connector():
-				_release_connector(old_lane)
-			vehicle.lane = current
-			_enqueue(vehicle)
-			if current.is_connector():
-				_increment(_connector_users, current.id)
-				_increment(_reserved_entries, current.outgoing_lane_ids[0])
-		# A grant for a junction no longer next on the route (or no longer existing) is void.
-		var granted := vehicle.granted_connector
-		if granted != null and (not ok or vehicle.next_lanes.is_empty()
-				or vehicle.next_lanes[0] != granted or _roads.lanes.get(granted.id) != granted):
-			_release_grant(vehicle)
-		if not ok:
-			_detach(vehicle)
-			vehicles.erase(vehicle.id)
-			vehicle_failed.emit(vehicle)
+		_reroute_vehicle(vehicle)
+
+
+## Lets up to `max_count` vehicles that have been held up for `min_slow_time` look for
+## a better route (with the latest congestion costs). Vehicles already allowed into a
+## junction keep their route. Returns how many were re-routed.
+func reroute_delayed(max_count: int, min_slow_time := 3.0) -> int:
+	var count := 0
+	for vehicle: Vehicle in vehicles.values():
+		if count >= max_count:
+			break
+		if vehicle.slow_time < min_slow_time or vehicle.granted_connector != null:
+			continue
+		vehicle.slow_time = 0.0
+		_reroute_vehicle(vehicle)
+		count += 1
+	return count
+
+
+## Re-routes one vehicle from where it is, fixing up its queue and junction bookkeeping;
+## a vehicle that can't reach its destination any more fails its trip.
+func _reroute_vehicle(vehicle: Vehicle) -> void:
+	_stop_waiting(vehicle)
+	var old_lane := vehicle.lane
+	var ok := _reroute(vehicle)
+	if vehicle.lane != old_lane:
+		# Re-snapped onto a rebuilt lane: move it to that lane's queue.
+		var current := vehicle.lane
+		vehicle.lane = old_lane
+		_dequeue(vehicle)
+		if old_lane.is_connector():
+			_release_connector(old_lane)
+		vehicle.lane = current
+		_enqueue(vehicle)
+		if current.is_connector():
+			_increment(_connector_users, current.id)
+			_increment(_reserved_entries, current.outgoing_lane_ids[0])
+	# A grant for a junction no longer next on the route (or no longer existing) is void.
+	var granted := vehicle.granted_connector
+	if granted != null and (not ok or vehicle.next_lanes.is_empty()
+			or vehicle.next_lanes[0] != granted or _roads.lanes.get(granted.id) != granted):
+		_release_grant(vehicle)
+	if not ok:
+		_detach(vehicle)
+		vehicles.erase(vehicle.id)
+		vehicle_failed.emit(vehicle)
 
 
 ## Finds a fresh route to the destination from where the vehicle is now.

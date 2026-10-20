@@ -26,6 +26,8 @@ var feeder_lane_id := -1
 ## Connectors only: other connectors at the same junction that cross or merge with
 ## this one, so must not be used at the same time.
 var conflicting_lane_ids: Array[int] = []
+## Road lanes only: which traffic-light phase lets this lane into the junction at its end.
+var signal_phase := 0
 
 ## Same as outgoing_lane_ids, as objects (hot path for vehicles).
 var outgoing_lanes: Array[Lane] = []

@@ -38,6 +38,10 @@ var leader_speed := 0.0
 var stop_gap := INF
 ## How long the vehicle has been (nearly) stationary, in sim seconds.
 var stopped_time := 0.0
+## How long it has been crawling well below the speed limit (held up), in sim seconds.
+var slow_time := 0.0
+## How long it has been standing at a stop line (stop signs need a full stop first).
+var stop_dwell := 0.0
 
 ## Pose after the last two ticks, for interpolated rendering.
 var position := Vector2.ZERO

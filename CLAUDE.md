@@ -24,7 +24,7 @@ Godot is not on PATH. Console build:
 "$GODOT" --headless --script res://benchmarks/traffic_benchmark.gd   # traffic perf at 500/1k/2k/5k vehicles (~40 s)
 ```
 
-In game: F3 lane overlay, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles); the HUD top bar shows vehicles, stuck count and tick cost.
+In game: F3 lane overlay, F4 congestion heatmap, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles), F7 loads the Bottleneck scenario (`Scenarios`); the HUD top bar shows vehicles, stuck count and tick cost. Tool keys: R road, B bulldoze, H homes, I industry, L junction control, T route inspector.
 
 For a visual check of a specific setup, pass `--script <scratch>/x.gd` (a `SceneTree` subclass that instantiates `res://scenes/main.tscn`, builds state via `root.get_node("Game").simulation`, and toggles overlays) together with `--write-movie`.
 
@@ -51,14 +51,15 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly. Roads and lots are saved; citizens and vehicles are not yet (recreated from homes on load).
 - **`dispose()` discarded simulations and road networks** (`Simulation.dispose()`, `RoadNetwork.dispose()`): lanes link to each other (`Lane.outgoing_lanes`) and to the vehicles in their queues, so without it they are never freed. `Game` does it when replacing or exiting; tests do it in `after_each`. A "resources still in use at exit" error means something wasn't disposed.
 - Vehicles: only `VehicleSystem` creates, moves or removes them. Per-lane queues live on `Lane.queue` (front-most first). Junction entry is granted per connector using the conflict table on `Lane.conflicting_lane_ids`; see the `VehicleSystem` class doc. Hot paths hold `Lane` objects (`Lane.outgoing_lanes`, `Vehicle.next_lanes`) rather than ids.
+- Junction control lives on `RoadNode.control` (set via `RoadNetwork.set_node_control`); traffic-light state is computed from sim time by `TrafficSignal` (nothing to save or step). Congestion costs come from `CongestionMonitor` every 5 s and are shared with `router.graph.congestion`.
 - **Never connect a lambda that captures `self` to a signal of another sim object** (e.g. `roads.changed.connect(func(): _dirty = true)`): the lambda keeps `self` alive through the signal, forming a reference cycle that leaks the whole `Simulation` ("resources still in use at exit"). Connect a bound method instead.
-- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → vehicles → citizens → stress); `step()` runs citizens and stress traffic (departures) then vehicles (movement, arrivals).
+- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → vehicles → citizens → stress → congestion); `step()` runs citizens and stress traffic (departures), vehicles (movement, arrivals), then the congestion monitor (every 5 s).
 
 ## Layout
 
 ```
 core/    autoloads (Game, Events) + Grid helpers
-sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, citizens), traffic/ (vehicles)
+sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, citizens), traffic/ (vehicles, signals, congestion, stress), debug/ (scenarios)
 view/    renderers, camera, overlays
 tools/   player tools (ToolManager + RoadTool, BulldozeTool, LotTool x2, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
 ui/      HUD and menus

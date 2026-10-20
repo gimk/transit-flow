@@ -90,6 +90,17 @@ func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_
 	return new_ids
 
 
+## Sets how vehicles take turns at a junction. Ignored (returns false) for nodes where
+## fewer than 3 roads meet.
+func set_node_control(node_id: int, control: RoadNode.JunctionControl) -> bool:
+	var node: RoadNode = nodes.get(node_id)
+	if node == null or (control != RoadNode.JunctionControl.NONE and node.get_degree() < 3):
+		return false
+	node.control = control
+	changed.emit([node_id], _refresh_junctions([node_id]))
+	return true
+
+
 ## Removes a segment and its lanes. Nodes left without any segment are removed too.
 func remove_segment(segment_id: int) -> bool:
 	var segment: RoadSegment = segments.get(segment_id)
@@ -257,6 +268,7 @@ func to_dict() -> Dictionary:
 			"id": node.id,
 			"position": [node.position.x, node.position.y],
 			"layer": node.elevation_layer,
+			"control": node.control,
 		})
 	var segment_list: Array = []
 	for segment: RoadSegment in segments.values():
@@ -286,6 +298,7 @@ static func from_dict(data: Dictionary) -> RoadNetwork:
 	var network := RoadNetwork.new()
 	for entry: Dictionary in data.get("nodes", []):
 		var node := RoadNode.new(int(entry.id), Vector2(entry.position[0], entry.position[1]), int(entry.layer))
+		node.control = int(entry.get("control", RoadNode.JunctionControl.NONE)) as RoadNode.JunctionControl
 		network.nodes[node.id] = node
 	for entry: Dictionary in data.get("segments", []):
 		var road_type := RoadType.load_by_id(StringName(entry.type))
@@ -423,6 +436,8 @@ func _erase_connectors(node: RoadNode) -> void:
 
 func _rebuild_connectors(node: RoadNode) -> void:
 	_erase_connectors(node)
+	if node.get_degree() < 3:
+		node.control = RoadNode.JunctionControl.NONE
 	var incoming: Array[Lane] = []
 	var outgoing: Array[Lane] = []
 	for segment_id in node.segment_ids:
@@ -458,6 +473,21 @@ func _rebuild_connectors(node: RoadNode) -> void:
 			lanes[connector.id] = connector
 			node.connector_lane_ids.append(connector.id)
 	_compute_conflicts(node)
+	_assign_signal_phases(node, incoming)
+
+
+## Traffic lights alternate between the two road axes: lanes arriving east-west get
+## phase 0, lanes arriving north-south phase 1 (by their direction at the stop line).
+func _assign_signal_phases(node: RoadNode, incoming: Array[Lane]) -> void:
+	var phases := {}
+	for lane in incoming:
+		var direction := LaneBuilder.end_direction(lane.curve)
+		lane.signal_phase = 0 if absf(direction.x) >= absf(direction.y) else 1
+		phases[lane.signal_phase] = true
+	node.signal_phase_count = phases.size()
+	if node.signal_phase_count == 1:
+		for lane in incoming:
+			lane.signal_phase = 0
 
 
 ## Marks which of the node's connectors can't be used at the same time: those whose

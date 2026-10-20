@@ -156,8 +156,33 @@ func test_lot_tools_place_homes_and_workplaces_and_bulldoze_removes_them() -> vo
 
 
 func test_main_scene_has_its_key_nodes() -> void:
-	for path in ["World/GridRenderer", "World/RoadRenderer", "World/LotRenderer", "World/VehicleRenderer",
+	for path in ["World/GridRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
+			"World/VehicleRenderer", "World/HeatmapOverlay",
 			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD"]:
 		assert_not_null(_main.get_node_or_null(path), path)
 	for tool_id: StringName in ToolManager.TOOL_SHORTCUTS.values():
 		assert_not_null(_main.get_node_or_null("World/Tools/" + tool_id), "tool " + tool_id)
+
+
+func test_signal_tool_cycles_junction_control() -> void:
+	var t := RoadType.load_by_id(&"local_2lane")
+	var roads := Game.simulation.roads
+	roads.add_road(_grid_point(-2, 0), _grid_point(2, 0), t)
+	roads.add_road(_grid_point(0, -2), _grid_point(0, 2), t)
+	var node := roads.nodes[roads.find_node_at(_grid_point(0, 0))]
+	await _press_action(&"tool_signals")
+	await _mouse_motion(_grid_point(0, 0) + Vector2(5, 5))
+	var expected := [RoadNode.JunctionControl.STOP_SIGN, RoadNode.JunctionControl.TRAFFIC_LIGHT, RoadNode.JunctionControl.NONE]
+	for control in expected:
+		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), true)
+		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), false)
+		assert_eq(node.control, control)
+
+
+func test_bottleneck_scenario_loads() -> void:
+	Game.load_bottleneck_scenario()
+	await wait_process_frames(2)
+	assert_eq(Game.simulation.citizens.citizens.size(), 28)
+	var controlled := Game.simulation.roads.nodes.values().filter(
+		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.STOP_SIGN)
+	assert_eq(controlled.size(), 1)

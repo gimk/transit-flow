@@ -14,6 +14,7 @@ var lots: LotSystem
 var vehicles: VehicleSystem
 var citizens: CitizenSystem
 var stress: StressTraffic
+var congestion: CongestionMonitor
 var tick_count := 0
 
 
@@ -24,6 +25,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	vehicles = VehicleSystem.new(roads, router, lots)
 	citizens = CitizenSystem.new(lots, router, vehicles)
 	stress = StressTraffic.new(roads, router, vehicles)
+	congestion = CongestionMonitor.new(roads, router, vehicles)
 
 
 func step() -> void:
@@ -32,6 +34,7 @@ func step() -> void:
 	citizens.step(get_sim_time())
 	stress.step()
 	vehicles.step(TICK_DT)
+	congestion.step(get_sim_time())
 
 
 ## Breaks internal reference cycles so the simulation can be freed. Call before

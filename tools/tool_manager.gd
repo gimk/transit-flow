@@ -10,6 +10,7 @@ const TOOL_SHORTCUTS := {
 	&"tool_route": &"RouteTool",
 	&"tool_residential": &"ResidentialTool",
 	&"tool_industrial": &"IndustrialTool",
+	&"tool_signals": &"SignalTool",
 }
 
 var active_tool: BuildTool = null
