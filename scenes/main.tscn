@@ -13,6 +13,7 @@
 [ext_resource type="Script" uid="uid://bk1g48shsnbkp" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
 [ext_resource type="Script" path="res://tools/zone_tool.gd" id="12_zone_tool"]
 [ext_resource type="Script" path="res://view/zone_renderer.gd" id="16_zones"]
+[ext_resource type="Script" path="res://view/external_renderer.gd" id="17_externals"]
 [ext_resource type="Script" uid="uid://dceukk0ff5qlu" path="res://view/intersection_renderer.gd" id="13_intersections"]
 [ext_resource type="Script" uid="uid://blpje5h1ldfb1" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
 [ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
@@ -36,6 +37,9 @@ script = ExtResource("13_intersections")
 
 [node name="HeatmapOverlay" type="Node2D" parent="World" unique_id=1057836235]
 script = ExtResource("14_heatmap")
+
+[node name="ExternalRenderer" type="Node2D" parent="World"]
+script = ExtResource("17_externals")
 
 [node name="LotRenderer" type="Node2D" parent="World" unique_id=557388674]
 script = ExtResource("10_lots")

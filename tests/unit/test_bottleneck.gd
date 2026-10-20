@@ -47,7 +47,7 @@ func _run_morning(watched_segments: Array = []) -> Dictionary:
 		sim.step()
 		for vehicle: Vehicle in sim.vehicles.vehicles.values():
 			var commuting: Citizen = sim.citizens.citizens.get(vehicle.owner_id)
-			var to_work := commuting != null and commuting.state == Citizen.State.DRIVING_TO_WORK
+			var to_work := commuting != null and commuting.state == Citizen.State.TO_WORK
 			if to_work and watched_segments.has(vehicle.lane.segment_id):
 				seen[vehicle.owner_id] = true
 		if _everyone_reached_work():
@@ -56,7 +56,7 @@ func _run_morning(watched_segments: Array = []) -> Dictionary:
 
 
 func test_scenario_builds() -> void:
-	assert_eq(sim.citizens.citizens.size(), 28)
+	assert_eq(sim.citizens.citizens.size(), 56)
 	assert_eq(sim.roads.nodes[sim.roads.find_node_at(info.junction)].control, RoadNode.JunctionControl.STOP_SIGN)
 	for lot: Lot in sim.lots.lots.values():
 		assert_false(sim.lots.get_access(lot.id).is_empty(), "every lot reaches a road")

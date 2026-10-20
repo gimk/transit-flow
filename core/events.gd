@@ -16,6 +16,8 @@ signal road_network_changed(node_ids: Array, segment_ids: Array)
 signal lots_changed
 ## Relayed from ZoneSystem.changed.
 signal zones_changed
+## Relayed from ExternalConnections.changed.
+signal externals_changed
 
 ## UI asks for a tool by id ("" = no tool); ToolManager answers with tool_changed.
 signal tool_requested(tool_id: StringName)

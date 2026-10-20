@@ -3,9 +3,9 @@ extends RefCounted
 ## Ready-made layouts for playtesting (F7 in game) and for tests.
 
 
-## "Bottleneck": a suburb of 28 homes in the west commutes along one main road to 24
-## workplaces in the east, through a stop-sign T-junction that also takes a side street
-## of commuters. Everyone leaves at once, so a queue builds at the stop sign.
+## "Bottleneck": a suburb of 28 homes (56 commuters) in the west commutes along one main
+## road to 24 factories in the east, through a stop-sign T-junction that also takes a
+## side street of commuters. Everyone leaves within ~30 s, so a queue builds at the stop sign.
 ## Returns positions (world px) tests need:
 ## - "junction": the stop-sign junction,
 ## - "bypass": [from, to] pairs for three roads that route around it (not built).
@@ -25,6 +25,9 @@ static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 	for x in range(3, 15):
 		sim.lots.add_lot(origin + Vector2i(x, -1), Lot.Type.INDUSTRIAL)
 		sim.lots.add_lot(origin + Vector2i(x, 0), Lot.Type.INDUSTRIAL)
+	# Everyone leaves within ~30 s (2.5 game hours), so the queue builds fast but drivers
+	# setting off later can see the jam and choose another way.
+	sim.citizens.depart_everyone_now(30.0)
 
 	return {
 		"junction": at.call(0, 0),
@@ -34,6 +37,15 @@ static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 			[at.call(3, -4), at.call(3, 0)],
 		],
 	}
+
+
+## The starting map of a new game: a highway entering from the middle of the west edge,
+## a few cells long, registered as the city's connection to the outside world.
+static func add_highway(sim: Simulation) -> void:
+	var map := Grid.map_rect()
+	var entry := Grid.snap_to_point(Vector2(map.position.x, map.get_center().y))
+	sim.roads.add_road(entry, entry + Vector2(6, 0) * Grid.CELL_SIZE, RoadType.load_by_id(&"local_2lane"))
+	sim.externals.add(entry)
 
 
 ## Builds the bypass roads returned by build_bottleneck.

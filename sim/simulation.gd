@@ -12,9 +12,11 @@ var roads: RoadNetwork
 var router: Router
 var lots: LotSystem
 var zones: ZoneSystem
+var externals: ExternalConnections
 var signals: TrafficLights
 var vehicles: VehicleSystem
 var citizens: CitizenSystem
+var freight: FreightSystem
 var stress: StressTraffic
 var congestion: CongestionMonitor
 var tick_count := 0
@@ -25,9 +27,11 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	router = Router.new(roads)
 	lots = LotSystem.new(roads)
 	zones = ZoneSystem.new(roads, lots)
+	externals = ExternalConnections.new(roads)
 	signals = TrafficLights.new(roads)
 	vehicles = VehicleSystem.new(roads, router, lots, signals)
-	citizens = CitizenSystem.new(lots, router, vehicles)
+	citizens = CitizenSystem.new(lots, router, vehicles, clock)
+	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
 
@@ -37,6 +41,7 @@ func step() -> void:
 	clock.advance(TICK_DT)
 	zones.step(get_sim_time())
 	citizens.step(get_sim_time())
+	freight.step(TICK_DT)
 	stress.step()
 	signals.step(TICK_DT)
 	vehicles.step(TICK_DT)
@@ -64,6 +69,7 @@ func to_dict() -> Dictionary:
 		"roads": roads.to_dict(),
 		"lots": lots.to_dict(),
 		"zones": zones.to_dict(),
+		"externals": externals.to_dict(),
 	}
 
 
@@ -76,4 +82,5 @@ static func from_dict(data: Dictionary) -> Simulation:
 	sim.clock.total_minutes = float(data.clock_minutes)
 	sim.lots.restore(data.get("lots", {}))
 	sim.zones.restore(data.get("zones", {}))
+	sim.externals.restore(data.get("externals", {}))
 	return sim

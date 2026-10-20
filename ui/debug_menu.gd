@@ -37,6 +37,7 @@ func _ready() -> void:
 	_add_button("New empty map", "", Game.new_empty_game)
 	_add_section("Traffic")
 	_stress_button = _add_button("Stress traffic", "F6", Game.cycle_stress_traffic)
+	_add_button("Rush hour now", "", Game.rush_hour_now)
 	_add_section("Scenarios")
 	_add_button("Bottleneck", "F7", Game.load_bottleneck_scenario)
 

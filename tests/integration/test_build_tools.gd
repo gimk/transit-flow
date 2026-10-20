@@ -198,7 +198,7 @@ func test_signal_tool_cycles_junction_control() -> void:
 func test_bottleneck_scenario_loads() -> void:
 	Game.load_bottleneck_scenario()
 	await wait_process_frames(2)
-	assert_eq(Game.simulation.citizens.citizens.size(), 28)
+	assert_eq(Game.simulation.citizens.citizens.size(), 56)
 	var controlled := Game.simulation.roads.nodes.values().filter(
 		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.STOP_SIGN)
 	assert_eq(controlled.size(), 1)
@@ -226,9 +226,10 @@ func test_debug_menu_buttons_drive_the_debug_functions() -> void:
 	assert_string_contains(_debug_button("Stress traffic").text, str(Game.STRESS_TRAFFIC_STEPS[1]))
 
 	_debug_button("Bottleneck").pressed.emit()
-	assert_eq(Game.simulation.citizens.citizens.size(), 28)
+	assert_eq(Game.simulation.citizens.citizens.size(), 56)
 	_debug_button("New empty map").pressed.emit()
-	assert_eq(Game.simulation.roads.segments.size(), 0)
+	assert_eq(Game.simulation.roads.segments.size(), 1, "only the highway stub of a new map")
+	assert_eq(Game.simulation.externals.points.size(), 1)
 
 
 func test_debug_menu_folds_away() -> void:

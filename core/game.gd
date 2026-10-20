@@ -25,6 +25,7 @@ var _accumulator := 0.0
 
 func _ready() -> void:
 	new_simulation()
+	Scenarios.add_highway(simulation)
 
 
 ## Replaces the running simulation (a fresh one if `sim` is null) and tells everyone to resync.
@@ -39,6 +40,7 @@ func new_simulation(sim: Simulation = null) -> void:
 	simulation.roads.changed.connect(Events.road_network_changed.emit)
 	simulation.lots.changed.connect(Events.lots_changed.emit)
 	simulation.zones.changed.connect(Events.zones_changed.emit)
+	simulation.externals.changed.connect(Events.externals_changed.emit)
 	Events.simulation_reset.emit()
 
 
@@ -53,10 +55,18 @@ func quick_load() -> void:
 	Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
 
 
-## Starts over on an empty map.
+## Starts over on an empty map (with its highway connection).
 func new_empty_game() -> void:
 	new_simulation()
+	Scenarios.add_highway(simulation)
+	Events.camera_focus_requested.emit(simulation.externals.points[0])
 	Events.notification_posted.emit("New empty map")
+
+
+## Debug: everyone at home with a job leaves for work right away.
+func rush_hour_now() -> void:
+	simulation.citizens.depart_everyone_now()
+	Events.notification_posted.emit("Rush hour: everyone at home leaves for work")
 
 
 ## Steps the debug stress traffic through STRESS_TRAFFIC_STEPS (0, 250, 500 …).
