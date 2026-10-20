@@ -30,6 +30,8 @@ var end_distance := 0.0
 var granted_connector: Lane = null
 var requested_connector: Lane = null
 var waiting_since := INF
+## When it was let into its current or next junction (VehicleSystem's grant counter).
+var entry_order := 0
 
 ## Per-tick scratch filled by VehicleSystem before vehicles move: bumper-to-bumper gap to
 ## the vehicle ahead and its speed, and the distance to a stop line it may not cross.

@@ -152,6 +152,26 @@ static func distance_along_polyline(points: PackedVector2Array, point: Vector2) 
 	return best_distance
 
 
+## The stretch of polyline `a` (Vector2(from, to) as distances along it) that comes
+## within `threshold` of polyline `b`, sampled every `step` px. Vector2(-1, -1) if none.
+static func conflict_zone(a: PackedVector2Array, b: PackedVector2Array, threshold: float, step := 1.0) -> Vector2:
+	var zone := Vector2(-1.0, -1.0)
+	var walked := 0.0
+	for i in a.size() - 1:
+		var piece := a[i].distance_to(a[i + 1])
+		var samples := maxi(ceili(piece / step), 1)
+		for s in samples + 1:
+			var t := float(s) / samples
+			if distance_to_polyline(a[i].lerp(a[i + 1], t), b) < threshold:
+				var at := walked + piece * t
+				zone = Vector2(at, at) if zone.x < 0.0 else Vector2(zone.x, at)
+		walked += piece
+	if zone.x < 0.0:
+		return zone
+	# Sampling may miss up to one step at each edge: widen to stay on the safe side.
+	return Vector2(maxf(zone.x - step, 0.0), minf(zone.y + step, walked))
+
+
 ## Smallest distance between any two points of two polylines (0 if they cross).
 static func polyline_distance(a: PackedVector2Array, b: PackedVector2Array) -> float:
 	var best := INF

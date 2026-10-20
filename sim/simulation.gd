@@ -11,6 +11,7 @@ var clock := SimClock.new()
 var roads: RoadNetwork
 var router: Router
 var lots: LotSystem
+var signals: TrafficLights
 var vehicles: VehicleSystem
 var citizens: CitizenSystem
 var stress: StressTraffic
@@ -22,7 +23,8 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	roads = p_roads if p_roads != null else RoadNetwork.new()
 	router = Router.new(roads)
 	lots = LotSystem.new(roads)
-	vehicles = VehicleSystem.new(roads, router, lots)
+	signals = TrafficLights.new(roads)
+	vehicles = VehicleSystem.new(roads, router, lots, signals)
 	citizens = CitizenSystem.new(lots, router, vehicles)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
@@ -33,6 +35,7 @@ func step() -> void:
 	clock.advance(TICK_DT)
 	citizens.step(get_sim_time())
 	stress.step()
+	signals.step(TICK_DT)
 	vehicles.step(TICK_DT)
 	congestion.step(get_sim_time())
 

@@ -5,9 +5,9 @@ extends Node2D
 
 const STOP_COLOR := Color("e53935")
 const LIGHT_COLORS := {
-	TrafficSignal.Light.GREEN: Color("43a047"),
-	TrafficSignal.Light.AMBER: Color("fdd835"),
-	TrafficSignal.Light.RED: Color("e53935"),
+	TrafficLights.Light.GREEN: Color("43a047"),
+	TrafficLights.Light.AMBER: Color("fdd835"),
+	TrafficLights.Light.RED: Color("e53935"),
 }
 const BAR_WIDTH := 3.0
 
@@ -36,7 +36,6 @@ func _process(_delta: float) -> void:
 
 func _draw() -> void:
 	var roads := Game.simulation.roads
-	var time := Game.simulation.get_sim_time()
 	for node: RoadNode in roads.nodes.values():
 		if node.control == RoadNode.JunctionControl.NONE:
 			continue
@@ -48,7 +47,7 @@ func _draw() -> void:
 					continue
 				var color := STOP_COLOR
 				if node.control == RoadNode.JunctionControl.TRAFFIC_LIGHT:
-					color = LIGHT_COLORS[TrafficSignal.get_light(node, lane.signal_phase, time)]
+					color = LIGHT_COLORS[Game.simulation.signals.get_light(node, lane.signal_phase)]
 				var pose := lane.sample_pose(lane.length)
 				var across := pose.y.normalized() * segment.road_type.lane_width * 0.5
 				draw_line(pose.origin - across, pose.origin + across, color, BAR_WIDTH)

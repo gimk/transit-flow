@@ -219,12 +219,14 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 
 ### Phase 2c — Signals & the first jam ✅ (playtest pending)
 - Junction control per node (`RoadNode.control`: none / stop sign / traffic lights, saved; only for 3+ roads, reset when a junction loses roads). `RoadNetwork.set_node_control()` command; `SignalTool` (L) cycles it.
-- Stop sign: a vehicle must stand at the stop line for 0.5 s before asking to enter; then the usual conflict / room / first-come rules apply.
-- Traffic lights: stateless `TrafficSignal` timing from sim time, two phases by road axis (`Lane.signal_phase`), 10 s green + 2 s clearance each; only green lanes may enter (left turns still yield via the conflict table). All lights share one clock.
+- Stop sign: a vehicle must stand at the stop line for 0.3 s before asking to enter; then the usual conflict / room / first-come rules apply.
+- Traffic lights (`TrafficLights`, vehicle-actuated): two phases by road axis (`Lane.signal_phase`). A light rests on green while nobody waits elsewhere; otherwise min green 3 s, extended while its vehicles keep moving, handed over when its approach is empty or blocked (front vehicle standing 1 s+ on green) or after max 12 s; 1 s clearance; phases without waiting vehicles are skipped. Only green lanes may enter; left turns still yield via the conflict zones.
+- Junction entry uses conflict *zones* (the stretch where two connector paths come within 8 px) with timing: a vehicle may go if every vehicle on a conflicting connector will have left the shared zone 0.5 s before it could get there. Non-meeting movements run in parallel and waiting vehicles start before the junction is empty. Safety net: inside the junction a vehicle stops short of a zone an earlier entrant hasn't cleared.
+- Playtest feedback round 1 (stop signs / lights too slow, one-by-one, start-up delay, lights too long and blind) addressed by the two bullets above. Grid stress test, 250 vehicles, arrivals in 2 sim-minutes: none 674 → 942, stop signs 534 → 623, lights 442 → 703; no zone overlaps or stuck vehicles under any control.
 - `CongestionMonitor`: every 5 s, per road lane, `speed_limit / average speed − 1` (smoothed, capped at 10) becomes the lane's routing penalty; the path cache is cleared and up to 50 vehicles that have been held up (below 30% of the limit for 3 s+) re-route from where they are.
 - `HeatmapOverlay` (F4): congested lanes from yellow to red, under the vehicles. `IntersectionRenderer`: stop bars / live light colours at each stop line.
 - `Scenarios.build_bottleneck` (F7 in game, also used by tests): 28 commuters through one stop-sign T-junction; `build_bypass` adds a 3-road detour.
-- Measured (tests): queue of 18 on the approach, approach congestion 2.6; with the bypass the morning finishes in 53.9 s instead of 67.4 s (−20%), 12 of 28 commuters re-route onto it.
+- Measured (tests): queue of 17 on the approach, approach congestion 4.0; with the bypass the morning finishes in 43.4 s instead of 65.7 s (−34%), 12 of 28 commuters re-route onto it.
 
 **Done when:** a single bottleneck intersection visibly jams, adding a parallel road visibly relieves it, and rerouting is observable. ⭐ **First "is this fun?" checkpoint** — play it before going further.
 
@@ -233,7 +235,9 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 *Notes carried forward:*
 - Only vehicles that are held up re-route, at most 50 per 5 s; free-flowing vehicles keep their routes until the network changes.
 - North-side homes on a road drive away from their destination to turn around (lane-side access, see Phase 1c notes). In the bottleneck scenario this sends half the commuters to the west dead end first; it reads oddly and is worth revisiting with Phase 3's zoning.
-- Light timings are fixed; per-junction timing/offsets and actuated lights are later polish.
+- Lights only know two axis phases; protected left-turn phases and per-junction tuning are later polish.
+- Held-up vehicles are re-routed 3 per tick (50 per 5 s), so the route searches don't spike one frame.
+- Perf after this round (benchmark): 500 → 4.6 ms/tick, 1k → 10 ms, 2k → 21 ms, 5k → 47 ms (more arrivals per second also means more route searches for new trips).
 
 ### Phase 3 — The living city
 - `ZoneTool` + `TileMapLayer` zone painting for R/C/I; lots, access points.

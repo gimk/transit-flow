@@ -26,6 +26,9 @@ var feeder_lane_id := -1
 ## Connectors only: other connectors at the same junction that cross or merge with
 ## this one, so must not be used at the same time.
 var conflicting_lane_ids: Array[int] = []
+## Connectors only: for each conflicting connector id, the stretch of this connector
+## (Vector2(from, to), distances along it) that comes too close to that one.
+var conflict_zones: Dictionary[int, Vector2] = {}
 ## Road lanes only: which traffic-light phase lets this lane into the junction at its end.
 var signal_phase := 0
 

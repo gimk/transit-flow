@@ -490,10 +490,12 @@ func _assign_signal_phases(node: RoadNode, incoming: Array[Lane]) -> void:
 			lane.signal_phase = 0
 
 
-## Marks which of the node's connectors can't be used at the same time: those whose
-## paths come closer than CONFLICT_DISTANCE (crossing), and those feeding the same
-## lane (merging). Connectors leaving the same lane don't conflict: vehicles on them
-## already follow each other.
+## Finds which of the node's connectors conflict and where: two connectors conflict
+## where their paths come closer than CONFLICT_DISTANCE (crossing or merging). Each
+## records the stretch of its own path that is shared (its conflict zone), so vehicles
+## only have to keep out of each other's way there, not for the whole junction.
+## Connectors leaving the same lane don't conflict: vehicles on them already follow
+## each other.
 func _compute_conflicts(node: RoadNode) -> void:
 	var connectors: Array[Lane] = []
 	var polylines: Array[PackedVector2Array] = []
@@ -507,9 +509,27 @@ func _compute_conflicts(node: RoadNode) -> void:
 			if a.feeder_lane_id == b.feeder_lane_id:
 				continue
 			var merge := a.outgoing_lane_ids[0] == b.outgoing_lane_ids[0]
-			if merge or LaneBuilder.polyline_distance(polylines[i], polylines[j]) < CONFLICT_DISTANCE:
-				a.conflicting_lane_ids.append(b.id)
-				b.conflicting_lane_ids.append(a.id)
+			if not merge and LaneBuilder.polyline_distance(polylines[i], polylines[j]) >= CONFLICT_DISTANCE:
+				continue
+			var zone_a := LaneBuilder.conflict_zone(polylines[i], polylines[j], CONFLICT_DISTANCE, 2.0)
+			var zone_b := LaneBuilder.conflict_zone(polylines[j], polylines[i], CONFLICT_DISTANCE, 2.0)
+			if merge:
+				# Merging into one lane: at the very least they meet where they end.
+				zone_a = _with_end_zone(zone_a, a.length)
+				zone_b = _with_end_zone(zone_b, b.length)
+			if zone_a.x < 0.0 or zone_b.x < 0.0:
+				continue
+			a.conflicting_lane_ids.append(b.id)
+			b.conflicting_lane_ids.append(a.id)
+			a.conflict_zones[b.id] = zone_a
+			b.conflict_zones[a.id] = zone_b
+
+
+static func _with_end_zone(zone: Vector2, length: float) -> Vector2:
+	var end_zone := Vector2(maxf(length - Vehicle.LENGTH, 0.0), length)
+	if zone.x < 0.0:
+		return end_zone
+	return Vector2(minf(zone.x, end_zone.x), length)
 
 
 ## Which movement (if any) is allowed from `in_lane` into `out_lane` through `node`.

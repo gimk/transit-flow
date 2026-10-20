@@ -14,7 +14,7 @@ func before_each() -> void:
 	roads = RoadNetwork.new()
 	router = Router.new(roads)
 	lots = LotSystem.new(roads)
-	vehicles = VehicleSystem.new(roads, router, lots)
+	vehicles = VehicleSystem.new(roads, router, lots, TrafficLights.new(roads))
 
 
 func after_each() -> void:

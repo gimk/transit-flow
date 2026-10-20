@@ -2,7 +2,8 @@ class_name CongestionMonitor
 extends RefCounted
 ## Every UPDATE_INTERVAL, measures how much slower than its speed limit traffic is moving
 ## on each road lane, feeds that into routing costs (LaneGraph.congestion), and lets
-## vehicles held up in slow traffic look for a better route. New trips pick up the new
+## vehicles held up in slow traffic look for a better route (a few per tick, so the
+## route searches don't all land on one frame). New trips pick up the new
 ## costs automatically, so a jam pushes traffic onto alternatives.
 
 const UPDATE_INTERVAL := 5.0  ## Sim seconds.
@@ -15,6 +16,7 @@ const MIN_PENALTY := 0.05
 ## Average speeds are floored at this, so a fully stopped queue maps to MAX_PENALTY-ish.
 const MIN_MEASURED_SPEED := 5.0
 const REROUTES_PER_UPDATE := 50
+const REROUTES_PER_TICK := 3
 
 ## Lane id -> extra travel time as a fraction of free-flow time (0 = free flow).
 ## Shared with the router's LaneGraph.
@@ -24,6 +26,7 @@ var _roads: RoadNetwork
 var _router: Router
 var _vehicles: VehicleSystem
 var _next_update := UPDATE_INTERVAL
+var _pending_reroutes: Array[Vehicle] = []
 
 
 func _init(roads: RoadNetwork, router: Router, vehicles: VehicleSystem) -> void:
@@ -33,6 +36,8 @@ func _init(roads: RoadNetwork, router: Router, vehicles: VehicleSystem) -> void:
 
 
 func step(time: float) -> void:
+	for i in mini(REROUTES_PER_TICK, _pending_reroutes.size()):
+		_vehicles.reroute_delayed_vehicle(_pending_reroutes.pop_front())
 	if time < _next_update:
 		return
 	_next_update = time + UPDATE_INTERVAL
@@ -64,4 +69,4 @@ func update() -> void:
 	congestion = updated
 	_router.graph.congestion = congestion
 	_router.invalidate_cache()
-	_vehicles.reroute_delayed(REROUTES_PER_UPDATE)
+	_pending_reroutes = _vehicles.find_delayed(REROUTES_PER_UPDATE)

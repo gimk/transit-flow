@@ -32,21 +32,6 @@ func _spawn(from: Vector2, to: Vector2, owner := 1) -> Vehicle:
 	return sim.vehicles.spawn(route, -1, owner)
 
 
-func test_light_cycle() -> void:
-	var node := RoadNode.new(1, Vector2.ZERO, 0)
-	node.signal_phase_count = 2
-	var L := TrafficSignal.Light
-	assert_eq(TrafficSignal.get_light(node, 0, 0.0), L.GREEN)
-	assert_eq(TrafficSignal.get_light(node, 1, 0.0), L.RED)
-	assert_eq(TrafficSignal.get_light(node, 0, TrafficSignal.GREEN_TIME + 0.5), L.AMBER)
-	assert_eq(TrafficSignal.get_light(node, 1, TrafficSignal.GREEN_TIME + 0.5), L.RED)
-	var second_slot := TrafficSignal.GREEN_TIME + TrafficSignal.CLEARANCE_TIME + 0.5
-	assert_eq(TrafficSignal.get_light(node, 0, second_slot), L.RED)
-	assert_eq(TrafficSignal.get_light(node, 1, second_slot), L.GREEN)
-	node.signal_phase_count = 1
-	assert_eq(TrafficSignal.get_light(node, 0, second_slot), L.GREEN, "a single phase is always green")
-
-
 func test_four_way_phases_follow_the_road_axes() -> void:
 	var node_id := _four_way()
 	for segment_id in sim.roads.nodes[node_id].segment_ids:
@@ -86,22 +71,6 @@ func test_control_is_saved_and_dropped_when_the_junction_goes_away() -> void:
 	assert_eq(sim.roads.nodes[node_id].control, RoadNode.JunctionControl.NONE)
 
 
-func test_red_light_holds_traffic_until_green() -> void:
-	var node_id := _four_way()
-	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
-	# Southbound arrives during the east-west green (phase 0 runs first).
-	var south := _spawn(Vector2(4, 2.5) + Vector2(-7, 0) / G, Vector2(4, 7) + Vector2(-7, 0) / G)
-	var entered_at := -1.0
-	for tick in Simulation.TICK_RATE * 20:
-		sim.vehicles.step(DT)
-		sim.tick_count += 1
-		if entered_at < 0.0 and south.lane.is_connector():
-			entered_at = sim.get_sim_time()
-	var own_green := TrafficSignal.GREEN_TIME + TrafficSignal.CLEARANCE_TIME
-	assert_gte(entered_at, own_green, "waited for its green")
-	assert_lt(entered_at, own_green + 3.0, "went as soon as it turned green")
-
-
 func test_vehicle_sharing_the_green_does_not_stop() -> void:
 	var node_id := _four_way()
 	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
@@ -128,3 +97,57 @@ func test_stop_sign_requires_a_full_stop() -> void:
 			slowest_before = minf(slowest_before, east.speed)
 	assert_lt(slowest_before, VehicleSystem.STOPPED_SPEED, "stopped at the line")
 	assert_false(sim.vehicles.vehicles.has(east.id), "then carried on and arrived")
+
+
+## Steps the whole simulation (signals included) for `seconds`, calling `each_tick`.
+func _run(seconds: float, each_tick: Callable = Callable()) -> void:
+	for tick in int(seconds * Simulation.TICK_RATE):
+		sim.step()
+		if each_tick.is_valid():
+			each_tick.call()
+
+
+func _spawn_eastbound_stream(count: int) -> void:
+	for i in count:
+		_spawn(Vector2(0.3 + i * 0.4, 4) + Vector2(0, 7) / G, Vector2(7.5, 4) + Vector2(0, 7) / G, 100 + i)
+
+
+func test_busy_approach_without_competition_keeps_its_green() -> void:
+	var node_id := _four_way()
+	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	var node := sim.roads.nodes[node_id]
+	_spawn_eastbound_stream(6)
+	var saw_red := { "value": false }
+	_run(20.0, func() -> void:
+		saw_red.value = saw_red.value or sim.signals.get_light(node, 0) != TrafficLights.Light.GREEN)
+	assert_false(saw_red.value, "nobody else waits, so east-west never turns red")
+	assert_eq(sim.vehicles.vehicles.size(), 0, "the whole stream got through")
+
+
+func test_light_turns_for_a_lone_waiting_vehicle() -> void:
+	var node_id := _four_way()
+	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	# East-west starts green with nobody on it; one car arrives southbound.
+	var south := _spawn(Vector2(4, 2.5) + Vector2(-7, 0) / G, Vector2(4, 7) + Vector2(-7, 0) / G)
+	var entered := { "at": -1.0 }
+	_run(10.0, func() -> void:
+		if entered.at < 0.0 and south.lane.is_connector():
+			entered.at = sim.get_sim_time())
+	assert_gte(entered.at, TrafficLights.MIN_GREEN, "waited for the minimum green to end")
+	assert_lt(entered.at, TrafficLights.MIN_GREEN + TrafficLights.CLEARANCE_TIME + 2.0, "then got green quickly")
+
+
+func test_continuous_stream_yields_after_max_green() -> void:
+	var node_id := _four_way()
+	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	var south := _spawn(Vector2(4, 2.5) + Vector2(-7, 0) / G, Vector2(4, 7) + Vector2(-7, 0) / G, 1)
+	var entered := { "at": -1.0, "spawned": 0 }
+	_run(25.0, func() -> void:
+		# Keep feeding east-west so its approach is never empty.
+		if sim.tick_count % 10 == 0 and _spawn(Vector2(0.3, 4) + Vector2(0, 7) / G, Vector2(7.5, 4) + Vector2(0, 7) / G, 50) != null:
+			entered.spawned += 1
+		if entered.at < 0.0 and sim.vehicles.vehicles.has(south.id) and south.lane.is_connector():
+			entered.at = sim.get_sim_time())
+	assert_gt(entered.spawned, 10, "east-west really was busy")
+	assert_gte(entered.at, TrafficLights.MIN_GREEN, "east-west kept its green a while")
+	assert_lt(entered.at, TrafficLights.MAX_GREEN + TrafficLights.CLEARANCE_TIME + 2.0, "but not past the maximum")

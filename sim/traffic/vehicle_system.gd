@@ -10,11 +10,18 @@ extends RefCounted
 ##    past a stop line. Gaps come from the start of the tick and vehicles only move
 ##    forward, so no two vehicles can overlap.
 ##
-## Junctions (uncontrolled for now). A vehicle may enter a connector only if:
-## - no connector crossing or merging with it is in use (or promised to someone),
+## Junctions. Conflicting connectors (paths that cross or merge) only share a short
+## stretch, their conflict zone. A vehicle at a stop line may enter its connector if:
+## - the junction's control allows it (stop sign: it stood at the line; lights: green),
+## - everyone on or allowed onto a conflicting connector will have left the shared zone
+##   before this vehicle could reach it (_conflicts_clear), so movements that don't meet
+##   flow in parallel and a waiting vehicle starts before the junction is empty,
 ## - the lane it leads to has room for the whole vehicle ("don't block the box"),
-## - no vehicle that has waited longer at the same junction wants a conflicting move.
-## Entry, once granted, is never taken back.
+## - no vehicle that has waited longer at the same junction, and could go, wants a
+##   conflicting move.
+## Entry, once granted, is never taken back. Inside the junction, a vehicle still stops
+## short of a conflict zone that an earlier entrant hasn't cleared (_yield_in_junction),
+## in case the timing prediction was off.
 ##
 ## After any road or lot change every vehicle re-routes from where it is; a vehicle that
 ## can no longer reach its destination fails its trip.
@@ -45,28 +52,36 @@ const SLOW_FRACTION := 0.3
 ## A vehicle within this of its stop line counts as standing at it.
 const STOP_LINE_TOLERANCE := 2.0
 ## How long a vehicle must stand at a stop sign before it may go.
-const STOP_DWELL := 0.5
+const STOP_DWELL := 0.3
+## Safety margin between one vehicle leaving a conflict zone and the next reaching it.
+const CONFLICT_MARGIN := 0.5  ## Sim seconds.
+## Below this speed a vehicle's progress through a junction can't be predicted.
+const MIN_PREDICT_SPEED := 2.0
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
 var _roads: RoadNetwork
 var _router: Router
 var _lots: LotSystem
+var _signals: TrafficLights
 var _next_id := 1
 var _reroute_pending := false
 var _time := 0.0
 ## Lanes with at least one vehicle (their queues live on Lane.queue, front-most first).
 var _occupied_lanes: Dictionary[int, Lane] = {}
-## Connector id -> number of vehicles on it or allowed onto it.
-var _connector_users: Dictionary[int, int] = {}
+## Connector id -> vehicles on it or allowed onto it.
+var _connector_vehicles: Dictionary[int, Array] = {}
 ## Lane id -> vehicles allowed through a junction into this lane that haven't reached it.
 var _reserved_entries: Dictionary[int, int] = {}
 ## Junction node id -> vehicles waiting at its stop lines.
 var _waiting: Dictionary[int, Array] = {}
+## Increases with every junction entry granted; orders vehicles for _yield_in_junction.
+var _entry_counter := 0
 
 
-func _init(roads: RoadNetwork, router: Router, lots: LotSystem) -> void:
+func _init(roads: RoadNetwork, router: Router, lots: LotSystem, signals: TrafficLights) -> void:
 	_roads = roads
+	_signals = signals
 	_router = router
 	_lots = lots
 	# Bound methods, not lambdas: a lambda capturing self would form a reference cycle
@@ -136,6 +151,7 @@ func dispose() -> void:
 		vehicle.requested_connector = null
 	vehicles.clear()
 	_occupied_lanes.clear()
+	_connector_vehicles.clear()
 	_waiting.clear()
 
 
@@ -197,6 +213,7 @@ func _prepare(dt: float) -> void:
 			else:
 				_request_junction(vehicle, dt)
 				_scan_ahead(vehicle)
+				_yield_in_junction(vehicle)
 
 
 ## For the front-most vehicle on a lane: the nearest vehicle further along its route,
@@ -230,6 +247,32 @@ func _consider_leader(vehicle: Vehicle, gap: float, speed: float) -> void:
 		vehicle.leader_speed = speed
 
 
+## Safety net under the timing prediction in _conflicts_clear: a vehicle never enters a
+## conflict zone while a vehicle let into the junction before it is still in the matching
+## zone; it stops short of the zone instead. Vehicles only ever wait for earlier entrants,
+## so two vehicles can't end up waiting for each other.
+func _yield_in_junction(vehicle: Vehicle) -> void:
+	var on_connector := vehicle.lane.is_connector()
+	var connector := vehicle.lane if on_connector else vehicle.granted_connector
+	if connector == null:
+		return
+	var front := vehicle.distance + Vehicle.LENGTH * 0.5
+	if not on_connector:
+		front -= vehicle.lane.length
+	for other_id in connector.conflicting_lane_ids:
+		var my_zone: Vector2 = connector.conflict_zones[other_id]
+		if front >= my_zone.x:
+			continue
+		for other: Vehicle in _connector_vehicles.get(other_id, []):
+			if other.entry_order >= vehicle.entry_order:
+				continue
+			var other_on_it := other.lane.id == other_id
+			var other_connector := other.lane if other_on_it else other.granted_connector
+			var along := other.distance if other_on_it else other.distance - other.lane.length
+			if along - Vehicle.LENGTH * 0.5 < other_connector.conflict_zones[connector.id].y:
+				vehicle.stop_gap = minf(vehicle.stop_gap, my_zone.x - front - 1.0)
+
+
 ## A front-most vehicle close enough to its next junction asks to enter it.
 func _request_junction(vehicle: Vehicle, dt: float) -> void:
 	if vehicle.next_lanes.is_empty():
@@ -253,9 +296,8 @@ func _request_junction(vehicle: Vehicle, dt: float) -> void:
 
 
 func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
-	for other_id in connector.conflicting_lane_ids:
-		if _connector_users.get(other_id, 0) > 0:
-			return false
+	if not _conflicts_clear(vehicle, connector):
+		return false
 	if not _exit_has_room(connector):
 		return false
 	var since := vehicle.waiting_since if vehicle.requested_connector == connector else _time
@@ -264,9 +306,54 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 			continue
 		# Let an earlier arrival go first, unless it couldn't go anyway.
 		var wanted := other.requested_connector
-		if connector.conflicting_lane_ids.has(wanted.id) and _control_allows(other, wanted) and _exit_has_room(wanted):
+		if not connector.conflicting_lane_ids.has(wanted.id):
+			continue
+		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) and _exit_has_room(wanted):
 			return false
 	return true
+
+
+## Can `vehicle` enter `connector` now without meeting anyone where paths cross or
+## merge? Every vehicle on, or allowed onto, a conflicting connector must be predicted to
+## have left the shared stretch (rear past its end) CONFLICT_MARGIN before this
+## vehicle's front could reach it, even if this vehicle accelerated flat out and the
+## other one kept its current speed. So a waiting vehicle starts as soon as the way will
+## be clear by the time it gets there, rather than waiting for the junction to empty.
+func _conflicts_clear(vehicle: Vehicle, connector: Lane) -> bool:
+	var to_line := maxf(vehicle.lane.length - vehicle.distance - Vehicle.LENGTH * 0.5, 0.0)
+	var top_speed := maxf(vehicle.lane.speed_limit, connector.speed_limit)
+	for other_id in connector.conflicting_lane_ids:
+		var users: Array = _connector_vehicles.get(other_id, [])
+		if users.is_empty():
+			continue
+		var my_zone: Vector2 = connector.conflict_zones[other_id]
+		var arrival := _time_to_cover(to_line + my_zone.x, vehicle.speed, top_speed)
+		for other: Vehicle in users:
+			var on_it := other.lane.id == other_id
+			var other_connector := other.lane if on_it else other.granted_connector
+			var their_zone: Vector2 = other_connector.conflict_zones[connector.id]
+			# Position along the other connector; negative while still approaching it.
+			var along := other.distance if on_it else other.distance - other.lane.length
+			var rear := along - Vehicle.LENGTH * 0.5
+			if rear >= their_zone.y:
+				continue
+			if other.speed < MIN_PREDICT_SPEED:
+				return false
+			if (their_zone.y - rear) / other.speed + CONFLICT_MARGIN > arrival:
+				return false
+	return true
+
+
+## Shortest time to drive `distance` starting at `speed`, accelerating up to `top_speed`.
+static func _time_to_cover(distance: float, speed: float, top_speed: float) -> float:
+	if distance <= 0.0:
+		return 0.0
+	speed = minf(speed, top_speed)
+	var accelerating_time := (top_speed - speed) / ACCELERATION
+	var accelerating_distance := (speed + top_speed) * 0.5 * accelerating_time
+	if distance <= accelerating_distance:
+		return (sqrt(speed * speed + 2.0 * ACCELERATION * distance) - speed) / ACCELERATION
+	return accelerating_time + (distance - accelerating_distance) / top_speed
 
 
 ## What the junction's control says: a stop sign needs a full stop at the line first;
@@ -279,7 +366,7 @@ func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
 		RoadNode.JunctionControl.STOP_SIGN:
 			return vehicle.stop_dwell >= STOP_DWELL
 		RoadNode.JunctionControl.TRAFFIC_LIGHT:
-			return TrafficSignal.get_light(node, vehicle.lane.signal_phase, _time) == TrafficSignal.Light.GREEN
+			return _signals.get_light(node, vehicle.lane.signal_phase) == TrafficLights.Light.GREEN
 	return true
 
 
@@ -301,9 +388,10 @@ func _exit_has_room(connector: Lane) -> bool:
 
 func _grant(vehicle: Vehicle, connector: Lane) -> void:
 	_stop_waiting(vehicle)
+	_entry_counter += 1
+	vehicle.entry_order = _entry_counter
 	vehicle.granted_connector = connector
-	_increment(_connector_users, connector.id)
-	_increment(_reserved_entries, connector.outgoing_lane_ids[0])
+	_hold_connector(vehicle, connector)
 
 
 func _start_waiting(vehicle: Vehicle, connector: Lane) -> void:
@@ -388,7 +476,7 @@ func _advance(vehicle: Vehicle, dt: float) -> bool:
 func _hop(vehicle: Vehicle, next: Lane) -> void:
 	_dequeue(vehicle)
 	if vehicle.lane.is_connector():
-		_release_connector(vehicle.lane)
+		_release_connector(vehicle, vehicle.lane)
 	if next == vehicle.granted_connector:
 		# The grant becomes "using the connector": counts stay until it leaves.
 		vehicle.granted_connector = null
@@ -431,19 +519,31 @@ func _dequeue(vehicle: Vehicle) -> void:
 func _detach(vehicle: Vehicle) -> void:
 	_dequeue(vehicle)
 	if vehicle.lane.is_connector():
-		_release_connector(vehicle.lane)
+		_release_connector(vehicle, vehicle.lane)
 	_release_grant(vehicle)
 	_stop_waiting(vehicle)
 
 
-func _release_connector(connector: Lane) -> void:
-	_decrement(_connector_users, connector.id)
+## Records the vehicle as using (or about to use) the connector, and as heading into the
+## lane after it.
+func _hold_connector(vehicle: Vehicle, connector: Lane) -> void:
+	if not _connector_vehicles.has(connector.id):
+		_connector_vehicles[connector.id] = []
+	_connector_vehicles[connector.id].append(vehicle)
+	_increment(_reserved_entries, connector.outgoing_lane_ids[0])
+
+
+func _release_connector(vehicle: Vehicle, connector: Lane) -> void:
+	var users: Array = _connector_vehicles.get(connector.id, [])
+	users.erase(vehicle)
+	if users.is_empty():
+		_connector_vehicles.erase(connector.id)
 	_decrement(_reserved_entries, connector.outgoing_lane_ids[0])
 
 
 func _release_grant(vehicle: Vehicle) -> void:
 	if vehicle.granted_connector != null:
-		_release_connector(vehicle.granted_connector)
+		_release_connector(vehicle, vehicle.granted_connector)
 		vehicle.granted_connector = null
 
 
@@ -474,20 +574,25 @@ func _reroute_all() -> void:
 		_reroute_vehicle(vehicle)
 
 
-## Lets up to `max_count` vehicles that have been held up for `min_slow_time` look for
-## a better route (with the latest congestion costs). Vehicles already allowed into a
-## junction keep their route. Returns how many were re-routed.
-func reroute_delayed(max_count: int, min_slow_time := 3.0) -> int:
-	var count := 0
+## Vehicles that have been held up (crawling) for at least `min_slow_time`, up to
+## `max_count` of them.
+func find_delayed(max_count: int, min_slow_time := 3.0) -> Array[Vehicle]:
+	var found: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
-		if count >= max_count:
+		if found.size() >= max_count:
 			break
-		if vehicle.slow_time < min_slow_time or vehicle.granted_connector != null:
-			continue
-		vehicle.slow_time = 0.0
-		_reroute_vehicle(vehicle)
-		count += 1
-	return count
+		if vehicle.slow_time >= min_slow_time:
+			found.append(vehicle)
+	return found
+
+
+## Lets a held-up vehicle look for a better route (with the latest congestion costs).
+## Skipped if the vehicle is gone or already allowed into a junction (it's committed).
+func reroute_delayed_vehicle(vehicle: Vehicle) -> void:
+	if vehicles.get(vehicle.id) != vehicle or vehicle.granted_connector != null:
+		return
+	vehicle.slow_time = 0.0
+	_reroute_vehicle(vehicle)
 
 
 ## Re-routes one vehicle from where it is, fixing up its queue and junction bookkeeping;
@@ -502,12 +607,11 @@ func _reroute_vehicle(vehicle: Vehicle) -> void:
 		vehicle.lane = old_lane
 		_dequeue(vehicle)
 		if old_lane.is_connector():
-			_release_connector(old_lane)
+			_release_connector(vehicle, old_lane)
 		vehicle.lane = current
 		_enqueue(vehicle)
 		if current.is_connector():
-			_increment(_connector_users, current.id)
-			_increment(_reserved_entries, current.outgoing_lane_ids[0])
+			_hold_connector(vehicle, current)
 	# A grant for a junction no longer next on the route (or no longer existing) is void.
 	var granted := vehicle.granted_connector
 	if granted != null and (not ok or vehicle.next_lanes.is_empty()
