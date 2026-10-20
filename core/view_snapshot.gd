@@ -25,6 +25,8 @@ var time_text := ""
 var period_name := ""
 var hours := 0.0
 var vehicle_count := 0
+## Vehicles waiting in driveways to pull out.
+var waiting_count := 0
 var stuck_count := 0
 var population := 0
 var employed := 0
@@ -38,14 +40,18 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	var snapshot := ViewSnapshot.new()
 	snapshot.time = sim.get_sim_time()
 	var vehicles := sim.vehicles.vehicles
-	var count := vehicles.size()
+	# Vehicles waiting in driveways are drawn too, parked on their lot.
+	var waiting := sim.vehicles.get_waiting_departures()
+	var count := vehicles.size() + waiting.size()
 	snapshot.positions.resize(count)
 	snapshot.rotations.resize(count)
 	snapshot.sizes.resize(count)
 	snapshot.colors.resize(count)
 	var i := 0
 	var stuck := 0
-	for vehicle: Vehicle in vehicles.values():
+	var drawn: Array = vehicles.values()
+	drawn.append_array(waiting)
+	for vehicle: Vehicle in drawn:
 		snapshot.vehicle_index[vehicle.id] = i
 		snapshot.positions[i] = vehicle.position
 		snapshot.rotations[i] = vehicle.rotation
@@ -65,7 +71,8 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	snapshot.time_text = sim.clock.format_time()
 	snapshot.period_name = sim.clock.get_period_name()
 	snapshot.hours = sim.clock.get_time_of_day_hours()
-	snapshot.vehicle_count = count
+	snapshot.vehicle_count = vehicles.size()
+	snapshot.waiting_count = waiting.size()
 	snapshot.stuck_count = stuck
 	snapshot.population = sim.citizens.citizens.size()
 	snapshot.employed = sim.citizens.get_employed_count()

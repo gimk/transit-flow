@@ -13,7 +13,6 @@ extends RefCounted
 const RESIDENTS_PER_HOME := 2
 const JOBS := { Lot.Type.COMMERCIAL: 2, Lot.Type.INDUSTRIAL: 3 }
 const RETRY_DELAY := 2.0  ## Sim seconds.
-const SPAWN_RETRY_DELAY := 0.5
 const SHOPPING_CHANCE := 0.35
 const SHOP_MIN_MINUTES := 30.0
 const SHOP_MAX_MINUTES := 60.0
@@ -103,14 +102,12 @@ func get_employed_count() -> int:
 
 
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
-	var route := _router.find_best_route(_lots.get_access_points(from_lot), _lots.get_access_points(to_lot))
-	if route == null:
-		citizen.retry_at = _time + RETRY_DELAY
-		return
-	var vehicle := _vehicles.spawn(route, to_lot, citizen.id)
+	# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
+	var none: Array[Dictionary] = []
+	var vehicle := _vehicles.depart(from_lot, none, to_lot, none, citizen.id)
 	if vehicle == null:
-		# Something is parked on our driveway; try again shortly.
-		citizen.retry_at = _time + SPAWN_RETRY_DELAY
+		# No way there (yet): try again shortly.
+		citizen.retry_at = _time + RETRY_DELAY
 		return
 	citizen.vehicle_id = vehicle.id
 	citizen.trip_lot_id = to_lot

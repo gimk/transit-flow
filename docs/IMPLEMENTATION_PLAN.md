@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phase 5 (multi-lane and one-way roads, lane changing, junction priority and protected lefts) done. Next: Phase 6 (driveways), then 7–8 (pedestrians, buses and mode choice).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phase 5 done, Phase 6a (driveways) done. Next: 6b (parking) or Phase 7 (pedestrians), then 8 (buses and mode choice).
 
 ---
 
@@ -294,7 +294,7 @@ The lane model was built for this (`RoadType.lanes_per_direction`, and junction 
 
 **Done when:** a 4-lane arterial visibly relieves a jam that a second 2-lane road wouldn't, and a one-way grid downtown flows better than the same grid two-way.
 
-### Phase 6 — Driveways: cars leave and arrive physically
+### Phase 6 — Driveways: cars leave and arrive physically (6a ✅)
 Today a trip starts and ends instantly on the lane in front of the lot. Real departures and arrivals cause friction, and the player should see it near busy shops.
 - **Leaving.** A car starts in the lot's driveway (off the road) and waits for a gap to pull out. To the near lane it merges (a right turn). To the far lane it crosses the near lane (a left turn out, needing a gap in both directions). It enters slowly and accelerates in traffic. Blocked driveways queue cars on the lot, counted as waiting and shown on the lot.
 - **Arriving.** The car slows to driveway speed before its lot, so the cars behind it brake. Turning into a far-side driveway waits for an oncoming gap and holds up the queue behind it (the classic left-turn-in jam). The car then leaves the road. Trucks take longer: a wider turn and loading time on site.
@@ -307,6 +307,11 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
   - Flow is still scored against free-flow time, with driveway time included in the ideal.
 
 **Done when:** a commercial street lined with busy shops visibly slows through traffic, and giving the shops a side street or back access road measurably improves Flow.
+
+*6a done (2026-10-20): leaving and arriving.* Trips start with `VehicleSystem.depart(origin lot or lane points, destination lot or points)`: the vehicle waits in its lot's driveway (drawn on the lot, nose to the road; `get_waiting_departures`) and the first one per lot pulls out when the lane has a gap (`_clear_to_join`: nobody alongside, traffic behind a right turn's critical gap away and able to brake). Joining the far lane is a left turn out: the lanes on the lot's side need a gap too (`_clear_to_cross`), and after 8 s it settles for the near side. Arriving vehicles slow to driveway speed (15 px/s, trucks 10) so followers brake; arriving on the far lane means stopping to wait for a gap in the oncoming lanes (the gap shrinks to nothing over 10 s), holding up the queue behind, and giving up after 5 s to come round from the near side. After 3 s of waiting (out or in), the next vehicle on the lane to join or cross holds back if it can stop comfortably. Route choice adds `LotSystem.FAR_SIDE_PENALTY` (4 s) to far-side access, and far-side access is the inner lane only. A fairness rule at junctions came out of the testing: the space in a nearly full exit lane goes to whoever has waited for it longest (`EXIT_FAIRNESS_WAIT`), which fixed turning traffic being starved at lights on random seeds (it predates driveways).
+- Freight rates were lowered by a third: trucks that found no room to appear used to be dropped silently (about 30%), which is no longer the case.
+- Measured (Town): Flow 72% → 58%, 1 failed trip; median wait to pull out 1.7 s (p90 9 s), up to ~45 cars waiting at once at the evening peak. Stress grids unchanged.
+- *6b (to do): parking capacity per lot* — a full lot sends cars to the next lot of the same kind; needs walking (Phase 7) to be meaningful, so it may move there.
 
 ### Phase 7 — Pedestrians and walking
 - **Sidewalks** as pedestrian lanes, generated with each road type (both sides; none on highways). **Crosswalks** at junctions as pedestrian connectors, with conflict zones against vehicle connectors. Mid-block crossings later.

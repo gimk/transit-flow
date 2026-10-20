@@ -38,14 +38,20 @@ func find_route(from_lane_id: int, from_distance: float, to_lane_id: int, to_dis
 
 
 ## Quickest route from any of `starts` to any of `ends` (each a { "lane_id", "distance" }
-## position, e.g. both lanes in front of a building), or null if none connects.
+## position, e.g. both lanes in front of a building; an optional "penalty" adds expected
+## delay, like turning across the road), or null if none connects.
 func find_best_route(starts: Array[Dictionary], ends: Array[Dictionary]) -> Route:
 	var best: Route = null
+	var best_cost := INF
 	for start in starts:
 		for end in ends:
 			var route := find_route(start.lane_id, start.distance, end.lane_id, end.distance)
-			if route != null and (best == null or route.travel_time < best.travel_time):
+			if route == null:
+				continue
+			var cost: float = route.travel_time + start.get("penalty", 0.0) + end.get("penalty", 0.0)
+			if cost < best_cost:
 				best = route
+				best_cost = cost
 	return best
 
 

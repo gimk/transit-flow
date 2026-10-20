@@ -33,8 +33,8 @@ func _process(_delta: float) -> void:
 	_time_label.text = "Day %d · %s" % [view.day, view.time_text]
 	_period_label.text = view.period_name
 	if Engine.get_process_frames() % 15 == 0:
-		_stats_label.text = "%d vehicles · %d stuck · tick %.1f ms%s" % [
-			view.vehicle_count, view.stuck_count, Game.average_tick_ms,
+		_stats_label.text = "%d vehicles (+%d in driveways) · %d stuck · tick %.1f ms%s" % [
+			view.vehicle_count, view.waiting_count, view.stuck_count, Game.average_tick_ms,
 			" · sim at %.1f× (can't keep up)" % Game.effective_speed if Game.sim_lagging else ""]
 		_city_label.text = "Pop %d · %d/%d jobs filled" % [view.population, view.employed, view.jobs]
 		_update_flow(view.flow_percent)

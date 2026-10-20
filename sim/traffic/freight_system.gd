@@ -6,11 +6,14 @@ extends RefCounted
 ## logistics window (10:00-16:00), lighter in the rush hours, a trickle at night.
 
 const OWNER_ID := -3
-## Trucks per lot per game hour at the busiest time of day.
-const RAW_MATERIALS_PER_FACTORY := 0.3
-const GOODS_PER_FACTORY := 0.4
-const EXPORTS_PER_FACTORY := 0.15
-const IMPORTS_PER_SHOP := 0.15
+const NOWHERE: Array[Dictionary] = []
+## Trucks per lot per game hour at the busiest time of day. (Lowered by a third with
+## driveways, Phase 6: before, trucks that found no room to appear were silently dropped,
+## so these gave about that much less traffic.)
+const RAW_MATERIALS_PER_FACTORY := 0.2
+const GOODS_PER_FACTORY := 0.27
+const EXPORTS_PER_FACTORY := 0.1
+const IMPORTS_PER_SHOP := 0.1
 
 var _lots: LotSystem
 var _externals: ExternalConnections
@@ -53,25 +56,23 @@ func step(dt: float) -> void:
 		if factory_access.is_empty():
 			continue
 		if not gates.is_empty() and _rng.randf() < RAW_MATERIALS_PER_FACTORY * level:
-			_send(_gate(_externals.get_inbound(_pick(gates))), factory_access, factory.id)
+			_send(-1, _gate(_externals.get_inbound(_pick(gates))), factory.id, NOWHERE)
 		if not _shops.is_empty() and _rng.randf() < GOODS_PER_FACTORY * level:
 			var shop: Lot = _shops[_rng.randi() % _shops.size()]
-			_send(factory_access, _lots.get_access_points(shop.id), shop.id)
+			_send(factory.id, NOWHERE, shop.id, NOWHERE)
 		if not gates.is_empty() and _rng.randf() < EXPORTS_PER_FACTORY * level:
-			_send(factory_access, _gate(_externals.get_outbound(_pick(gates))), -1)
+			_send(factory.id, NOWHERE, -1, _gate(_externals.get_outbound(_pick(gates))))
 	if gates.is_empty():
 		return
 	for shop in _shops:
 		if _rng.randf() < IMPORTS_PER_SHOP * level:
-			_send(_gate(_externals.get_inbound(_pick(gates))), _lots.get_access_points(shop.id), shop.id)
+			_send(-1, _gate(_externals.get_inbound(_pick(gates))), shop.id, NOWHERE)
 
 
-## Sends a truck from any of `from` to any of `to` (lane positions) by the quickest way;
-## quietly skipped if there's no way or no room.
-func _send(from: Array[Dictionary], to: Array[Dictionary], destination_lot_id: int) -> void:
-	var route := _router.find_best_route(from, to)
-	if route != null:
-		_vehicles.spawn(route, destination_lot_id, OWNER_ID, Vehicle.Kind.TRUCK)
+## Sends a truck from a lot's driveway (or, -1, the lane positions `from`, e.g. a highway)
+## to a lot (or, -1, the quickest of `to`); quietly skipped if there's no way there.
+func _send(origin_lot_id: int, from: Array[Dictionary], destination_lot_id: int, to: Array[Dictionary]) -> void:
+	_vehicles.depart(origin_lot_id, from, destination_lot_id, to, OWNER_ID, Vehicle.Kind.TRUCK)
 
 
 ## A highway's lane position as a list of access points (empty if it has no road).

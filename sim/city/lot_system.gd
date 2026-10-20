@@ -10,6 +10,9 @@ signal changed
 ## From a cell center, the near lane of a road on the cell's edge is ~25 px away and
 ## the far lane ~39 px; anything beyond a cell's reach doesn't count.
 const ACCESS_DISTANCE := 48.0
+## Expected extra time (sim seconds) to turn across the road into or out of a driveway,
+## counted when choosing between the two sides (Router.find_best_route).
+const FAR_SIDE_PENALTY := 4.0
 
 var lots: Dictionary[int, Lot] = {}
 
@@ -69,7 +72,7 @@ func get_access(lot_id: int) -> Dictionary:
 	return points[0] if not points.is_empty() else {}
 
 
-## Every lane position in front of the lot: the near lane first, then the lanes running
+## Every lane position in front of the lot: the near lane first, then the inner lane running
 ## the other way on the same road. Drivers may turn out of (and into) a driveway in
 ## either direction, so trips pick whichever is quickest (Router.find_best_route).
 ## Empty if the lot has no road access.
@@ -111,10 +114,14 @@ func _find_access_points(center: Vector2) -> Array[Dictionary]:
 		return points
 	points.append(near)
 	var near_lane := _roads.lanes[near.lane_id]
+	# Across the road, only the lane next to the center line: turning left into or out of
+	# the driveway, as drivers do.
 	for lane_id in _roads.segments[near_lane.segment_id].lane_ids:
 		var lane := _roads.lanes[lane_id]
-		if lane.from_node_id != near_lane.from_node_id:
-			points.append({ "lane_id": lane_id, "distance": lane.curve.get_closest_offset(center) })
+		if lane.from_node_id != near_lane.from_node_id and lane.index_from_center == 0:
+			# Turning left across the road takes waiting for a gap: drivers avoid it when
+			# the near side isn't much further.
+			points.append({ "lane_id": lane_id, "distance": lane.curve.get_closest_offset(center), "penalty": FAR_SIDE_PENALTY })
 	return points
 
 

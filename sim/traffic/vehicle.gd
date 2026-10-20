@@ -61,6 +61,20 @@ var stop_gap := INF
 var lateral_offset := 0.0
 ## Waiting to change lanes and running out of road: vehicles on the target lane make room.
 var merging := false
+## Driveways (VehicleSystem.depart). Before it pulls out, the vehicle waits off the road:
+## `route` is the way it will take, `origin_lot_id` the lot it leaves (-1: it appears
+## on the road itself, e.g. trucks arriving by highway).
+var route: Route = null
+var origin_lot_id := -1
+var origin_points: Array[Dictionary] = []
+## Lanes it must cross to get into or out of a driveway on the far side of the road, and
+## where along each (one entry per lane); computed when needed.
+var crossing_lanes: Array[Lane] = []
+var crossing_distances: PackedFloat32Array = []
+## Whether the arrival crossing was worked out for the current route.
+var arrival_checked := false
+## When it started waiting to pull out or to turn into its driveway (INF: not waiting).
+var driveway_wait_since := INF
 ## How long the vehicle has been (nearly) stationary, in sim seconds.
 var stopped_time := 0.0
 ## How long it has been crawling well below the speed limit (held up), in sim seconds.

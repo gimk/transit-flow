@@ -63,6 +63,21 @@ const GIVE_UP_GRACE := 60.0
 const CONFLICT_MARGIN := 0.5  ## Sim seconds.
 ## Below this speed a vehicle's progress through a junction can't be predicted.
 const MIN_PREDICT_SPEED := 2.0
+## Driveways (_pull_out, _final_speed): speed when turning off the road into a lot, how
+## far back from the curb a waiting vehicle is drawn, the width kept clear when crossing
+## a lane, and how long a vehicle waits to turn across the road before traffic makes room
+## (COURTESY_WAIT) or it gives up and goes another way (DRIVEWAY_GIVE_UP).
+## A vehicle that has waited this much longer for the same nearly full exit lane gets
+## the next space in it (see _can_enter).
+const EXIT_FAIRNESS_WAIT := 5.0
+const DRIVEWAY_SPEED := 15.0
+const TRUCK_DRIVEWAY_SPEED := 10.0
+const DRIVEWAY_SETBACK := 6.0
+const CROSSING_HALF_WIDTH := 8.0
+const COURTESY_WAIT := 3.0
+const DRIVEWAY_GIVE_UP := 8.0
+## Waiting on the road to turn in holds up the traffic behind, so drivers give up sooner.
+const TURN_IN_GIVE_UP := 5.0
 ## Lane changes (_change_lanes): a vehicle that still has to change lanes stops this far
 ## short of its lane's end, and within MERGE_DISTANCE of it (or once stopped) it counts
 ## as merging, so the traffic beside it makes room.
@@ -114,6 +129,8 @@ var _reserved_entries: Dictionary[int, int] = {}
 var _waiting: Dictionary[int, Array] = {}
 ## Increases with every junction entry granted; orders vehicles for _yield_in_junction.
 var _entry_counter := 0
+## Vehicles waiting in driveways to pull out (not on the road yet), oldest first.
+var _departures: Array[Vehicle] = []
 ## Connector id -> { conflicting connector id -> must give way to it } (_must_yield, cached;
 ## connector ids change whenever their junction is rebuilt, so cleared on road changes).
 var _yields: Dictionary[int, Dictionary] = {}
@@ -134,32 +151,79 @@ func _init(roads: RoadNetwork, router: Router, lots: LotSystem, signals: Traffic
 
 # --- Public API -------------------------------------------------------------
 
-## Puts a new vehicle at the start of `route`. Returns null if there's no room there.
-## `destination_lot_id` may be -1 for trips to a plain lane position.
+## Puts a new vehicle at the start of `route` right away (debug traffic, tests). Returns
+## null if there's no room there. `destination_lot_id` may be -1 for trips to a plain
+## lane position. City trips use depart() instead.
 func spawn(route: Route, destination_lot_id: int, owner_id: int, kind := Vehicle.Kind.CAR) -> Vehicle:
-	var vehicle := Vehicle.new()
-	vehicle.set_kind(kind)
 	var lane: Lane = _roads.lanes.get(route.lane_ids[0])
+	var vehicle := _new_vehicle(owner_id, kind, destination_lot_id, route)
 	if lane == null or not can_spawn_at(lane.id, route.start_distance, vehicle.length):
 		return null
+	_put_on_road(vehicle, route)
+	return vehicle
+
+
+## Starts a trip from a driveway. The vehicle waits off the road, at its lot, until it
+## can pull out into a gap (see _pull_out): `origin_lot_id`'s driveway, or (-1) the lane
+## positions `origin_points`, e.g. a highway entering the map. It goes to
+## `destination_lot_id`'s driveway, or (-1) the quickest of `destination_points`.
+## Returns null if there's no way there. The trip's clock starts now: waiting to pull
+## out counts.
+func depart(origin_lot_id: int, origin_points: Array[Dictionary], destination_lot_id: int,
+		destination_points: Array[Dictionary], owner_id: int, kind := Vehicle.Kind.CAR) -> Vehicle:
+	if origin_lot_id != -1:
+		origin_points = _lots.get_access_points(origin_lot_id)
+	if destination_lot_id != -1:
+		destination_points = _lots.get_access_points(destination_lot_id)
+	var route := _router.find_best_route(origin_points, destination_points)
+	if route == null:
+		return null
+	var vehicle := _new_vehicle(owner_id, kind, destination_lot_id, route)
+	vehicle.origin_lot_id = origin_lot_id
+	vehicle.origin_points = origin_points
+	vehicle.driveway_wait_since = _time
+	_plan_departure(vehicle, route)
+	_departures.append(vehicle)
+	_place_waiting_departures()
+	return vehicle
+
+
+## Vehicles waiting in driveways to pull out, in the order they set off.
+func get_waiting_departures() -> Array[Vehicle]:
+	return _departures
+
+
+func _new_vehicle(owner_id: int, kind: Vehicle.Kind, destination_lot_id: int, route: Route) -> Vehicle:
+	var vehicle := Vehicle.new()
+	vehicle.set_kind(kind)
 	vehicle.id = _next_id
 	_next_id += 1
 	vehicle.owner_id = owner_id
 	vehicle.destination_lot_id = destination_lot_id
 	vehicle.destination_lane_id = route.lane_ids[-1]
 	vehicle.destination_distance = route.end_distance
-	vehicle.lane = lane
+	vehicle.trip_start_time = _time
+	vehicle.ideal_trip_time = route.get_free_flow_time(_roads) + START_STOP_ALLOWANCE
+	return vehicle
+
+
+func _put_on_road(vehicle: Vehicle, route: Route) -> void:
+	vehicle.lane = _roads.lanes[route.lane_ids[0]]
 	vehicle.distance = route.start_distance
 	vehicle.next_lanes = _to_lanes(route.lane_ids.slice(1))
 	vehicle.end_distance = route.end_distance
-	vehicle.trip_start_time = _time
-	vehicle.ideal_trip_time = route.get_free_flow_time(_roads) + START_STOP_ALLOWANCE
+	vehicle.route = null
+	vehicle.crossing_lanes.clear()
+	vehicle.crossing_distances.clear()
+	vehicle.arrival_checked = false
+	vehicle.driveway_wait_since = INF
+	var drawn_at := vehicle.position
+	var drawn_rotation := vehicle.rotation
 	_update_pose(vehicle)
-	vehicle.previous_position = vehicle.position
-	vehicle.previous_rotation = vehicle.rotation
+	vehicle.previous_position = vehicle.position if vehicle.origin_lot_id == -1 else drawn_at
+	vehicle.previous_rotation = vehicle.rotation if vehicle.origin_lot_id == -1 else drawn_rotation
 	vehicles[vehicle.id] = vehicle
 	_enqueue(vehicle)
-	return vehicle
 
 
 ## True if a vehicle could appear at `distance` along the lane without touching another
@@ -184,6 +248,11 @@ func remove(vehicle_id: int) -> void:
 	if vehicle != null:
 		_detach(vehicle)
 		vehicles.erase(vehicle_id)
+		return
+	for waiting in _departures:
+		if waiting.id == vehicle_id:
+			_departures.erase(waiting)
+			return
 
 
 ## Drops every vehicle and breaks the vehicle <-> lane reference cycles. Call before
@@ -195,6 +264,7 @@ func dispose() -> void:
 		vehicle.granted_connector = null
 		vehicle.requested_connector = null
 	vehicles.clear()
+	_departures.clear()
 	_occupied_lanes.clear()
 	_connector_vehicles.clear()
 	_waiting.clear()
@@ -227,9 +297,11 @@ func step(dt: float) -> void:
 	if _reroute_pending:
 		_reroute_pending = false
 		_reroute_all()
+	_pull_out()
 	_change_lanes()
 	_prepare()
 	_make_room_for_mergers()
+	_keep_crossings_clear()
 	var arrived: Array[Vehicle] = []
 	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
@@ -257,6 +329,227 @@ func step(dt: float) -> void:
 		if vehicles.has(vehicle.id):
 			vehicle.gave_up = true
 			_fail(vehicle)
+
+
+# --- Driveways --------------------------------------------------------------------
+
+## Each lot's first waiting vehicle pulls out when the lane it joins has a gap: nobody
+## alongside, and traffic coming up behind at least a critical gap away (a right turn's
+## gap to join the near lane; a left turn's to cross to the far one, where the lanes it
+## crosses need a gap too). It joins at driveway speed, so the traffic behind it brakes.
+## A vehicle that has waited DRIVEWAY_GIVE_UP to cross to the far lane turns onto the
+## near one instead and finds its way from there.
+func _pull_out() -> void:
+	if _departures.is_empty():
+		return
+	var tried := {}
+	var i := 0
+	while i < _departures.size():
+		var vehicle := _departures[i]
+		var key := vehicle.origin_lot_id if vehicle.origin_lot_id != -1 else -1 - vehicle.id
+		if tried.has(key):
+			i += 1
+			continue
+		tried[key] = true
+		if _can_pull_out(vehicle):
+			_departures.remove_at(i)
+			_put_on_road(vehicle, vehicle.route)
+			continue
+		if not vehicle.crossing_lanes.is_empty() and _time - vehicle.driveway_wait_since > DRIVEWAY_GIVE_UP:
+			var near_side := _router.find_best_route([vehicle.origin_points[0]], _get_destination(vehicle))
+			if near_side != null:
+				_plan_departure(vehicle, near_side)
+		i += 1
+	_place_waiting_departures()
+
+
+## Sets the route a waiting vehicle will pull out onto, and the lanes it must cross first
+## if that starts on the far side of the road.
+func _plan_departure(vehicle: Vehicle, route: Route) -> void:
+	vehicle.route = route
+	vehicle.destination_lane_id = route.lane_ids[-1]
+	vehicle.destination_distance = route.end_distance
+	vehicle.crossing_lanes.clear()
+	vehicle.crossing_distances.clear()
+	if vehicle.origin_lot_id != -1:
+		_add_crossing(vehicle, vehicle.origin_lot_id, _roads.lanes[route.lane_ids[0]])
+
+
+## If `lane` is on the far side of the road from `lot_id`, the lanes between (those on
+## the lot's side) become the vehicle's crossing lanes.
+func _add_crossing(vehicle: Vehicle, lot_id: int, lane: Lane) -> void:
+	var near := _lots.get_access(lot_id)
+	if near.is_empty():
+		return
+	var near_lane: Lane = _roads.lanes.get(near.lane_id)
+	if near_lane == null or lane == near_lane or lane.is_beside(near_lane):
+		return
+	for lane_id in _roads.segments[near_lane.segment_id].lane_ids:
+		var other := _roads.lanes[lane_id]
+		if other == near_lane or other.is_beside(near_lane):
+			vehicle.crossing_lanes.append(other)
+			vehicle.crossing_distances.append(near.distance)
+
+
+func _can_pull_out(vehicle: Vehicle) -> bool:
+	var lane: Lane = _roads.lanes.get(vehicle.route.lane_ids[0])
+	if lane == null:
+		return false
+	var turn := Lane.Turn.RIGHT if vehicle.crossing_lanes.is_empty() else Lane.Turn.LEFT
+	var gap := _waited_gap(CRITICAL_GAP[turn], vehicle.driveway_wait_since)
+	if not _clear_to_join(lane, vehicle.route.start_distance, vehicle.length, gap):
+		return false
+	for i in vehicle.crossing_lanes.size():
+		if not _clear_to_cross(vehicle.crossing_lanes[i], vehicle.crossing_distances[i], gap):
+			return false
+	return true
+
+
+## The gap a driver still insists on after waiting since `since` (it shrinks to half over
+## GAP_SHRINK_TIME, like at junctions, but never to nothing: pulling out is never forced).
+func _waited_gap(gap: float, since: float) -> float:
+	return gap * (1.0 - 0.5 * clampf((_time - since) / GAP_SHRINK_TIME, 0.0, 1.0))
+
+
+## Room to join `lane` at `at` at driveway speed: nobody alongside, nothing coming up from
+## behind within `gap` seconds, and not where vehicles let out of the junction will arrive.
+func _clear_to_join(lane: Lane, at: float, length: float, gap: float) -> bool:
+	var promised: int = _reserved_entries.get(lane.id, 0)
+	if at - length * 0.5 < MIN_GAP + promised * (Vehicle.MAX_LENGTH + MIN_GAP):
+		return false
+	for other: Vehicle in lane.queue:
+		var ahead_by := other.distance - at
+		var clearance := absf(ahead_by) - (other.length + length) * 0.5 - MIN_GAP
+		if clearance < 0.0:
+			return false
+		if ahead_by < 0.0 and other.speed > STOPPED_SPEED:
+			if clearance / other.speed < gap or other.speed * other.speed / (2.0 * DECELERATION) > clearance:
+				return false
+	return true
+
+
+## Room to drive across `lane` at `at`: nobody on the crossing point, and nothing coming
+## within `gap` seconds.
+func _clear_to_cross(lane: Lane, at: float, gap: float) -> bool:
+	for other: Vehicle in lane.queue:
+		var ahead_by := other.distance - at
+		if absf(ahead_by) < other.length * 0.5 + CROSSING_HALF_WIDTH:
+			return false
+		if ahead_by < 0.0 and other.speed > STOPPED_SPEED:
+			if (-ahead_by - other.length * 0.5 - CROSSING_HALF_WIDTH) / other.speed < gap:
+				return false
+	return true
+
+
+## Where waiting vehicles are drawn: on their lot, nose to the road, one behind the other.
+func _place_waiting_departures() -> void:
+	var waiting_at := {}
+	for vehicle in _departures:
+		var near := _lots.get_access(vehicle.origin_lot_id) if vehicle.origin_lot_id != -1 else {}
+		if near.is_empty():
+			var start: Lane = _roads.lanes.get(vehicle.route.lane_ids[0])
+			if start != null:
+				var pose := start.sample_pose(vehicle.route.start_distance)
+				vehicle.position = pose.origin
+				vehicle.rotation = pose.get_rotation()
+			continue
+		var curb := _roads.lanes[near.lane_id].sample_pose(near.distance).origin
+		var lot_center := _lots.lots[vehicle.origin_lot_id].get_center()
+		var out := (curb - lot_center).normalized()
+		var place: int = waiting_at.get(vehicle.origin_lot_id, 0)
+		waiting_at[vehicle.origin_lot_id] = place + 1
+		var back := DRIVEWAY_SETBACK + vehicle.length * 0.5 + place * (Vehicle.MAX_LENGTH + MIN_GAP)
+		vehicle.position = curb - out * back
+		vehicle.rotation = out.angle()
+		vehicle.previous_position = vehicle.position
+		vehicle.previous_rotation = vehicle.rotation
+
+
+## How fast the vehicle should be going when it reaches the end of its trip: driveway
+## speed, or a stop if it has to wait to turn across the road.
+func _final_speed(vehicle: Vehicle) -> float:
+	if _must_cross_to_arrive(vehicle):
+		return 0.0
+	return TRUCK_DRIVEWAY_SPEED if vehicle.kind == Vehicle.Kind.TRUCK else DRIVEWAY_SPEED
+
+
+## Is the vehicle's driveway on the far side of the road from the lane its trip ends on?
+## (Worked out once per route.)
+func _must_cross_to_arrive(vehicle: Vehicle) -> bool:
+	if not vehicle.arrival_checked:
+		vehicle.arrival_checked = true
+		vehicle.crossing_lanes.clear()
+		vehicle.crossing_distances.clear()
+		if vehicle.destination_lot_id != -1 and _lots.lots.has(vehicle.destination_lot_id):
+			var final_lane := vehicle.lane if vehicle.next_lanes.is_empty() else vehicle.next_lanes[-1]
+			_add_crossing(vehicle, vehicle.destination_lot_id, final_lane)
+	return not vehicle.crossing_lanes.is_empty()
+
+
+func _can_turn_in(vehicle: Vehicle) -> bool:
+	# Unlike pulling out, a driver waiting on the road to turn in shrinks the gap they need
+	# all the way, like at a junction: they are holding everyone up.
+	var since := vehicle.driveway_wait_since if vehicle.driveway_wait_since < INF else _time
+	var gap: float = CRITICAL_GAP[Lane.Turn.LEFT] * (1.0 - clampf((_time - since) / GAP_SHRINK_TIME, 0.0, 1.0))
+	for i in vehicle.crossing_lanes.size():
+		if not _clear_to_cross(vehicle.crossing_lanes[i], vehicle.crossing_distances[i], gap):
+			return false
+	return true
+
+
+## A vehicle that has waited TURN_IN_GIVE_UP to turn across the road into its driveway
+## drives on and comes back round to it from the near side.
+func _give_up_turning_in(vehicle: Vehicle) -> void:
+	var near := _lots.get_access(vehicle.destination_lot_id)
+	var route := _router.find_route_onward(vehicle.lane.id, [near]) if not near.is_empty() else null
+	if route == null:
+		return
+	vehicle.next_lanes = _to_lanes(route.lane_ids)
+	vehicle.end_distance = route.end_distance
+	vehicle.arrival_checked = false
+	vehicle.driveway_wait_since = INF
+
+
+## Traffic lets waiting vehicles out and in: once one has waited COURTESY_WAIT, the next
+## vehicle on each lane it must join or cross stops short of it, if it can comfortably.
+func _keep_crossings_clear() -> void:
+	for vehicle: Vehicle in vehicles.values():
+		if vehicle.driveway_wait_since == INF:
+			continue
+		if _time - vehicle.driveway_wait_since > TURN_IN_GIVE_UP:
+			_give_up_turning_in(vehicle)
+			continue
+		if _time - vehicle.driveway_wait_since > COURTESY_WAIT:
+			_hold_back_for_crossing(vehicle)
+	# The first vehicle waiting at each lot is let out the same way.
+	var seen := {}
+	for vehicle in _departures:
+		var key := vehicle.origin_lot_id if vehicle.origin_lot_id != -1 else -1 - vehicle.id
+		if seen.has(key) or _time - vehicle.driveway_wait_since <= COURTESY_WAIT:
+			seen[key] = true
+			continue
+		seen[key] = true
+		_hold_back_for_crossing(vehicle)
+		var join: Lane = _roads.lanes.get(vehicle.route.lane_ids[0])
+		if join != null:
+			_hold_back(join, vehicle.route.start_distance - vehicle.length * 0.5 - MIN_GAP)
+
+
+func _hold_back_for_crossing(vehicle: Vehicle) -> void:
+	for i in vehicle.crossing_lanes.size():
+		_hold_back(vehicle.crossing_lanes[i], vehicle.crossing_distances[i] - CROSSING_HALF_WIDTH)
+
+
+## The first vehicle on `lane` short of `stop_at` stops there, if it can comfortably.
+func _hold_back(lane: Lane, stop_at: float) -> void:
+	for other: Vehicle in lane.queue:
+		if other.distance >= stop_at:
+			continue
+		var gap := stop_at - other.distance - other.length * 0.5
+		if other.speed * other.speed / (2.0 * DECELERATION) + MIN_GAP <= gap and gap < other.leader_gap:
+			other.leader_gap = gap
+			other.leader_speed = 0.0
+		break
 
 
 # --- Lane changes -----------------------------------------------------------------
@@ -484,8 +777,15 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 	for other: Vehicle in _waiting.get(connector.from_node_id, []):
 		if other == vehicle or other.waiting_since >= since:
 			continue
-		# Let an earlier arrival go first, unless it couldn't go anyway.
 		var wanted := other.requested_connector
+		# Space in a nearly full exit lane goes to whoever has waited for it longest, even
+		# if they can't take it this moment (their light is red): otherwise traffic that
+		# happens to have green when space frees up takes it every time, and they starve.
+		if wanted.outgoing_lanes[0] == connector.outgoing_lanes[0] \
+				and other.waiting_since < since - EXIT_FAIRNESS_WAIT \
+				and not _exit_has_room(connector, vehicle, Vehicle.MAX_LENGTH + MIN_GAP):
+			return false
+		# Let an earlier arrival go first, unless it couldn't go anyway.
 		if not connector.conflicting_lane_ids.has(wanted.id):
 			continue
 		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) \
@@ -609,13 +909,14 @@ func _control_allows(_vehicle: Vehicle, connector: Lane) -> bool:
 	return _signals.get_light(node, connector.signal_phase) == TrafficLights.Light.GREEN
 
 
-## Is there room for `vehicle` at the start of the lane this connector leads to, counting
-## vehicles already allowed in but not there yet (assumed to be the longest kind)?
-func _exit_has_room(connector: Lane, vehicle: Vehicle) -> bool:
+## Is there room for `vehicle` (plus `extra` px) at the start of the lane this connector
+## leads to, counting vehicles already allowed in but not there yet (assumed to be the
+## longest kind)?
+func _exit_has_room(connector: Lane, vehicle: Vehicle, extra := 0.0) -> bool:
 	var exit_lane := connector.outgoing_lanes[0]
 	var queue := exit_lane.queue
 	var reserved: int = _reserved_entries.get(exit_lane.id, 0)
-	var needed := vehicle.length + MIN_GAP
+	var needed := vehicle.length + MIN_GAP + extra
 	if exit_lane.length < needed:
 		# Too short to ever fit a whole vehicle: allow one at a time.
 		return queue.is_empty() and reserved == 0
@@ -666,8 +967,11 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 	var travel := vehicle.speed * dt
 	var ahead := vehicle.get_remaining_on_lane() - travel
 	var target := vehicle.lane.speed_limit
+	# At its destination it slows to driveway speed and turns off the road, or stops if it
+	# has to wait for a gap to turn across the road.
+	var final_speed := _final_speed(vehicle)
 	if vehicle.is_on_last_lane():
-		target = minf(target, maxf(sqrt(2.0 * DECELERATION * maxf(ahead, 0.0)), MIN_SPEED))
+		target = minf(target, maxf(sqrt(final_speed * final_speed + 2.0 * DECELERATION * maxf(ahead, 0.0)), MIN_SPEED))
 	else:
 		var horizon := vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN
 		var last_index := vehicle.next_lanes.size() - 1
@@ -683,7 +987,7 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 				var entry_speed := _entry_speed(next) if next.is_connector() else next.speed_limit
 				target = minf(target, sqrt(entry_speed * entry_speed + 2.0 * DECELERATION * maxf(ahead, 0.0)))
 			if i == last_index:
-				var stop := sqrt(2.0 * DECELERATION * maxf(ahead + vehicle.end_distance, 0.0))
+				var stop := sqrt(final_speed * final_speed + 2.0 * DECELERATION * maxf(ahead + vehicle.end_distance, 0.0))
 				target = minf(target, maxf(stop, MIN_SPEED))
 			ahead += next.length
 	if vehicle.stop_gap < INF:
@@ -745,6 +1049,14 @@ func _advance(vehicle: Vehicle, dt: float) -> bool:
 	while true:
 		var remaining := vehicle.get_remaining_on_lane()
 		if vehicle.is_on_last_lane() and remaining <= ARRIVAL_EPSILON + move:
+			if _must_cross_to_arrive(vehicle) and not _can_turn_in(vehicle):
+				# Waiting for a gap to turn across the road into its driveway, holding up the
+				# traffic behind it. (Only as far as its move allows: it stays on the road.)
+				vehicle.distance += minf(move, maxf(remaining, 0.0))
+				vehicle.speed = 0.0
+				if vehicle.driveway_wait_since == INF:
+					vehicle.driveway_wait_since = _time
+				return false
 			vehicle.distance = vehicle.end_distance
 			return true
 		if move < remaining:
@@ -869,6 +1181,17 @@ func _request_reroute() -> void:
 func _reroute_all() -> void:
 	for vehicle: Vehicle in vehicles.values():
 		_reroute_vehicle(vehicle)
+	# Waiting in driveways: plan again from the lot (or fail if there is no way now).
+	for vehicle: Vehicle in _departures.duplicate():
+		var points := _lots.get_access_points(vehicle.origin_lot_id) if vehicle.origin_lot_id != -1 else vehicle.origin_points
+		var route := _router.find_best_route(points, _get_destination(vehicle))
+		if route == null:
+			_departures.erase(vehicle)
+			vehicle.trip_end_time = _time
+			vehicle_failed.emit(vehicle)
+		else:
+			vehicle.origin_points = points
+			_plan_departure(vehicle, route)
 
 
 ## Vehicles that have been held up (crawling) for at least `min_slow_time`, up to
