@@ -50,9 +50,12 @@ func add_road(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer :
 	return ids[0] if not ids.is_empty() else -1
 
 
-## Like add_road, but returns every new segment id (in order from `from` to `to`).
+## Like add_road, but returns the id of every segment built or rebuilt (in order from
+## `from` to `to`). Pieces running along an existing road of another type are converted
+## to `road_type` in place (an upgrade), and along a one-way road pointing the other
+## way, reversed; pieces already of that type and direction are left alone.
 func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer := 0) -> Array[int]:
-	var plan := plan_road(from, to, elevation_layer)
+	var plan := plan_road(from, to, elevation_layer, road_type)
 	var new_ids: Array[int] = []
 	if plan.error != "":
 		return new_ids
@@ -74,10 +77,15 @@ func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_
 		plan.node_ids.append(node_id)
 
 	for i in plan.overlaps.size():
-		if plan.overlaps[i]:
-			continue
 		var start_id: int = plan.node_ids[i]
 		var end_id: int = plan.node_ids[i + 1]
+		if plan.overlaps[i]:
+			if plan.upgrades[i]:
+				var existing := segments[get_segment_between(start_id, end_id)]
+				_retype(existing, road_type, road_type.one_way and existing.start_node_id != start_id)
+				touched_segments.append(existing.id)
+				new_ids.append(existing.id)
+			continue
 		var centerline := straight_curve(nodes[start_id].position, nodes[end_id].position)
 		var segment := _insert_segment(_next_segment_id, start_id, end_id, road_type, elevation_layer, centerline)
 		_next_segment_id += 1
@@ -88,6 +96,22 @@ func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_
 			touched_segments.append(segment_id)
 	changed.emit(junction_ids, touched_segments)
 	return new_ids
+
+
+## Changes a segment's road type in place (and, if `reverse`, swaps its direction, which
+## matters for one-way roads). Its nodes, junctions and the lots along it stay; its lanes
+## are rebuilt with new ids, so vehicles on it re-route.
+func set_segment_type(segment_id: int, road_type: RoadType, reverse := false) -> bool:
+	var segment: RoadSegment = segments.get(segment_id)
+	if segment == null or (segment.road_type == road_type and not reverse):
+		return false
+	_retype(segment, road_type, reverse)
+	var touched_nodes := [segment.start_node_id, segment.end_node_id]
+	var touched_segments := _refresh_junctions(touched_nodes)
+	if not touched_segments.has(segment_id):
+		touched_segments.append(segment_id)
+	changed.emit(touched_nodes, touched_segments)
+	return true
 
 
 ## Sets how vehicles take turns at a junction. Ignored (returns false) for nodes where
@@ -142,9 +166,12 @@ func validate_road(from: Vector2, to: Vector2, elevation_layer := 0) -> String:
 ##   where it meets an existing road or node on the same layer),
 ## - "overlaps": per consecutive pair of points, true if that piece runs along an
 ##   existing road and won't be built again,
+## - "upgrades": per piece, true if it runs along an existing road that will be
+##   converted to `road_type` (another type, or a one-way road to reverse); only when a
+##   `road_type` is given,
 ## - "node_ids": empty; filled in by add_road_pieces.
-func plan_road(from: Vector2, to: Vector2, elevation_layer := 0) -> Dictionary:
-	var plan := { "error": "", "points": [], "overlaps": [], "node_ids": [] }
+func plan_road(from: Vector2, to: Vector2, elevation_layer := 0, road_type: RoadType = null) -> Dictionary:
+	var plan := { "error": "", "points": [], "overlaps": [], "upgrades": [], "node_ids": [] }
 	if from.distance_to(to) < MIN_SEGMENT_LENGTH:
 		plan.error = "Road is too short"
 		return plan
@@ -185,9 +212,12 @@ func plan_road(from: Vector2, to: Vector2, elevation_layer := 0) -> Dictionary:
 			return plan
 		# Pieces only meet other roads at their ends, so a piece whose middle lies on a
 		# road runs along that road.
-		var overlaps := find_segment_at((a + b) * 0.5, EPSILON, elevation_layer) != -1
+		var existing_id := find_segment_at((a + b) * 0.5, EPSILON, elevation_layer)
+		var overlaps := existing_id != -1
+		var upgrade := overlaps and road_type != null and _needs_retype(segments[existing_id], road_type, b - a)
 		plan.overlaps.append(overlaps)
-		builds_something = builds_something or not overlaps
+		plan.upgrades.append(upgrade)
+		builds_something = builds_something or not overlaps or upgrade
 	if not builds_something:
 		plan.error = "Road already exists"
 	return plan
@@ -377,6 +407,38 @@ func _insert_segment(id: int, start_id: int, end_id: int, road_type: RoadType,
 	nodes[end_id].segment_ids.append(id)
 	_create_lanes(segment)
 	return segment
+
+
+## Would building `road_type` along `segment`, dragged in `direction`, change it?
+func _needs_retype(segment: RoadSegment, road_type: RoadType, direction: Vector2) -> bool:
+	if segment.road_type != road_type:
+		return true
+	var segment_direction := nodes[segment.end_node_id].position - nodes[segment.start_node_id].position
+	return road_type.one_way and segment_direction.dot(direction) < 0.0
+
+
+## Replaces a segment's lanes for a new road type (and direction). The caller refreshes
+## the junctions at both ends and emits `changed`.
+func _retype(segment: RoadSegment, road_type: RoadType, reverse: bool) -> void:
+	for lane_id in segment.lane_ids:
+		# Vehicles still on a removed lane re-snap or re-route from the lane object.
+		lanes[lane_id].outgoing_lanes.clear()
+		lanes.erase(lane_id)
+	segment.lane_ids.clear()
+	if reverse:
+		var start_id := segment.start_node_id
+		segment.start_node_id = segment.end_node_id
+		segment.end_node_id = start_id
+		segment.centerline = _reversed_curve(segment.centerline)
+	segment.road_type = road_type
+	_create_lanes(segment)
+
+
+static func _reversed_curve(curve: Curve2D) -> Curve2D:
+	var reversed := Curve2D.new()
+	for i in range(curve.point_count - 1, -1, -1):
+		reversed.add_point(curve.get_point_position(i), curve.get_point_out(i), curve.get_point_in(i))
+	return reversed
 
 
 ## Re-derives everything that depends on the given nodes' sets of segments: the

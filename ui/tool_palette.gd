@@ -93,9 +93,10 @@ static func _family_entries(family: Dictionary) -> Array[Dictionary]:
 	elif family.has("variants_of"):
 		# Only road types for now; other tools with data-driven variants slot in here.
 		for road_type in RoadType.list_all():
+			var lanes := road_type.lanes_per_direction
+			var layout := "%d lane%s, one way (drag the way traffic goes)" if road_type.one_way else "%d lane%s each way"
 			entries.append({ "tool": family.variants_of, "variant": road_type.id, "label": road_type.display_name,
-				"tooltip": "%s: %d lane%s each way" % [road_type.display_name, road_type.lanes_per_direction,
-					"" if road_type.lanes_per_direction == 1 else "s"] })
+				"tooltip": "%s: %s" % [road_type.display_name, layout % [lanes, "" if lanes == 1 else "s"]] })
 	else:
 		for entry: Dictionary in family.entries:
 			entries.append({ "tool": entry.tool, "variant": &"", "label": entry.label, "tooltip": entry.tooltip })

@@ -6,6 +6,7 @@
 script = ExtResource("1_roadtype")
 id = &"local_2lane"
 display_name = "Local Street"
+palette_order = 0
 lanes_per_direction = 1
 lane_width = 14.0
 speed_limit = 90.0

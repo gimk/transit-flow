@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="RoadType" format=3]
+
+[ext_resource type="Script" path="res://sim/roads/road_type.gd" id="1_roadtype"]
+
+[resource]
+script = ExtResource("1_roadtype")
+id = &"one_way_1lane"
+display_name = "One-way Street"
+palette_order = 2
+lanes_per_direction = 1
+one_way = true
+lane_width = 14.0
+speed_limit = 90.0
+surface_color = Color(0.29, 0.333, 0.384, 1)
+edge_color = Color(0.169, 0.196, 0.231, 1)

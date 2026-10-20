@@ -291,6 +291,21 @@ func test_palette_builds_roads_of_the_picked_type() -> void:
 	assert_eq(segments[0].road_type, picked)
 
 
+func test_road_shortcut_again_cycles_road_types() -> void:
+	var palette := _palette()
+	var tool: RoadTool = _main.get_node("World/Tools/RoadTool")
+	var types := RoadType.list_all()
+	await _press_action(&"tool_road")
+	assert_eq(tool.road_type, types[0])
+	await _press_action(&"tool_road")
+	assert_eq(_active_tool_id(), &"RoadTool", "still building roads")
+	assert_eq(tool.road_type, types[1], "next road type")
+	assert_true(palette.get_entry_button("Roads", types[1].display_name).button_pressed)
+	assert_string_contains(palette.get_node("HintLabel").text, types[1].display_name)
+	await _press_action(&"tool_cancel")
+	assert_eq(_active_tool_id(), &"")
+
+
 func test_hint_reads_above_the_toolbar() -> void:
 	var palette := _palette()
 	palette.get_family_button("Zones").pressed.emit()

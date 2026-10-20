@@ -23,6 +23,15 @@ static func build_lane_specs(centerline: Curve2D, road_type: RoadType,
 	var backward_points := forward_points.duplicate()
 	backward_points.reverse()
 	var specs: Array[Dictionary] = []
+	if road_type.one_way:
+		# All lanes forward, centered on the centerline; index 0 is the leftmost lane
+		# (where left turns start, like the center lane of a two-way road).
+		var half_width := road_type.get_total_width() * 0.5
+		for index in road_type.lanes_per_direction:
+			var offset := (index + 0.5) * road_type.lane_width - half_width
+			var forward := trim_polyline(offset_polyline(forward_points, offset), start_trim, end_trim)
+			specs.append({ "forward": true, "index": index, "curve": polyline_to_curve(forward) })
+		return specs
 	for index in road_type.lanes_per_direction:
 		var offset := (index + 0.5) * road_type.lane_width
 		var forward := trim_polyline(offset_polyline(forward_points, offset), start_trim, end_trim)

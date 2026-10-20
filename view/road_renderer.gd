@@ -2,13 +2,15 @@ class_name RoadRenderer
 extends Node2D
 ## Draws each road segment as two Line2D strips (dark edge + asphalt surface) built
 ## from its centerline. All edges sit in one layer under all surfaces, so segments
-## meeting at a node blend into one clean junction.
+## meeting at a node blend into one clean junction. Lane markings (RoadMarkings) go on
+## top of all surfaces.
 
 const EDGE_WIDTH := 3.0
 
 var _edges := Node2D.new()
 var _surfaces := Node2D.new()
-## Segment id -> [edge Line2D, surface Line2D].
+var _markings := Node2D.new()
+## Segment id -> [edge Line2D, surface Line2D, RoadMarkings].
 var _lines: Dictionary[int, Array] = {}
 
 
@@ -17,6 +19,8 @@ func _ready() -> void:
 	_surfaces.name = "Surfaces"
 	add_child(_edges)
 	add_child(_surfaces)
+	_markings.name = "Markings"
+	add_child(_markings)
 	Events.simulation_reset.connect(_rebuild_all)
 	Events.road_network_changed.connect(_on_road_network_changed)
 	_rebuild_all()
@@ -44,13 +48,17 @@ func _add_segment(segment_id: int) -> void:
 	var surface := _make_line(points, width, segment.road_type.surface_color)
 	_edges.add_child(edge)
 	_surfaces.add_child(surface)
-	_lines[segment_id] = [edge, surface]
+	var markings := RoadMarkings.new()
+	var roads := Game.simulation.roads
+	markings.setup(points, segment.road_type, roads.get_junction_radius(segment.start_node_id), roads.get_junction_radius(segment.end_node_id))
+	_markings.add_child(markings)
+	_lines[segment_id] = [edge, surface, markings]
 
 
 func _remove_segment(segment_id: int) -> void:
 	if not _lines.has(segment_id):
 		return
-	for line: Line2D in _lines[segment_id]:
+	for line: Node in _lines[segment_id]:
 		line.queue_free()
 	_lines.erase(segment_id)
 

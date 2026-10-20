@@ -7,7 +7,7 @@ extends BuildTool
 const VALID_COLOR := Color(0.45, 0.85, 1.0, 0.6)
 const INVALID_COLOR := Color(1.0, 0.35, 0.3, 0.6)
 const JUNCTION_COLOR := Color(1, 1, 1, 0.9)
-const IDLE_HINT := "Drag to build a road · Right-click / Esc to cancel"
+const IDLE_HINT := "%s: drag to build (over a road: convert it; one-way: drag the way traffic goes) · R: next type · Esc: cancel"
 
 var road_type: RoadType
 
@@ -42,13 +42,14 @@ func set_variant(variant: StringName) -> void:
 		return
 	road_type = type
 	Events.tool_variant_changed.emit(name, variant)
-	queue_redraw()
+	if is_active:
+		_update_preview()
 
 
 func activate() -> void:
 	super()
 	_hover = Vector2.INF
-	Events.tool_hint_changed.emit(IDLE_HINT)
+	Events.tool_hint_changed.emit(IDLE_HINT % road_type.display_name)
 
 
 func _process(_delta: float) -> void:
@@ -97,15 +98,15 @@ func _update_preview() -> void:
 		_end = _axis_locked(_start, _hover)
 		if _start != _end:
 			var roads := Game.simulation.roads
-			var plan := roads.plan_road(_start, _end)
+			var plan := roads.plan_road(_start, _end, 0, road_type)
 			_error = plan.error
 			for point: Vector2 in plan.points:
 				if roads.find_node_at(point) != -1 or roads.find_segment_at(point, RoadNetwork.EPSILON) != -1:
 					_junctions.append(point)
 		var cells := roundi(_start.distance_to(_end) / Grid.CELL_SIZE)
-		Events.tool_hint_changed.emit(_error if _error != "" else "%d cell%s" % [cells, "" if cells == 1 else "s"])
+		Events.tool_hint_changed.emit(_error if _error != "" else "%s · %d cell%s" % [road_type.display_name, cells, "" if cells == 1 else "s"])
 	else:
-		Events.tool_hint_changed.emit(IDLE_HINT)
+		Events.tool_hint_changed.emit(IDLE_HINT % road_type.display_name)
 	queue_redraw()
 
 
@@ -130,3 +131,6 @@ func _draw() -> void:
 	if _error == "":
 		for point in _junctions:
 			draw_circle(point, 4.0, JUNCTION_COLOR)
+		if road_type.one_way and _start != _end:
+			# Which way traffic will flow.
+			RoadMarkings.draw_arrows(self, PackedVector2Array([_start, _end]), JUNCTION_COLOR)
