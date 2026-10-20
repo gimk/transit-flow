@@ -3,7 +3,9 @@ extends RefCounted
 ## A point where road segments meet: a dead end, a corner or a junction.
 ## Owns the connector lanes that link incoming lanes to outgoing lanes through it.
 
-enum JunctionControl { NONE, TRAFFIC_LIGHT }
+## TRAFFIC_LIGHT_PROTECTED_LEFT: lights with a phase of their own for left turns, so they
+## don't have to find gaps in oncoming traffic.
+enum JunctionControl { NONE, TRAFFIC_LIGHT, TRAFFIC_LIGHT_PROTECTED_LEFT }
 
 var id: int
 var position: Vector2
@@ -13,7 +15,7 @@ var segment_ids: Array[int] = []
 var connector_lane_ids: Array[int] = []
 ## How vehicles take turns at this junction (only junctions of 3+ roads can be controlled).
 var control := JunctionControl.NONE
-## Traffic-light phase groups among the incoming lanes (see Lane.signal_phase); 1 = no
+## Traffic-light phases among the connectors (see Lane.signal_phase); 1 = no
 ## real alternation possible.
 var signal_phase_count := 1
 
@@ -26,3 +28,7 @@ func _init(p_id: int, p_position: Vector2, p_elevation_layer: int) -> void:
 
 func get_degree() -> int:
 	return segment_ids.size()
+
+
+func has_lights() -> bool:
+	return control != JunctionControl.NONE

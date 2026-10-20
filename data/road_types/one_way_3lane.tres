@@ -9,6 +9,7 @@ display_name = "One-way, 3 lanes"
 palette_order = 4
 lanes_per_direction = 3
 one_way = true
+priority = 1
 lane_width = 14.0
 speed_limit = 100.0
 surface_color = Color(0.255, 0.294, 0.341, 1)

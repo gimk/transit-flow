@@ -117,6 +117,8 @@ var _entry_counter := 0
 ## Connector id -> { conflicting connector id -> must give way to it } (_must_yield, cached;
 ## connector ids change whenever their junction is rebuilt, so cleared on road changes).
 var _yields: Dictionary[int, Dictionary] = {}
+## Connector id -> _entry_speed (cached the same way).
+var _entry_speeds: Dictionary[int, float] = {}
 
 
 func _init(roads: RoadNetwork, router: Router, lots: LotSystem, signals: TrafficLights) -> void:
@@ -197,6 +199,7 @@ func dispose() -> void:
 	_connector_vehicles.clear()
 	_waiting.clear()
 	_yields.clear()
+	_entry_speeds.clear()
 
 
 ## Lanes that currently have vehicles on them.
@@ -534,11 +537,16 @@ func _yields_to(mine: Lane, theirs: Lane) -> bool:
 	return cache[theirs.id]
 
 
-## Does a driver taking `mine` give way to one taking `theirs`? Going straight beats
+## Does a driver taking `mine` give way to one taking `theirs`? A driver coming from a
+## bigger road (RoadType.priority) goes first; between equal roads, going straight beats
 ## turning right, which beats turning left (or U-turning) across traffic; between equal
 ## movements, priority to the right. The relation is never mutual, so two drivers can't
 ## each wait for the other.
-static func _must_yield(mine: Lane, theirs: Lane) -> bool:
+func _must_yield(mine: Lane, theirs: Lane) -> bool:
+	var my_road := _road_priority(mine)
+	var their_road := _road_priority(theirs)
+	if my_road != their_road:
+		return my_road < their_road
 	var my_rank: int = YIELD_RANK.get(mine.turn, 0)
 	var their_rank: int = YIELD_RANK.get(theirs.turn, 0)
 	if my_rank != their_rank:
@@ -593,15 +601,12 @@ static func _time_to_cover(distance: float, speed: float, top_speed: float) -> f
 	return accelerating_time + (distance - accelerating_distance) / top_speed
 
 
-## What the junction's control says: at a traffic light, green for the vehicle's lane.
-func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
+## What the junction's control says: at traffic lights, green for that turn.
+func _control_allows(_vehicle: Vehicle, connector: Lane) -> bool:
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
-	if node == null:
+	if node == null or not node.has_lights():
 		return true
-	match node.control:
-		RoadNode.JunctionControl.TRAFFIC_LIGHT:
-			return _signals.get_light(node, vehicle.lane.signal_phase) == TrafficLights.Light.GREEN
-	return true
+	return _signals.get_light(node, connector.signal_phase) == TrafficLights.Light.GREEN
 
 
 ## Is there room for `vehicle` at the start of the lane this connector leads to, counting
@@ -695,15 +700,39 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 ## Fastest a vehicle should be going as it enters `connector`: the turn's own limit, and at
 ## a real junction (crossing movements) without lights, the speed of a driver looking both
 ## ways (LOOK_SPEED_FRACTION). Past the stop line it speeds up again.
+## Drivers on the junction's priority road (the biggest road there, if another is smaller)
+## don't slow down: the side roads give way to them. Cached per connector.
 func _entry_speed(connector: Lane) -> float:
-	if connector.conflicting_lane_ids.is_empty():
-		return connector.speed_limit
+	if _entry_speeds.has(connector.id):
+		return _entry_speeds[connector.id]
+	var speed := connector.speed_limit
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
-	if node == null or node.control != RoadNode.JunctionControl.NONE:
-		return connector.speed_limit
+	if not connector.conflicting_lane_ids.is_empty() and node != null and not node.has_lights() \
+			and not _on_priority_road(node, connector):
+		var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
+		var road_limit := feeder.speed_limit if feeder != null else connector.speed_limit
+		speed = minf(connector.speed_limit, road_limit * LOOK_SPEED_FRACTION)
+	_entry_speeds[connector.id] = speed
+	return speed
+
+
+func _on_priority_road(node: RoadNode, connector: Lane) -> bool:
+	var mine := _road_priority(connector)
+	var lowest := mine
+	for segment_id in node.segment_ids:
+		var priority := _roads.segments[segment_id].road_type.priority
+		if priority > mine:
+			return false
+		lowest = mini(lowest, priority)
+	return lowest < mine
+
+
+## Priority of the road a connector's traffic comes from.
+func _road_priority(connector: Lane) -> int:
 	var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
-	var road_limit := feeder.speed_limit if feeder != null else connector.speed_limit
-	return minf(connector.speed_limit, road_limit * LOOK_SPEED_FRACTION)
+	if feeder == null or not _roads.segments.has(feeder.segment_id):
+		return 0
+	return _roads.segments[feeder.segment_id].road_type.priority
 
 
 ## Moves the vehicle for one tick. Returns true when it reached its stop.
@@ -830,6 +859,7 @@ static func _decrement(counts: Dictionary, key: int) -> void:
 func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
 	_reroute_pending = true
 	_yields.clear()
+	_entry_speeds.clear()
 
 
 func _request_reroute() -> void:

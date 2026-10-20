@@ -1,7 +1,8 @@
 class_name IntersectionRenderer
 extends Node2D
 ## Draws traffic lights: a bar at each stop line of a light-controlled junction, coloured
-## by the light that lane currently has.
+## by the best light any of that lane's turns has (with protected left turns, the left
+## lane of a road can be green for going straight and red for turning).
 
 const LIGHT_COLORS := {
 	TrafficLights.Light.GREEN: Color("43a047"),
@@ -22,7 +23,7 @@ func _ready() -> void:
 func _refresh() -> void:
 	_has_lights = false
 	for node: RoadNode in Game.simulation.roads.nodes.values():
-		if node.control == RoadNode.JunctionControl.TRAFFIC_LIGHT:
+		if node.has_lights():
 			_has_lights = true
 	queue_redraw()
 
@@ -36,7 +37,7 @@ func _process(_delta: float) -> void:
 func _draw() -> void:
 	var roads := Game.simulation.roads
 	for node: RoadNode in roads.nodes.values():
-		if node.control == RoadNode.JunctionControl.NONE:
+		if not node.has_lights():
 			continue
 		for segment_id in node.segment_ids:
 			var segment := roads.segments[segment_id]
@@ -44,7 +45,14 @@ func _draw() -> void:
 				var lane := roads.lanes[lane_id]
 				if lane.to_node_id != node.id:
 					continue
-				var color: Color = LIGHT_COLORS[Game.simulation.signals.get_light(node, lane.signal_phase)]
+				var color: Color = LIGHT_COLORS[_lane_light(node, lane)]
 				var pose := lane.sample_pose(lane.length)
 				var across := pose.y.normalized() * segment.road_type.lane_width * 0.5
 				draw_line(pose.origin - across, pose.origin + across, color, BAR_WIDTH)
+
+
+func _lane_light(node: RoadNode, lane: Lane) -> TrafficLights.Light:
+	var best := TrafficLights.Light.RED
+	for connector in lane.outgoing_lanes:
+		best = mini(best, Game.simulation.signals.get_light(node, connector.signal_phase)) as TrafficLights.Light
+	return best

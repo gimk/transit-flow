@@ -14,6 +14,9 @@ const DIRECTORY := "res://data/road_types/"
 ## One-way roads only have lanes running from the segment's start node to its end node
 ## (the direction the player dragged), centered on the road.
 @export var one_way := false
+## At junctions without lights, drivers coming from a road of higher priority go first
+## and don't slow down to look; between equal roads, other rules decide.
+@export var priority := 0
 @export var lane_width := 14.0  ## World pixels.
 @export var speed_limit := 90.0  ## World pixels per sim second.
 @export var surface_color := Color("4a5562")

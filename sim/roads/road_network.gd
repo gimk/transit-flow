@@ -538,18 +538,31 @@ func _rebuild_connectors(node: RoadNode) -> void:
 	_assign_signal_phases(node, incoming)
 
 
-## Traffic lights alternate between the two road axes: lanes arriving east-west get
-## phase 0, lanes arriving north-south phase 1 (by their direction at the stop line).
+## Traffic lights alternate between the two road axes: lanes arriving east-west belong
+## to axis 0, lanes arriving north-south to axis 1 (by their direction at the stop line).
+## A connector's phase is its feeder lane's axis; with protected left turns, left turns
+## and U-turns get a phase of their own after their axis's through phase:
+## 0 axis-0 through, 1 axis-0 left, 2 axis-1 through, 3 axis-1 left. Phases nobody uses
+## are simply never asked for (TrafficLights skips phases without demand).
 func _assign_signal_phases(node: RoadNode, incoming: Array[Lane]) -> void:
-	var phases := {}
+	var axes := {}
 	for lane in incoming:
 		var direction := LaneBuilder.end_direction(lane.curve)
 		lane.signal_phase = 0 if absf(direction.x) >= absf(direction.y) else 1
-		phases[lane.signal_phase] = true
-	node.signal_phase_count = phases.size()
-	if node.signal_phase_count == 1:
+		axes[lane.signal_phase] = true
+	if axes.size() == 1:
 		for lane in incoming:
 			lane.signal_phase = 0
+	var left_phases := node.control == RoadNode.JunctionControl.TRAFFIC_LIGHT_PROTECTED_LEFT and axes.size() > 1
+	node.signal_phase_count = 4 if left_phases else axes.size()
+	for lane_id in node.connector_lane_ids:
+		var connector := lanes[lane_id]
+		var axis := lanes[connector.feeder_lane_id].signal_phase
+		if left_phases:
+			var turning_across := connector.turn == Lane.Turn.LEFT or connector.turn == Lane.Turn.U_TURN
+			connector.signal_phase = axis * 2 + (1 if turning_across else 0)
+		else:
+			connector.signal_phase = axis
 
 
 ## Finds which of the node's connectors conflict and where: two connectors conflict

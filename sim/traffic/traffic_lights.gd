@@ -8,6 +8,8 @@ extends RefCounted
 ##   stand still on green, e.g. because the road beyond is full) or after MAX_GREEN,
 ## - then shows amber for CLEARANCE_TIME (no new entries) before the next phase that
 ##   has someone waiting turns green; phases nobody waits for are skipped.
+## Phases belong to the junction's turns (Lane.signal_phase on connectors): the two road
+## axes, plus their left turns when the junction has protected left turns.
 ## Light state isn't saved: after loading, lights start over on phase 0.
 
 enum Light { GREEN, AMBER, RED }
@@ -26,6 +28,8 @@ class LightState:
 	var next_phase := 0
 	var clearing := false
 	var elapsed := 0.0
+	## The phases it was set up for; a different set (lights changed) starts over.
+	var phase_count := 0
 
 
 var _roads: RoadNetwork
@@ -82,7 +86,8 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 	state.elapsed = 0.0
 
 
-## Per phase: is a vehicle about to cross a stop line of that phase? With
+## Per phase: is a vehicle about to take a turn of that phase (the front-most vehicle on
+## an incoming lane, close to its stop line, by the connector it is heading for)? With
 ## `moving_only`, vehicles standing still for BLOCKED_TIME don't count.
 func _detect_demand(node: RoadNode, moving_only: bool) -> Array[bool]:
 	var demand: Array[bool] = []
@@ -96,15 +101,18 @@ func _detect_demand(node: RoadNode, moving_only: bool) -> Array[bool]:
 			var front: Vehicle = lane.queue[0]
 			if moving_only and front.stopped_time >= BLOCKED_TIME:
 				continue
-			if not front.is_on_last_lane() and lane.length - front.distance <= DETECTION_DISTANCE:
-				demand[lane.signal_phase] = true
+			if front.next_lanes.is_empty() or not front.next_lanes[0].is_connector():
+				continue
+			if lane.length - front.distance <= DETECTION_DISTANCE:
+				demand[front.next_lanes[0].signal_phase] = true
 	return demand
 
 
 func _on_roads_changed(node_ids: Array, _segment_ids: Array) -> void:
 	for node_id: int in node_ids:
 		var node: RoadNode = _roads.nodes.get(node_id)
-		if node == null or node.control != RoadNode.JunctionControl.TRAFFIC_LIGHT:
+		if node == null or not node.has_lights():
 			_states.erase(node_id)
-		elif not _states.has(node_id) or _states[node_id].phase >= node.signal_phase_count:
+		elif not _states.has(node_id) or _states[node_id].phase_count != node.signal_phase_count:
 			_states[node_id] = LightState.new()
+			_states[node_id].phase_count = node.signal_phase_count

@@ -188,7 +188,8 @@ func test_signal_tool_cycles_junction_control() -> void:
 	var node := roads.nodes[roads.find_node_at(_grid_point(0, 0))]
 	await _press_action(&"tool_signals")
 	await _mouse_motion(_grid_point(0, 0) + Vector2(5, 5))
-	var expected := [RoadNode.JunctionControl.TRAFFIC_LIGHT, RoadNode.JunctionControl.NONE]
+	var expected := [RoadNode.JunctionControl.TRAFFIC_LIGHT, RoadNode.JunctionControl.TRAFFIC_LIGHT_PROTECTED_LEFT,
+		RoadNode.JunctionControl.NONE]
 	for control in expected:
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), true)
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), false)

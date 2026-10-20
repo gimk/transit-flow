@@ -29,7 +29,8 @@ var conflicting_lane_ids: Array[int] = []
 ## Connectors only: for each conflicting connector id, the stretch of this connector
 ## (Vector2(from, to), distances along it) that comes too close to that one.
 var conflict_zones: Dictionary[int, Vector2] = {}
-## Road lanes only: which traffic-light phase lets this lane into the junction at its end.
+## Traffic lights: on a road lane, the axis (0 or 1) its junction groups it in; on a
+## connector, the light phase that lets vehicles onto it (see RoadNetwork._assign_signal_phases).
 var signal_phase := 0
 
 ## Same as outgoing_lane_ids, as objects (hot path for vehicles).
