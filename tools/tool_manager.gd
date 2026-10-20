@@ -1,7 +1,8 @@
 class_name ToolManager
 extends Node2D
 ## Routes world input to the active build tool. Tools are BuildTool children;
-## a tool's id is its node name. Selecting the active tool again turns it off.
+## a tool's id is its node name. Selecting the active tool again turns it off, unless
+## it has variants to cycle through (pressing R again picks the next road type).
 
 ## Input action -> tool id.
 const TOOL_SHORTCUTS := {
@@ -23,6 +24,18 @@ var pointer_screen_position := Vector2.ZERO
 
 func _ready() -> void:
 	Events.tool_requested.connect(select_tool)
+	Events.tool_variant_requested.connect(use_tool)
+
+
+## Makes `tool_id` the active tool (without toggling it off) in `variant`, if given.
+func use_tool(tool_id: StringName, variant: StringName = &"") -> void:
+	var tool := get_node_or_null(NodePath(tool_id)) as BuildTool
+	if tool == null:
+		return
+	if tool != active_tool:
+		select_tool(tool_id)
+	if variant != &"":
+		tool.set_variant(variant)
 
 
 func _input(event: InputEvent) -> void:
@@ -51,7 +64,11 @@ func select_tool(tool_id: StringName) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	for action: StringName in TOOL_SHORTCUTS:
 		if event.is_action_pressed(action):
-			select_tool(TOOL_SHORTCUTS[action])
+			# The active tool's shortcut cycles its variants (road types); otherwise it
+			# toggles the tool.
+			var tool_id: StringName = TOOL_SHORTCUTS[action]
+			if active_tool == null or active_tool.name != tool_id or not active_tool.cycle_variant():
+				select_tool(tool_id)
 			get_viewport().set_input_as_handled()
 			return
 	if event.is_action_pressed("tool_cancel"):

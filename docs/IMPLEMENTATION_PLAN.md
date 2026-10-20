@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Next: Phase 4 (tool palette), then the simulation phases 5–8 (multi-lane and one-way roads, driveways, pedestrians, buses and mode choice).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Next: the simulation phases 5–8 (multi-lane and one-way roads, driveways, pedestrians, buses and mode choice).
 
 ---
 
@@ -263,7 +263,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - Citizens, vehicles, light states and the Flow history aren't saved; a loaded game restarts them (people at home).
 - Only one highway; no new residents arrive from outside yet, and goods have no economy (trucks are traffic only). Demand quotas and growth are Phase 10+.
 
-### Phase 4 — Interface for more than one road and zone type
+### Phase 4 — Interface for more than one road and zone type ✅
 Small, and first, because every later phase adds types the player must pick from.
 - **Tool palette.** The bottom toolbar keeps one button per tool family (Roads, Zones, Signals, Bulldoze, Route). A family with variants opens a sub-menu just above it: road types (2-lane, 4-lane avenue, one-way 1/2/3 lanes, later bus lanes) and zone types (Residential, Commercial, Industrial, Dezone). The chosen variant is remembered per family. Keyboard shortcuts stay (R cycles road types while the road tool is active).
 - **Hint line** moves just above the toolbar (and above the sub-menu when it's open), next to where the player is looking, instead of the top bar.
@@ -271,6 +271,8 @@ Small, and first, because every later phase adds types the player must pick from
 - Tests: an integration test clicks a family, picks a variant from its sub-menu, and builds with it; the hint sits above the toolbar.
 
 **Done when:** the player can build every road type and paint every zone from the palette, and the hint reads next to the tools.
+
+*Done (2026-10-20):* `ToolPalette` (`ui/tool_palette.gd`) replaces the toolbar: families Roads (variants = `RoadType.list_all()`, so a new `.tres` in `data/road_types/` shows up by itself), Zones (the four zone tools as entries), Signals, Bulldoze, Route. Tools expose variants (`BuildTool.get_variants/set_variant/cycle_variant`); `Events.tool_variant_requested/changed` connect UI and tools; `ToolManager.use_tool` never toggles off; a tool's shortcut pressed again cycles its variants when it has more than one. The palette follows keyboard shortcuts and remembers the last variant per family. Only one road type exists until Phase 5a, so the Roads sub-menu has a single entry for now.
 
 ### Phase 5 — Multi-lane and one-way roads
 The lane model was built for this (`RoadType.lanes_per_direction`, and junction connectors already match lanes across a junction). What's missing is the behaviour.

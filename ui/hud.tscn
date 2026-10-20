@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" path="res://ui/hud.gd" id="1_hud"]
 [ext_resource type="Script" path="res://ui/debug_menu.gd" id="2_debug_menu"]
+[ext_resource type="Script" path="res://ui/tool_palette.gd" id="3_tool_palette"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -101,97 +102,34 @@ tooltip_text = "Fastest (3)"
 toggle_mode = true
 text = "4×"
 
-[node name="Toolbar" type="PanelContainer" parent="."]
+[node name="ToolPalette" type="VBoxContainer" parent="."]
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 12.0
 offset_top = -52.0
+offset_right = 12.0
 offset_bottom = -12.0
 grow_vertical = 0
+theme_override_constants/separation = 6
+alignment = 2
+script = ExtResource("3_tool_palette")
 
-[node name="Buttons" type="HBoxContainer" parent="Toolbar"]
+[node name="HintLabel" type="Label" parent="ToolPalette"]
 layout_mode = 2
-
-[node name="RoadButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Build roads (R)"
-toggle_mode = true
-text = "Road"
-
-[node name="BulldozeButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Bulldoze (B)"
-toggle_mode = true
-text = "Bulldoze"
-
-[node name="ResidentialButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Zone Residential (H)"
-toggle_mode = true
-text = "Residential"
-
-[node name="CommercialButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Zone Commercial (C)"
-toggle_mode = true
-text = "Commercial"
-
-[node name="IndustrialButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Zone Industrial (I)"
-toggle_mode = true
-text = "Industrial"
-
-[node name="DezoneButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Remove zoning (X)"
-toggle_mode = true
-text = "Dezone"
-
-[node name="SignalButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Traffic lights (L): click a junction to toggle its lights"
-toggle_mode = true
-text = "Signals"
-
-[node name="RouteButton" type="Button" parent="Toolbar/Buttons"]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-tooltip_text = "Route inspector (T): click two roads to see the quickest route"
-toggle_mode = true
-text = "Route"
-
-[node name="HintLabel" type="Label" parent="."]
-unique_name_in_owner = true
-anchors_preset = 7
-anchor_left = 0.5
-anchor_top = 1.0
-anchor_right = 0.5
-anchor_bottom = 1.0
-offset_top = -44.0
-offset_bottom = -16.0
-grow_horizontal = 2
-grow_vertical = 0
 theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
 theme_override_constants/outline_size = 6
-horizontal_alignment = 1
-vertical_alignment = 1
+
+[node name="SubMenus" type="Control" parent="ToolPalette"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Toolbar" type="PanelContainer" parent="ToolPalette"]
+layout_mode = 2
+size_flags_horizontal = 0
+
+[node name="Buttons" type="HBoxContainer" parent="ToolPalette/Toolbar"]
+layout_mode = 2
 
 [node name="NotificationLabel" type="Label" parent="."]
 unique_name_in_owner = true

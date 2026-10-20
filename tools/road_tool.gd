@@ -21,8 +21,28 @@ var _junctions: Array[Vector2] = []
 
 
 func _ready() -> void:
-	road_type = RoadType.load_by_id(&"local_2lane")
+	road_type = RoadType.list_all()[0]
 	super()
+
+
+func get_variants() -> Array[StringName]:
+	var ids: Array[StringName] = []
+	for type in RoadType.list_all():
+		ids.append(type.id)
+	return ids
+
+
+func get_variant() -> StringName:
+	return road_type.id
+
+
+func set_variant(variant: StringName) -> void:
+	var type := RoadType.load_by_id(variant)
+	if type == null or type == road_type:
+		return
+	road_type = type
+	Events.tool_variant_changed.emit(name, variant)
+	queue_redraw()
 
 
 func activate() -> void:

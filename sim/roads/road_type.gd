@@ -18,6 +18,19 @@ func get_total_width() -> float:
 	return lane_width * lanes_per_direction * 2
 
 
+## Every road type in DIRECTORY, narrowest first (the order the build palette lists them).
+static func list_all() -> Array[RoadType]:
+	var types: Array[RoadType] = []
+	for file in ResourceLoader.list_directory(DIRECTORY):
+		if file.ends_with(".tres"):
+			var road_type := load(DIRECTORY + file) as RoadType
+			if road_type != null:
+				types.append(road_type)
+	types.sort_custom(func(a: RoadType, b: RoadType) -> bool:
+		return a.get_total_width() < b.get_total_width() if a.get_total_width() != b.get_total_width() else String(a.id) < String(b.id))
+	return types
+
+
 static func load_by_id(type_id: StringName) -> RoadType:
 	var path := DIRECTORY + String(type_id) + ".tres"
 	if not ResourceLoader.exists(path):

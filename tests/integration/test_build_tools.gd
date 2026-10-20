@@ -174,7 +174,7 @@ func test_zone_tools_paint_areas_that_develop_next_to_roads() -> void:
 func test_main_scene_has_its_key_nodes() -> void:
 	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
 			"World/VehicleRenderer", "World/HeatmapOverlay", "World/DayNight", "World/ExternalRenderer",
-			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD"]:
+			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD", "HUD/ToolPalette"]:
 		assert_not_null(_main.get_node_or_null(path), path)
 	for tool_id: StringName in ToolManager.TOOL_SHORTCUTS.values():
 		assert_not_null(_main.get_node_or_null("World/Tools/" + tool_id), "tool " + tool_id)
@@ -232,6 +232,78 @@ func test_debug_menu_buttons_drive_the_debug_functions() -> void:
 	_debug_button("New empty map").pressed.emit()
 	assert_eq(Game.simulation.roads.segments.size(), 1, "only the highway stub of a new map")
 	assert_eq(Game.simulation.externals.points.size(), 1)
+
+
+func _palette() -> ToolPalette:
+	return _main.get_node("HUD/ToolPalette")
+
+
+func _active_tool_id() -> StringName:
+	var tool := (_main.get_node("World/Tools") as ToolManager).active_tool
+	return tool.name if tool != null else &""
+
+
+func test_palette_zones_family_opens_its_variants() -> void:
+	var palette := _palette()
+	var submenu := palette.get_submenu("Zones")
+	assert_false(submenu.visible, "closed until the family is picked")
+	palette.get_family_button("Zones").pressed.emit()
+	assert_eq(_active_tool_id(), &"ResidentialZoneTool", "the first zone type by default")
+	assert_true(submenu.visible)
+	assert_true(palette.get_entry_button("Zones", "Residential").button_pressed)
+	palette.get_entry_button("Zones", "Industrial").pressed.emit()
+	assert_eq(_active_tool_id(), &"IndustrialZoneTool")
+	assert_true(palette.get_entry_button("Zones", "Industrial").button_pressed)
+	assert_false(palette.get_entry_button("Zones", "Residential").button_pressed)
+	# Another family closes the sub-menu; coming back picks the last-used zone type.
+	palette.get_family_button("Bulldoze").pressed.emit()
+	assert_false(submenu.visible)
+	palette.get_family_button("Zones").pressed.emit()
+	assert_eq(_active_tool_id(), &"IndustrialZoneTool")
+	# Pressing the open family again puts the tool away.
+	palette.get_family_button("Zones").pressed.emit()
+	assert_eq(_active_tool_id(), &"")
+
+
+func test_palette_follows_keyboard_shortcuts() -> void:
+	var palette := _palette()
+	await _press_action(&"tool_commercial")
+	assert_true(palette.get_submenu("Zones").visible)
+	assert_true(palette.get_entry_button("Zones", "Commercial").button_pressed)
+	assert_true(palette.get_family_button("Zones").button_pressed)
+	await _press_action(&"tool_road")
+	assert_false(palette.get_submenu("Zones").visible)
+	assert_true(palette.get_family_button("Roads").button_pressed)
+
+
+func test_palette_builds_roads_of_the_picked_type() -> void:
+	var palette := _palette()
+	var types := RoadType.list_all()
+	assert_false(types.is_empty())
+	palette.get_family_button("Roads").pressed.emit()
+	assert_true(palette.get_submenu("Roads").visible, "road types to pick from")
+	var picked: RoadType = types.back()
+	palette.get_entry_button("Roads", picked.display_name).pressed.emit()
+	assert_eq((_main.get_node("World/Tools/RoadTool") as RoadTool).road_type, picked)
+	await _drag(_grid_point(-2, 0), _grid_point(2, 0))
+	var segments := Game.simulation.roads.segments.values()
+	assert_eq(segments.size(), 1)
+	assert_eq(segments[0].road_type, picked)
+
+
+func test_hint_reads_above_the_toolbar() -> void:
+	var palette := _palette()
+	palette.get_family_button("Zones").pressed.emit()
+	await wait_process_frames(3)
+	var hint: Label = palette.get_node("HintLabel")
+	assert_true(hint.visible)
+	assert_ne(hint.text, "")
+	var toolbar: Control = palette.get_node("Toolbar")
+	var submenu := palette.get_submenu("Zones")
+	assert_lte(submenu.get_global_rect().end.y, toolbar.get_global_rect().position.y + 0.5, "sub-menu above the toolbar")
+	assert_lte(hint.get_global_rect().end.y, submenu.get_global_rect().position.y + 0.5, "hint above the sub-menu")
+	assert_almost_eq(submenu.get_global_rect().position.x, palette.get_family_button("Zones").get_global_rect().position.x, 1.0,
+		"sub-menu lined up with its family button")
 
 
 func test_debug_menu_folds_away() -> void:

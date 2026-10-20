@@ -62,8 +62,8 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 core/    autoloads (Game, Events) + Grid helpers
 sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, zones, citizens, external connections, flow metric), traffic/ (vehicles, freight, lights, congestion, stress), debug/ (scenarios)
 view/    renderers, camera, overlays
-tools/   player tools (ToolManager + RoadTool, BulldozeTool, ZoneTool x4, SignalTool, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
-ui/      HUD and menus
+tools/   player tools (ToolManager + RoadTool, BulldozeTool, ZoneTool x4, SignalTool, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS; tools with variants (road types) implement BuildTool.get_variants/set_variant, and the palette lists them (families in ToolPalette.FAMILIES)
+ui/      HUD (top bar, notifications), ToolPalette (bottom-left build palette: tool families, variant sub-menus, hint line), DebugMenu
 scenes/  main.tscn (+ sandbox scenes)
 benchmarks/  headless perf scripts (run with --script)
 tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest; traffic_checks.gd = shared safety checks (no overlaps, no conflict-zone violations)

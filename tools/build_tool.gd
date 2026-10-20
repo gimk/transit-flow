@@ -34,6 +34,31 @@ func cancel() -> bool:
 	return false
 
 
+## Variants a tool comes in (e.g. road types), as variant ids; empty if it has none.
+func get_variants() -> Array[StringName]:
+	return []
+
+
+func get_variant() -> StringName:
+	return &""
+
+
+## Switches to a variant from get_variants(); tools with variants override this and
+## announce the change with Events.tool_variant_changed.
+func set_variant(_variant: StringName) -> void:
+	pass
+
+
+## Moves on to the next variant (the tool's shortcut pressed again). Returns false if
+## there's nothing to cycle through.
+func cycle_variant() -> bool:
+	var variants := get_variants()
+	if variants.size() < 2:
+		return false
+	set_variant(variants[(variants.find(get_variant()) + 1) % variants.size()])
+	return true
+
+
 ## Pointer position in world space. Tools must use this instead of get_global_mouse_position().
 func get_pointer_position() -> Vector2:
 	return (get_parent() as ToolManager).get_pointer_world_position()

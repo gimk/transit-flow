@@ -22,6 +22,11 @@ signal externals_changed
 ## UI asks for a tool by id ("" = no tool); ToolManager answers with tool_changed.
 signal tool_requested(tool_id: StringName)
 signal tool_changed(tool_id: StringName)
+## UI asks for a tool in a given variant (e.g. RoadTool + a road type id; "" = the tool
+## as it is). Unlike tool_requested it never toggles the tool off.
+signal tool_variant_requested(tool_id: StringName, variant: StringName)
+## A tool switched variant (from the UI or its shortcut).
+signal tool_variant_changed(tool_id: StringName, variant: StringName)
 ## Contextual help or error text for the active tool ("" hides it).
 signal tool_hint_changed(text: String)
 
