@@ -307,6 +307,15 @@ func test_road_shortcut_again_cycles_road_types() -> void:
 	assert_eq(_active_tool_id(), &"")
 
 
+func test_long_top_bar_text_keeps_the_speed_buttons_on_screen() -> void:
+	var stats: Label = _main.get_node("HUD").find_child("StatsLabel", true, false)
+	stats.text = "999 vehicles (+999 in driveways) · 999 stuck · tick 99.9 ms · sim at 1.2× (can't keep up) and more"
+	await wait_process_frames(3)
+	var buttons: Control = _main.get_node("HUD").find_child("SpeedButtons", true, false)
+	assert_lte(buttons.get_global_rect().end.x, float(_viewport.size.x), "speed buttons inside the window")
+	assert_true(stats.get_global_rect().end.x <= buttons.get_global_rect().position.x + 0.5, "the text gives way")
+
+
 func test_hint_reads_above_the_toolbar() -> void:
 	var palette := _palette()
 	palette.get_family_button("Zones").pressed.emit()

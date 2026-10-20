@@ -54,14 +54,13 @@ text = "Pop 0"
 [node name="StatsLabel" type="Label" parent="TopBar/Margin/Row"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 modulate = Color(1, 1, 1, 0.5)
 tooltip_text = "Vehicles on the road · stopped for 30 s+ · average cost of one simulation tick (F6: stress traffic)"
 mouse_filter = 1
 text = "0 vehicles"
-
-[node name="Spacer" type="Control" parent="TopBar/Margin/Row"]
-layout_mode = 2
-size_flags_horizontal = 3
+clip_text = true
+text_overrun_behavior = 3
 
 [node name="SpeedButtons" type="HBoxContainer" parent="TopBar/Margin/Row"]
 layout_mode = 2

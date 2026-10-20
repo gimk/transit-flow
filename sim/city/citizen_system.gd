@@ -14,6 +14,8 @@ const RESIDENTS_PER_HOME := 2
 const JOBS := { Lot.Type.COMMERCIAL: 2, Lot.Type.INDUSTRIAL: 3 }
 const RETRY_DELAY := 2.0  ## Sim seconds.
 const SHOPPING_CHANCE := 0.35
+## Shoppers pick one of this many shops nearest their work.
+const SHOP_CHOICES := 4
 const SHOP_MIN_MINUTES := 30.0
 const SHOP_MAX_MINUTES := 60.0
 ## Morning commutes only start before this hour; someone who missed it waits a day.
@@ -71,7 +73,7 @@ func step(time: float) -> void:
 					if citizen.shopping_decided_day != day:
 						citizen.shopping_decided_day = day
 						citizen.going_shopping = _rng.randf() < SHOPPING_CHANCE
-					var shop := _nearest(_shops, _lots.lots[citizen.work_lot_id].get_center(), false)
+					var shop := _pick_shop(_lots.lots[citizen.work_lot_id].get_center()) if citizen.going_shopping else -1
 					if citizen.going_shopping and shop != -1:
 						_depart(citizen, citizen.work_lot_id, shop, Citizen.State.TO_SHOP)
 					else:
@@ -227,3 +229,14 @@ func _nearest(candidates: Array[Lot], position: Vector2, needs_free_job: bool) -
 			best_distance = distance
 			best_id = lot.id
 	return best_id
+
+
+## A shop to stop at on the way home: one of the SHOP_CHOICES nearest, at random, so the
+## nearest one doesn't get everybody.
+func _pick_shop(position: Vector2) -> int:
+	if _shops.is_empty():
+		return -1
+	var by_distance := _shops.duplicate()
+	by_distance.sort_custom(func(a: Lot, b: Lot) -> bool:
+		return position.distance_squared_to(a.get_center()) < position.distance_squared_to(b.get_center()))
+	return by_distance[_rng.randi() % mini(SHOP_CHOICES, by_distance.size())].id

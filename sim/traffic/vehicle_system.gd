@@ -73,8 +73,10 @@ const EXIT_FAIRNESS_WAIT := 5.0
 const DRIVEWAY_SPEED := 15.0
 const TRUCK_DRIVEWAY_SPEED := 10.0
 const DRIVEWAY_SETBACK := 6.0
+const DRAWN_DRIVEWAY_QUEUE := 3
 const CROSSING_HALF_WIDTH := 8.0
 const COURTESY_WAIT := 3.0
+const QUICK_COURTESY_WAIT := 0.5
 const DRIVEWAY_GIVE_UP := 8.0
 ## Waiting on the road to turn in holds up the traffic behind, so drivers give up sooner.
 const TURN_IN_GIVE_UP := 5.0
@@ -458,7 +460,8 @@ func _place_waiting_departures() -> void:
 		var out := (curb - lot_center).normalized()
 		var place: int = waiting_at.get(vehicle.origin_lot_id, 0)
 		waiting_at[vehicle.origin_lot_id] = place + 1
-		var back := DRIVEWAY_SETBACK + vehicle.length * 0.5 + place * (Vehicle.MAX_LENGTH + MIN_GAP)
+		# More than a few waiting are drawn piled up on the last spot.
+		var back := DRIVEWAY_SETBACK + vehicle.length * 0.5 + mini(place, DRAWN_DRIVEWAY_QUEUE - 1) * (Vehicle.MAX_LENGTH + MIN_GAP)
 		vehicle.position = curb - out * back
 		vehicle.rotation = out.angle()
 		vehicle.previous_position = vehicle.position
@@ -521,18 +524,40 @@ func _keep_crossings_clear() -> void:
 			continue
 		if _time - vehicle.driveway_wait_since > COURTESY_WAIT:
 			_hold_back_for_crossing(vehicle)
-	# The first vehicle waiting at each lot is let out the same way.
+	# The first vehicle waiting at each lot is let out the same way; into a crawling queue,
+	# almost at once (there will never be a gap otherwise).
 	var seen := {}
 	for vehicle in _departures:
 		var key := vehicle.origin_lot_id if vehicle.origin_lot_id != -1 else -1 - vehicle.id
-		if seen.has(key) or _time - vehicle.driveway_wait_since <= COURTESY_WAIT:
-			seen[key] = true
+		if seen.has(key):
 			continue
 		seen[key] = true
-		_hold_back_for_crossing(vehicle)
 		var join: Lane = _roads.lanes.get(vehicle.route.lane_ids[0])
-		if join != null:
-			_hold_back(join, vehicle.route.start_distance - vehicle.length * 0.5 - MIN_GAP)
+		if join == null:
+			continue
+		var at := vehicle.route.start_distance
+		var stop_at := at - vehicle.length * 0.5 - MIN_GAP
+		var patience := QUICK_COURTESY_WAIT if _crawling_towards(join, stop_at) else COURTESY_WAIT
+		if _time - vehicle.driveway_wait_since > patience and _space_opening(join, at, vehicle.length):
+			_hold_back_for_crossing(vehicle)
+			_hold_back(join, stop_at)
+
+
+## Is the stretch of `lane` in front of `at` free, or is the vehicle there moving on? (If
+## it stands still, holding back the traffic behind would only block the road.)
+func _space_opening(lane: Lane, at: float, length: float) -> bool:
+	for other: Vehicle in lane.queue:
+		if other.distance >= at and other.distance - at < (other.length + length) * 0.5 + MIN_GAP:
+			return other.speed > STOPPED_SPEED
+	return true
+
+
+## Is the traffic coming up to `at` on `lane` slow (a queue rather than a stream)?
+func _crawling_towards(lane: Lane, at: float) -> bool:
+	for other: Vehicle in lane.queue:
+		if other.distance < at:
+			return other.speed < SLOW_FRACTION * lane.speed_limit
+	return false
 
 
 func _hold_back_for_crossing(vehicle: Vehicle) -> void:
