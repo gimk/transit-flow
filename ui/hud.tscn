@@ -1,0 +1,77 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://ui/hud.gd" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="TopBar" type="PanelContainer" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+grow_horizontal = 2
+
+[node name="Margin" type="MarginContainer" parent="TopBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 4
+
+[node name="Row" type="HBoxContainer" parent="TopBar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="TimeLabel" type="Label" parent="TopBar/Margin/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+text = "Day 1 · 06:00"
+
+[node name="PeriodLabel" type="Label" parent="TopBar/Margin/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+modulate = Color(1, 1, 1, 0.7)
+text = "Morning Rush"
+
+[node name="Spacer" type="Control" parent="TopBar/Margin/Row"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpeedButtons" type="HBoxContainer" parent="TopBar/Margin/Row"]
+layout_mode = 2
+
+[node name="PauseButton" type="Button" parent="TopBar/Margin/Row/SpeedButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Pause (Space)"
+toggle_mode = true
+text = "||"
+
+[node name="Speed1Button" type="Button" parent="TopBar/Margin/Row/SpeedButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Normal speed (1)"
+toggle_mode = true
+text = "1×"
+
+[node name="Speed2Button" type="Button" parent="TopBar/Margin/Row/SpeedButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Fast (2)"
+toggle_mode = true
+text = "2×"
+
+[node name="Speed3Button" type="Button" parent="TopBar/Margin/Row/SpeedButtons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Fastest (3)"
+toggle_mode = true
+text = "4×"
