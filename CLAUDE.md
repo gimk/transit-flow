@@ -1,0 +1,57 @@
+# Transit Flow
+
+2D top-down traffic & transit city builder in **Godot 4.7 / GDScript**. The player zones R/C/I and designs roads and transit; the city builds itself; the score is "Flow Efficiency %".
+
+- Game design: [game_design_godot_architecture_concept.md](game_design_godot_architecture_concept.md)
+- Architecture, roadmap, phase status: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — read it before starting a phase, and update its **Status** line and phase details when a phase is done or the design changes.
+
+## Git rules
+
+- **Never add Claude as co-author.** No `Co-Authored-By: Claude …` trailer, no "Generated with Claude Code" line, in commits or PR descriptions. (Also enforced by `.claude/settings.json` → `attribution`.)
+- Commit identity is set in the repo's local config: `gimk <a.pouligny@gmail.com>`. Don't change it.
+- Commit `.uid` files alongside their scripts/scenes. `.godot/` is ignored.
+- Run the tests before committing.
+
+## Commands
+
+Godot is not on PATH. Console build:
+`C:/Users/AntoinePOULIGNY/Downloads/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe` (below: `$GODOT`).
+
+```bash
+"$GODOT" --headless --import                         # re-scan project; required after adding/renaming a class_name
+"$GODOT" --headless -s addons/gut/gut_cmdln.gd       # run all unit tests (config: .gutconfig.json)
+"$GODOT" --path . --write-movie <scratch>/f.png --fixed-fps 60 --quit-after 120   # run the game 2 s and dump frames to inspect visually
+```
+
+Python is not installed; use bash/PowerShell or the edit tools for file manipulation.
+
+## Architecture rules (see the plan for details)
+
+- **`sim/` is pure logic**: `RefCounted` classes, no `Node`, no autoload access, no rendering. Must be steppable headless from tests.
+- **`view/` only reads sim state**; **`tools/`** mutate the sim only through command methods on sim systems (e.g. `RoadNetwork.add_road`).
+- **Fixed tick**: the sim advances only via `Simulation.step()` (20 Hz, `Simulation.TICK_DT`), driven by the `Game` autoload. Never use frame `delta` inside the sim. Renderers interpolate with `Game.interpolation_alpha`.
+- Pausing = `Game.set_speed(0)`, not `get_tree().paused`.
+- Cross-system notifications go through the `Events` autoload signal bus.
+- **Everything is a lane**: roads and intersection turns are `Lane`s holding a `Curve2D`; never move vehicles tile-by-tile, never use `TileMapLayer` for roads (zones only).
+- Grid snapping is a UI aid only (`Grid.snap_to_point`); the sim works in world pixels.
+
+## Layout
+
+```
+core/    autoloads (Game, Events) + Grid helpers
+sim/     simulation state & systems (SimClock, Simulation, later roads/routing/traffic/city)
+view/    renderers, camera, overlays
+tools/   player build tools (from Phase 1a)
+ui/      HUD and menus
+scenes/  main.tscn (+ sandbox scenes)
+tests/unit/  GUT tests, files named test_*.gd extending GutTest
+addons/gut/  third-party, don't edit
+```
+
+## Code style
+
+- Tabs, static typing everywhere (`var x: int`, `:=`, typed returns), `class_name` for reusable classes.
+- `##` doc comment under `extends` explaining the class's role; comment the *why*, not the *what*.
+- Private members prefixed `_`. Constants `UPPER_SNAKE`. Signals in past tense (`speed_changed`).
+- Input: add actions to `project.godot` `[input]` using `physical_keycode` so bindings follow key position on any layout (WASD = ZQSD on AZERTY).
+- New sim logic gets unit tests in `tests/unit/`.
