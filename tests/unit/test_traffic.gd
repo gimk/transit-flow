@@ -102,6 +102,62 @@ func test_first_to_arrive_goes_first() -> void:
 	assert_eq(order, [1, 2], "the closer vehicle crosses first")
 
 
+## Lowest speed a vehicle reaches while driving its whole trip alone.
+func _slowest_speed_on_trip(vehicle: Vehicle) -> float:
+	var slowest := INF
+	var moving := false
+	while sim.vehicles.vehicles.has(vehicle.id):
+		sim.step()  # Lights too.
+		moving = moving or vehicle.speed > 85.0  # Up to cruising speed.
+		if moving and not vehicle.next_lanes.is_empty():
+			slowest = minf(slowest, vehicle.speed)
+	return slowest
+
+
+func test_drivers_slow_down_to_look_at_junctions_without_lights() -> void:
+	_road(Vector2(0, 4), Vector2(12, 4))
+	_road(Vector2(6, 0), Vector2(6, 8))
+	var junction := sim.roads.find_node_at(Vector2(6, 4) * G)
+	var through := _spawn(Vector2(1, 4) + Vector2(0, 7) / G, Vector2(11, 4) + Vector2(0, 7) / G)
+	var slowest := _slowest_speed_on_trip(through)
+	assert_almost_eq(slowest, 90.0 * VehicleSystem.LOOK_SPEED_FRACTION, 3.0, "eases off to look, even with nobody around")
+	sim.roads.set_node_control(junction, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	through = _spawn(Vector2(1, 4) + Vector2(0, 7) / G, Vector2(11, 4) + Vector2(0, 7) / G)
+	assert_gt(_slowest_speed_on_trip(through), 80.0, "a green light needs no looking")
+
+
+func test_left_turn_waits_for_a_gap_in_oncoming_traffic() -> void:
+	_road(Vector2(0, 4), Vector2(10, 4))
+	_road(Vector2(5, 0), Vector2(5, 8))
+	# The westbound driver turning left (south) is nearer the junction, but the oncoming
+	# eastbound driver going straight has priority and is close: the turn waits for it.
+	var turning := _spawn(Vector2(6.6, 4) + Vector2(0, -7) / G, Vector2(5, 7) + Vector2(7, 0) / G, 1)
+	var oncoming := _spawn(Vector2(2.6, 4) + Vector2(0, 7) / G, Vector2(9, 4) + Vector2(0, 7) / G, 2)
+	assert_eq(turning.next_lanes[0].turn, Lane.Turn.LEFT, "test setup: a left turn")
+	var order := []
+	for i in 600:
+		sim.vehicles.step(DT)
+		for vehicle: Vehicle in [turning, oncoming]:
+			if vehicle.lane.is_connector() and not order.has(vehicle.owner_id):
+				order.append(vehicle.owner_id)
+	assert_eq(order, [2, 1], "oncoming traffic first, then the left turn")
+
+
+func test_priority_to_the_right_between_crossing_drivers() -> void:
+	_road(Vector2(0, 4), Vector2(8, 4))
+	_road(Vector2(4, 0), Vector2(4, 8))
+	# The southbound driver is nearer, but the eastbound one comes from its right.
+	var south := _spawn(Vector2(4, 1.9) + Vector2(-7, 0) / G, Vector2(4, 7) + Vector2(-7, 0) / G, 1)
+	var east := _spawn(Vector2(1.5, 4) + Vector2(0, 7) / G, Vector2(7, 4) + Vector2(0, 7) / G, 2)
+	var order := []
+	for i in 600:
+		sim.vehicles.step(DT)
+		for vehicle: Vehicle in [south, east]:
+			if vehicle.lane.is_connector() and not order.has(vehicle.owner_id):
+				order.append(vehicle.owner_id)
+	assert_eq(order, [2, 1], "the driver from the right goes first")
+
+
 func test_stress_grid_never_overlaps_or_deadlocks() -> void:
 	_stress_grid(RoadNode.JunctionControl.NONE)
 

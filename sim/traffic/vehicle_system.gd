@@ -16,10 +16,12 @@ extends RefCounted
 ## - everyone on or allowed onto a conflicting connector will have left the shared zone
 ##   before this vehicle could reach it (_conflicts_clear), so movements that don't meet
 ##   flow in parallel and a waiting vehicle starts before the junction is empty,
+## - traffic it must give way to (_must_yield) isn't coming too close (_gap_accepted),
 ## - the lane it leads to has room for the whole vehicle ("don't block the box"),
 ## - no vehicle that has waited longer at the same junction, and could go, wants a
 ##   conflicting move.
-## Entry, once granted, is never taken back. Inside the junction, a vehicle still stops
+## At junctions without lights, drivers also slow down to look before the stop line
+## (_entry_speed). Entry, once granted, is never taken back. Inside the junction, a vehicle still stops
 ## short of a conflict zone that an earlier entrant hasn't cleared (_yield_in_junction),
 ## in case the timing prediction was off.
 ##
@@ -61,6 +63,27 @@ const GIVE_UP_GRACE := 60.0
 const CONFLICT_MARGIN := 0.5  ## Sim seconds.
 ## Below this speed a vehicle's progress through a junction can't be predicted.
 const MIN_PREDICT_SPEED := 2.0
+## Gap acceptance (_gap_accepted): how far away, in seconds, approaching conflicting
+## traffic must be before a driver enters, by turn. (Vehicles here drive about 2.5x
+## faster in car lengths per second than real ones, so these are below real-world gaps.)
+const CRITICAL_GAP := {
+	Lane.Turn.LEFT: 2.5,
+	Lane.Turn.U_TURN: 2.5,
+	Lane.Turn.STRAIGHT: 2.0,
+	Lane.Turn.RIGHT: 1.5,
+}
+## Who gives way at a junction (_must_yield): higher ranks yield to lower ones.
+const YIELD_RANK := {
+	Lane.Turn.STRAIGHT: 0,
+	Lane.Turn.RIGHT: 1,
+	Lane.Turn.LEFT: 2,
+	Lane.Turn.U_TURN: 2,
+}
+## A waiting driver accepts ever smaller gaps, down to none after this long.
+const GAP_SHRINK_TIME := 10.0  ## Sim seconds.
+## At a junction without lights, drivers slow to this fraction of the speed limit by the
+## stop line to look both ways, even when the junction is empty.
+const LOOK_SPEED_FRACTION := 0.4
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -81,6 +104,9 @@ var _reserved_entries: Dictionary[int, int] = {}
 var _waiting: Dictionary[int, Array] = {}
 ## Increases with every junction entry granted; orders vehicles for _yield_in_junction.
 var _entry_counter := 0
+## Connector id -> { conflicting connector id -> must give way to it } (_must_yield, cached;
+## connector ids change whenever their junction is rebuilt, so cleared on road changes).
+var _yields: Dictionary[int, Dictionary] = {}
 
 
 func _init(roads: RoadNetwork, router: Router, lots: LotSystem, signals: TrafficLights) -> void:
@@ -160,6 +186,7 @@ func dispose() -> void:
 	_occupied_lanes.clear()
 	_connector_vehicles.clear()
 	_waiting.clear()
+	_yields.clear()
 
 
 ## Lanes that currently have vehicles on them.
@@ -308,7 +335,7 @@ func _request_junction(vehicle: Vehicle) -> void:
 
 
 func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
-	if not _conflicts_clear(vehicle, connector):
+	if not _conflicts_clear(vehicle, connector) or not _gap_accepted(vehicle, connector):
 		return false
 	if not _exit_has_room(connector, vehicle):
 		return false
@@ -320,9 +347,69 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 		var wanted := other.requested_connector
 		if not connector.conflicting_lane_ids.has(wanted.id):
 			continue
-		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) and _exit_has_room(wanted, other):
+		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) \
+				and _gap_accepted(other, wanted) and _exit_has_room(wanted, other):
 			return false
 	return true
+
+
+## Gap acceptance: drivers don't only avoid vehicles already in the junction, they also
+## give way to traffic that has priority over them (_must_yield) and is coming toward
+## the shared stretch: the front vehicle on each road feeding such a movement, heading
+## for it (and with a light that lets it), must be at least CRITICAL_GAP seconds away;
+## the gap needed depends on the turn (crossing oncoming traffic to turn left needs the
+## most). A priority driver already waiting at its stop line counts too: it is about to
+## go. The longer a driver has waited, the smaller the gap they accept, down to none, so
+## a side street isn't starved for ever and a ring of drivers each yielding to the next
+## (four cars at a four-way junction) breaks up, falling back on first come, first served.
+func _gap_accepted(vehicle: Vehicle, connector: Lane) -> bool:
+	var gap: float = CRITICAL_GAP.get(connector.turn, CRITICAL_GAP[Lane.Turn.STRAIGHT])
+	if vehicle.requested_connector == connector:
+		gap *= 1.0 - clampf((_time - vehicle.waiting_since) / GAP_SHRINK_TIME, 0.0, 1.0)
+	if gap <= 0.0:
+		return true
+	for other_id in connector.conflicting_lane_ids:
+		var other_connector := _roads.lanes[other_id]
+		var feeder: Lane = _roads.lanes.get(other_connector.feeder_lane_id)
+		if feeder == null or feeder.queue.is_empty():
+			continue
+		var other: Vehicle = feeder.queue[0]
+		if other == vehicle or other.granted_connector != null:
+			continue
+		if other.next_lanes.is_empty() or other.next_lanes[0] != other_connector:
+			continue
+		if not _yields_to(connector, other_connector) or not _control_allows(other, other_connector):
+			continue
+		var distance := feeder.length - other.distance - other.length * 0.5 + other_connector.conflict_zones[connector.id].x
+		if _time_to_cover(distance, other.speed, feeder.speed_limit) < gap:
+			return false
+	return true
+
+
+## _must_yield, cached per connector pair (it only depends on the junction's geometry).
+func _yields_to(mine: Lane, theirs: Lane) -> bool:
+	if not _yields.has(mine.id):
+		_yields[mine.id] = {}
+	var cache: Dictionary = _yields[mine.id]
+	if not cache.has(theirs.id):
+		cache[theirs.id] = _must_yield(mine, theirs)
+	return cache[theirs.id]
+
+
+## Does a driver taking `mine` give way to one taking `theirs`? Going straight beats
+## turning right, which beats turning left (or U-turning) across traffic; between equal
+## movements, priority to the right. The relation is never mutual, so two drivers can't
+## each wait for the other.
+static func _must_yield(mine: Lane, theirs: Lane) -> bool:
+	var my_rank: int = YIELD_RANK.get(mine.turn, 0)
+	var their_rank: int = YIELD_RANK.get(theirs.turn, 0)
+	if my_rank != their_rank:
+		return my_rank > their_rank
+	# Traffic from my right crosses my heading right to left: with y growing downward,
+	# that is a negative cross product.
+	var my_heading := LaneBuilder.start_direction(mine.curve)
+	var their_heading := LaneBuilder.start_direction(theirs.curve)
+	return my_heading.cross(their_heading) < -0.5
 
 
 ## Can `vehicle` enter `connector` now without meeting anyone where paths cross or
@@ -445,7 +532,8 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 			if ahead > horizon:
 				break
 			var next := vehicle.next_lanes[i]
-			target = minf(target, sqrt(next.speed_limit * next.speed_limit + 2.0 * DECELERATION * maxf(ahead, 0.0)))
+			var entry_speed := _entry_speed(next) if next.is_connector() else next.speed_limit
+			target = minf(target, sqrt(entry_speed * entry_speed + 2.0 * DECELERATION * maxf(ahead, 0.0)))
 			if i == last_index:
 				var stop := sqrt(2.0 * DECELERATION * maxf(ahead + vehicle.end_distance, 0.0))
 				target = minf(target, maxf(stop, MIN_SPEED))
@@ -459,6 +547,20 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 		target = minf(target, leader_speed + gap / TIME_HEADWAY)
 	var rate := ACCELERATION if vehicle.speed < target else MAX_DECELERATION
 	vehicle.speed = move_toward(vehicle.speed, target, rate * dt)
+
+
+## Fastest a vehicle should be going as it enters `connector`: the turn's own limit, and at
+## a real junction (crossing movements) without lights, the speed of a driver looking both
+## ways (LOOK_SPEED_FRACTION). Past the stop line it speeds up again.
+func _entry_speed(connector: Lane) -> float:
+	if connector.conflicting_lane_ids.is_empty():
+		return connector.speed_limit
+	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
+	if node == null or node.control != RoadNode.JunctionControl.NONE:
+		return connector.speed_limit
+	var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
+	var road_limit := feeder.speed_limit if feeder != null else connector.speed_limit
+	return minf(connector.speed_limit, road_limit * LOOK_SPEED_FRACTION)
 
 
 ## Moves the vehicle for one tick. Returns true when it reached its stop.
@@ -572,6 +674,7 @@ static func _decrement(counts: Dictionary, key: int) -> void:
 
 func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
 	_reroute_pending = true
+	_yields.clear()
 
 
 func _request_reroute() -> void:
@@ -607,9 +710,16 @@ func reroute_delayed_vehicle(vehicle: Vehicle) -> void:
 ## Re-routes one vehicle from where it is, fixing up its queue and junction bookkeeping;
 ## a vehicle that can't reach its destination any more fails its trip.
 func _reroute_vehicle(vehicle: Vehicle) -> void:
+	var waited_for := vehicle.requested_connector
+	var waiting_since := vehicle.waiting_since
 	_stop_waiting(vehicle)
 	var old_lane := vehicle.lane
 	var ok := _reroute(vehicle)
+	if ok and not vehicle.next_lanes.is_empty() and vehicle.next_lanes[0] == waited_for \
+			and _roads.lanes.get(waited_for.id) == waited_for:
+		# Still waiting for the same turn: keep its place (and patience) in the line.
+		_start_waiting(vehicle, waited_for)
+		vehicle.waiting_since = waiting_since
 	if vehicle.lane != old_lane:
 		# Re-snapped onto a rebuilt lane: move it to that lane's queue.
 		var current := vehicle.lane
