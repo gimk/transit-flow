@@ -94,4 +94,4 @@ func _on_overlay_changed(overlay_id: StringName, shown: bool) -> void:
 
 
 func _refresh_stress_label() -> void:
-	_stress_button.text = "Stress traffic: %d  (F6)" % Game.simulation.stress.target_count
+	_stress_button.text = "Stress traffic: %d  (F6)" % Game.stress_target

@@ -40,7 +40,8 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 
 - **`sim/` is pure logic**: `RefCounted` classes, no `Node`, no autoload access, no rendering. Must be steppable headless from tests.
 - **`view/` only reads sim state**; **`tools/`** mutate the sim only through command methods on sim systems (e.g. `RoadNetwork.add_road`).
-- **Fixed tick**: the sim advances only via `Simulation.step()` (20 Hz, `Simulation.TICK_DT`), driven by the `Game` autoload. Never use frame `delta` inside the sim. Renderers interpolate with `Game.interpolation_alpha`.
+- **Fixed tick**: the sim advances only via `Simulation.step()` (20 Hz, `Simulation.TICK_DT`), driven by the `Game` autoload. Never use frame `delta` inside the sim.
+- **Threaded sim** (outside headless runs): `Game` steps the sim on a worker thread, a couple of ticks ahead of the screen, and captures a `ViewSnapshot` after each tick. Per-frame view code (anything in `_process` or redrawn every frame) reads `Game.view_from` / `view_to` / `view_alpha`, never the live sim. `Game.simulation` waits for the worker before returning it (fine for tools, events, saves; a hitch if used every frame). `Game.roads` reads road geometry without waiting (only the main thread changes roads). Sim signals the views need are relayed to `Events` on the main thread by `Game`; never connect a view directly to a sim signal. Tests run headless, where the sim steps inline.
 - Pausing = `Game.set_speed(0)`, not `get_tree().paused`.
 - Cross-system notifications go through the `Events` autoload signal bus.
 - **Everything is a lane**: roads and intersection turns are `Lane`s holding a `Curve2D`; never move vehicles tile-by-tile, never use `TileMapLayer` for roads (zones only).

@@ -97,7 +97,7 @@ func _update_preview() -> void:
 	if _dragging:
 		_end = _axis_locked(_start, _hover)
 		if _start != _end:
-			var roads := Game.simulation.roads
+			var roads := Game.roads
 			var plan := roads.plan_road(_start, _end, 0, road_type)
 			_error = plan.error
 			for point: Vector2 in plan.points:

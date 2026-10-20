@@ -98,9 +98,9 @@ func test_upgrading_part_of_a_road_splits_it() -> void:
 	_road(Vector2(1, 2), Vector2(9, 2))
 	_road(Vector2(5, 2), Vector2(9, 2), &"avenue_4lane")
 	assert_eq(roads.segments.size(), 2)
-	var types := roads.segments.values().map(func(s: RoadSegment) -> StringName: return s.road_type.id)
+	var types := roads.segments.values().map(func(s: RoadSegment) -> String: return String(s.road_type.id))
 	types.sort()
-	assert_eq(types, [&"avenue_4lane", &"local_2lane"])
+	assert_eq(types, ["avenue_4lane", "local_2lane"])
 
 
 func test_dragging_a_one_way_road_backwards_reverses_it() -> void:

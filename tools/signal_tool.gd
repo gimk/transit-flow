@@ -46,7 +46,7 @@ func handle_input(event: InputEvent) -> bool:
 func _find_junction(position: Vector2) -> int:
 	var best_id := -1
 	var best_distance := PICK_DISTANCE
-	for node: RoadNode in Game.simulation.roads.nodes.values():
+	for node: RoadNode in Game.roads.nodes.values():
 		var distance := node.position.distance_to(position)
 		if node.get_degree() >= 3 and distance <= best_distance:
 			best_id = node.id
@@ -55,7 +55,7 @@ func _find_junction(position: Vector2) -> int:
 
 
 func _update_hint() -> void:
-	var node: RoadNode = Game.simulation.roads.nodes.get(_hovered_node_id)
+	var node: RoadNode = Game.roads.nodes.get(_hovered_node_id)
 	if node == null:
 		Events.tool_hint_changed.emit(IDLE_HINT)
 	else:
@@ -63,6 +63,6 @@ func _update_hint() -> void:
 
 
 func _draw() -> void:
-	var node: RoadNode = Game.simulation.roads.nodes.get(_hovered_node_id)
+	var node: RoadNode = Game.roads.nodes.get(_hovered_node_id)
 	if node != null:
 		draw_arc(node.position, PICK_DISTANCE, 0.0, TAU, 32, HIGHLIGHT_COLOR, 2.0)

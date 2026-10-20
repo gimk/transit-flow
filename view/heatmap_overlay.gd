@@ -48,12 +48,13 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	var sim := Game.simulation
-	for lane_id: int in sim.congestion.congestion:
-		var lane: Lane = sim.roads.lanes.get(lane_id)
+	var congestion := Game.view_to.congestion
+	var roads := Game.roads
+	for lane_id: int in congestion:
+		var lane: Lane = roads.lanes.get(lane_id)
 		if lane == null:
 			continue
-		var heat := clampf(sim.congestion.congestion[lane_id] / FULL_RED, 0.0, 1.0)
+		var heat := clampf(congestion[lane_id] / FULL_RED, 0.0, 1.0)
 		var color := Color(1.0, 0.85, 0.2).lerp(Color(0.85, 0.1, 0.1), heat)
 		color.a = 0.6
 		draw_polyline(LaneBuilder.get_polyline(lane.curve), color, WIDTH)

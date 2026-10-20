@@ -1,0 +1,80 @@
+class_name ViewSnapshot
+extends RefCounted
+## What the screen needs from one simulation tick, copied out of the simulation right
+## after the tick. The simulation runs on a worker thread (see Game), so per-frame views
+## (vehicles, lights, HUD, day/night, heatmap) draw from snapshots instead of reading the
+## simulation while it is being stepped. Captured on the worker; read-only afterwards.
+
+## Sim time of the tick (sim seconds).
+var time := 0.0
+## Vehicle id -> index into the arrays below.
+var vehicle_index: Dictionary[int, int] = {}
+var positions := PackedVector2Array()
+var rotations := PackedFloat32Array()
+## Length x width per vehicle.
+var sizes := PackedVector2Array()
+var colors := PackedColorArray()
+## Light-controlled junction node id -> light (TrafficLights.Light) per phase.
+var lights: Dictionary[int, PackedInt32Array] = {}
+## Lane id -> congestion (CongestionMonitor replaces its dictionary rather than editing
+## it, so holding on to it is safe).
+var congestion: Dictionary[int, float] = {}
+
+var day := 1
+var time_text := ""
+var period_name := ""
+var hours := 0.0
+var vehicle_count := 0
+var stuck_count := 0
+var population := 0
+var employed := 0
+var jobs := 0
+var flow_percent := -1.0
+
+const STUCK_SECONDS := 30.0
+
+
+static func capture(sim: Simulation) -> ViewSnapshot:
+	var snapshot := ViewSnapshot.new()
+	snapshot.time = sim.get_sim_time()
+	var vehicles := sim.vehicles.vehicles
+	var count := vehicles.size()
+	snapshot.positions.resize(count)
+	snapshot.rotations.resize(count)
+	snapshot.sizes.resize(count)
+	snapshot.colors.resize(count)
+	var i := 0
+	var stuck := 0
+	for vehicle: Vehicle in vehicles.values():
+		snapshot.vehicle_index[vehicle.id] = i
+		snapshot.positions[i] = vehicle.position
+		snapshot.rotations[i] = vehicle.rotation
+		snapshot.sizes[i] = Vector2(vehicle.length, vehicle.width)
+		snapshot.colors[i] = VehicleRenderer.color_for_vehicle(vehicle)
+		if vehicle.stopped_time >= STUCK_SECONDS:
+			stuck += 1
+		i += 1
+	for node: RoadNode in sim.roads.nodes.values():
+		if node.has_lights():
+			var phases := PackedInt32Array()
+			for phase in node.signal_phase_count:
+				phases.append(sim.signals.get_light(node, phase))
+			snapshot.lights[node.id] = phases
+	snapshot.congestion = sim.congestion.congestion
+	snapshot.day = sim.clock.get_day()
+	snapshot.time_text = sim.clock.format_time()
+	snapshot.period_name = sim.clock.get_period_name()
+	snapshot.hours = sim.clock.get_time_of_day_hours()
+	snapshot.vehicle_count = count
+	snapshot.stuck_count = stuck
+	snapshot.population = sim.citizens.citizens.size()
+	snapshot.employed = sim.citizens.get_employed_count()
+	snapshot.jobs = sim.citizens.get_job_count()
+	snapshot.flow_percent = sim.flow.get_flow_percent(snapshot.time)
+	return snapshot
+
+
+## The light a phase of a junction showed (green if unknown, e.g. lights just added).
+func get_light(node_id: int, phase: int) -> TrafficLights.Light:
+	var phases: PackedInt32Array = lights.get(node_id, PackedInt32Array())
+	return phases[phase] as TrafficLights.Light if phase < phases.size() else TrafficLights.Light.GREEN

@@ -22,7 +22,7 @@ func _ready() -> void:
 
 func _refresh() -> void:
 	_has_lights = false
-	for node: RoadNode in Game.simulation.roads.nodes.values():
+	for node: RoadNode in Game.roads.nodes.values():
 		if node.has_lights():
 			_has_lights = true
 	queue_redraw()
@@ -35,7 +35,7 @@ func _process(_delta: float) -> void:
 
 
 func _draw() -> void:
-	var roads := Game.simulation.roads
+	var roads := Game.roads
 	for node: RoadNode in roads.nodes.values():
 		if not node.has_lights():
 			continue
@@ -54,5 +54,5 @@ func _draw() -> void:
 func _lane_light(node: RoadNode, lane: Lane) -> TrafficLights.Light:
 	var best := TrafficLights.Light.RED
 	for connector in lane.outgoing_lanes:
-		best = mini(best, Game.simulation.signals.get_light(node, connector.signal_phase)) as TrafficLights.Light
+		best = mini(best, Game.view_to.get_light(node.id, connector.signal_phase)) as TrafficLights.Light
 	return best

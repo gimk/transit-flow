@@ -28,17 +28,16 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	var clock := Game.simulation.clock
-	_time_label.text = "Day %d · %s" % [clock.get_day(), clock.format_time()]
-	_period_label.text = clock.get_period_name()
-	# Counting stuck vehicles walks every vehicle, so refresh a few times a second only.
+	# From the latest tick snapshot (see Game), not the live simulation.
+	var view := Game.view_to
+	_time_label.text = "Day %d · %s" % [view.day, view.time_text]
+	_period_label.text = view.period_name
 	if Engine.get_process_frames() % 15 == 0:
-		var sim := Game.simulation
-		_stats_label.text = "%d vehicles · %d stuck · tick %.1f ms" % [
-			sim.vehicles.vehicles.size(), sim.vehicles.get_stuck_count(), Game.average_tick_ms]
-		_city_label.text = "Pop %d · %d/%d jobs filled" % [
-			sim.citizens.citizens.size(), sim.citizens.get_employed_count(), sim.citizens.get_job_count()]
-		_update_flow(sim.flow.get_flow_percent(sim.get_sim_time()))
+		_stats_label.text = "%d vehicles · %d stuck · tick %.1f ms%s" % [
+			view.vehicle_count, view.stuck_count, Game.average_tick_ms,
+			" · sim at %.1f× (can't keep up)" % Game.effective_speed if Game.sim_lagging else ""]
+		_city_label.text = "Pop %d · %d/%d jobs filled" % [view.population, view.employed, view.jobs]
+		_update_flow(view.flow_percent)
 
 
 ## Flow %, coloured: green when traffic flows, amber when it struggles, red when jammed.

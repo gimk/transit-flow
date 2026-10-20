@@ -23,7 +23,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	color = tint_at(Game.simulation.clock.get_time_of_day_hours())
+	color = tint_at(Game.view_to.hours)
 
 
 static func tint_at(hour: float) -> Color:
