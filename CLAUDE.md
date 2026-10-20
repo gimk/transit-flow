@@ -29,6 +29,7 @@ Testing gotchas:
 - **GUT reports "All tests passed" even when a test script fails to parse.** Always grep the output for `SCRIPT ERROR` / `Parse Error`, not just the summary.
 - Integration tests (`tests/integration/`) run `main.tscn` inside a `SubViewport` and `push_input()` events into it. Don't send mouse input through the root window: GUT's on-screen output panel swallows clicks, and the headless window is tiny (64 px), so coordinates get stretched.
 - GUT's `InputSender.key_down` sets only `keycode`, but our actions bind `physical_keycode`, so send `InputEventAction`s instead.
+- `main.tscn` is hand-edited: when rewriting it, keep every node (`test_main_scene_has_its_key_nodes` guards this).
 
 Python is not installed; use bash/PowerShell or the edit tools for file manipulation.
 
@@ -44,15 +45,17 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Road edits go through `RoadNetwork` commands, which emit `changed(node_ids, segment_ids)`; views update incrementally from those ids (ids may refer to removed things). Lanes are derived data: never saved, rebuilt from centerlines. Road lanes keep their ids for the segment's lifetime; connector lanes (junction turns, `segment_id == -1`) are regenerated with new ids whenever their node changes.
 - Routing: `Simulation.router.find_route(from_lane, from_distance, to_lane, to_distance)` returns a `Route` (lane ids + start/end distances) or null. Trip endpoints are positions along road lanes, never nodes.
 - Build tools extend `BuildTool`, live under the `ToolManager` node (node name = tool id), and read the pointer with `get_pointer_position()` / `get_snapped_pointer_position()`, never `get_global_mouse_position()` (which ignores synthetic test input).
-- Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly.
+- Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly. Roads and lots are saved; citizens and vehicles are not yet (recreated from homes on load).
+- **Never connect a lambda that captures `self` to a signal of another sim object** (e.g. `roads.changed.connect(func(): _dirty = true)`): the lambda keeps `self` alive through the signal, forming a reference cycle that leaks the whole `Simulation` ("resources still in use at exit"). Connect a bound method instead.
+- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → vehicles → citizens); `step()` runs citizens (departures) then vehicles (movement, arrivals).
 
 ## Layout
 
 ```
 core/    autoloads (Game, Events) + Grid helpers
-sim/     simulation state & systems (SimClock, Simulation, roads/, routing/; later traffic/city)
+sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, citizens), traffic/ (vehicles)
 view/    renderers, camera, overlays
-tools/   player tools (ToolManager, RoadTool, BulldozeTool, RouteTool debug inspector)
+tools/   player tools (ToolManager + RoadTool, BulldozeTool, LotTool x2, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
 tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest

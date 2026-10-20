@@ -12,6 +12,8 @@ signal day_started(day: int)
 
 ## Relayed from RoadNetwork.changed. Ids may refer to things that were just removed.
 signal road_network_changed(node_ids: Array, segment_ids: Array)
+## Relayed from LotSystem.changed.
+signal lots_changed
 
 ## UI asks for a tool by id ("" = no tool); ToolManager answers with tool_changed.
 signal tool_requested(tool_id: StringName)

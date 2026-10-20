@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1b done. Next: Phase 1c.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1 done (1a–1c). Next: Phase 2a.
 
 ---
 
@@ -160,11 +160,20 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 - Connector ids change whenever their junction is rebuilt. Vehicles on a connector at that moment must be handled in Phase 2b (re-route or despawn).
 - Left turns at 4-ways cross each other's paths; conflicts between connectors are Phase 2b's conflict table.
 
-### Phase 1c — A single car
-- Green (Residential) and Yellow (Industrial) placeholder lots with access points.
-- One vehicle: route home → work, follow lanes via `sample_baked_with_rotation`, wait, drive home. Interpolated rendering.
+### Phase 1c — A single car ✅
+- `Lot` / `LotSystem`: single-cell lots (Residential green, Industrial yellow) placed with `LotTool` (H / I, click or drag); bulldozer removes lots too. Access point = nearest road-lane position within 48 px of the lot center (= the lane on the lot's side of the road), cached, recomputed after road changes. Lots are saved.
+- `Citizen` / `CitizenSystem`: one citizen per home, working at the nearest industrial lot, alternating home → work → home with an 8 s dwell. No route / no work → retry every 2 s. Citizens aren't saved; they're recreated from homes on load.
+- `Vehicle` / `VehicleSystem`: follows its route lane by lane, accelerates to the lane limit and brakes in time for slower lanes ahead and for its stop (`v = sqrt(v_next² + 2·decel·gap)`). After any road/lot change every vehicle re-routes from where it is; a vehicle on a just-replaced connector finishes it and continues from the lane it feeds; no route → trip fails and the citizen is sent home.
+- `VehicleRenderer`: one `MultiMeshInstance2D`, interpolated between ticks, one color per citizen. `LotRenderer` draws a "driveway" to the access point, or a red outline when there's no access.
 
 **Done when:** the car loops home↔work forever, turns smoothly through connectors, and reroutes correctly if a road on its path is bulldozed (or despawns cleanly if no route exists).
+
+*Notes carried forward:*
+- Vehicles drive through each other: car-following and intersection control are Phase 2b.
+- Everyone leaves at the same moment, so early convoys render as one car. The Phase 3 schedule will spread departures.
+- Access always uses the lane on the lot's side, so reaching a lot on the far side of a road means driving on to a junction or dead end and turning around. Revisit if it looks silly once traffic is dense (e.g. allow left-in at low traffic).
+- A vehicle finishing a replaced connector can jump a few px if the junction's trim radius changed.
+- Re-routing everyone on every edit is O(vehicles) A* queries (helped by the path cache). Profile in Phase 2b.
 
 ### Phase 2a — Crossings & splitting
 - Drawing a road across an existing one (same layer) splits both and creates a 4-way node. T-junctions when ending on a segment.

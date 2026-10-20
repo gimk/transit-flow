@@ -3,6 +3,15 @@ extends Node2D
 ## Routes world input to the active build tool. Tools are BuildTool children;
 ## a tool's id is its node name. Selecting the active tool again turns it off.
 
+## Input action -> tool id.
+const TOOL_SHORTCUTS := {
+	&"tool_road": &"RoadTool",
+	&"tool_bulldoze": &"BulldozeTool",
+	&"tool_route": &"RouteTool",
+	&"tool_residential": &"ResidentialTool",
+	&"tool_industrial": &"IndustrialTool",
+}
+
 var active_tool: BuildTool = null
 ## Last pointer position in viewport coordinates. Tracked from input events rather
 ## than queried from the OS, so tools also respond to synthetic input in tests.
@@ -37,13 +46,12 @@ func select_tool(tool_id: StringName) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("tool_road"):
-		select_tool(&"RoadTool")
-	elif event.is_action_pressed("tool_bulldoze"):
-		select_tool(&"BulldozeTool")
-	elif event.is_action_pressed("tool_route"):
-		select_tool(&"RouteTool")
-	elif event.is_action_pressed("tool_cancel"):
+	for action: StringName in TOOL_SHORTCUTS:
+		if event.is_action_pressed(action):
+			select_tool(TOOL_SHORTCUTS[action])
+			get_viewport().set_input_as_handled()
+			return
+	if event.is_action_pressed("tool_cancel"):
 		# First Escape aborts the current drag, the second one puts the tool away.
 		if active_tool == null or not active_tool.cancel():
 			select_tool(&"")

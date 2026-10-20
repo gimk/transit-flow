@@ -1,12 +1,14 @@
 class_name BulldozeTool
 extends BuildTool
-## Click, or hold and sweep, to remove road segments under the cursor.
+## Click, or hold and sweep, to remove road segments or lots under the cursor.
+## Roads win when the cursor is close to one; otherwise the lot in the cell is picked.
 
 const HIGHLIGHT_COLOR := Color(1.0, 0.3, 0.25, 0.55)
 const PICK_DISTANCE := 18.0
-const HINT := "Click or drag over roads to remove them"
+const HINT := "Click or drag over roads and lots to remove them"
 
 var _hovered_segment_id := -1
+var _hovered_lot_id := -1
 var _held := false
 
 
@@ -16,13 +18,20 @@ func activate() -> void:
 
 
 func _process(_delta: float) -> void:
-	var roads := Game.simulation.roads
-	var hovered := roads.find_segment_at(get_pointer_position(), PICK_DISTANCE)
-	if _held and hovered != -1:
-		roads.remove_segment(hovered)
-		hovered = -1
-	if hovered != _hovered_segment_id:
-		_hovered_segment_id = hovered
+	var sim := Game.simulation
+	var pointer := get_pointer_position()
+	var segment_id := sim.roads.find_segment_at(pointer, PICK_DISTANCE)
+	var lot_id := -1 if segment_id != -1 else sim.lots.get_lot_at_cell(Grid.world_to_cell(pointer))
+	if _held:
+		if segment_id != -1:
+			sim.roads.remove_segment(segment_id)
+			segment_id = -1
+		elif lot_id != -1:
+			sim.lots.remove_lot(lot_id)
+			lot_id = -1
+	if segment_id != _hovered_segment_id or lot_id != _hovered_lot_id:
+		_hovered_segment_id = segment_id
+		_hovered_lot_id = lot_id
 		queue_redraw()
 
 
@@ -41,7 +50,11 @@ func cancel() -> bool:
 
 
 func _draw() -> void:
-	var segment: RoadSegment = Game.simulation.roads.segments.get(_hovered_segment_id)
+	var sim := Game.simulation
+	var lot: Lot = sim.lots.lots.get(_hovered_lot_id)
+	if lot != null:
+		draw_rect(LotRenderer.get_lot_rect(lot.cell).grow(3.0), HIGHLIGHT_COLOR)
+	var segment: RoadSegment = sim.roads.segments.get(_hovered_segment_id)
 	if segment == null:
 		return
 	var points := LaneBuilder.get_polyline(segment.centerline)

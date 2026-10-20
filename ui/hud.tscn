@@ -104,6 +104,22 @@ tooltip_text = "Bulldoze (B)"
 toggle_mode = true
 text = "Bulldoze"
 
+[node name="ResidentialButton" type="Button" parent="Toolbar/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Place homes (H)"
+toggle_mode = true
+text = "Homes"
+
+[node name="IndustrialButton" type="Button" parent="Toolbar/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Place workplaces (I)"
+toggle_mode = true
+text = "Industry"
+
 [node name="RouteButton" type="Button" parent="Toolbar/Buttons"]
 unique_name_in_owner = true
 layout_mode = 2

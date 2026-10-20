@@ -9,6 +9,9 @@
 [ext_resource type="Script" path="res://tools/road_tool.gd" id="7_road_tool"]
 [ext_resource type="Script" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
 [ext_resource type="Script" path="res://tools/route_tool.gd" id="9_route_tool"]
+[ext_resource type="Script" path="res://view/lot_renderer.gd" id="10_lots"]
+[ext_resource type="Script" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
+[ext_resource type="Script" path="res://tools/lot_tool.gd" id="12_lot_tool"]
 
 [node name="Main" type="Node2D"]
 
@@ -19,6 +22,12 @@ script = ExtResource("1_grid")
 
 [node name="RoadRenderer" type="Node2D" parent="World"]
 script = ExtResource("4_roads")
+
+[node name="LotRenderer" type="Node2D" parent="World"]
+script = ExtResource("10_lots")
+
+[node name="VehicleRenderer" type="MultiMeshInstance2D" parent="World"]
+script = ExtResource("11_vehicles")
 
 [node name="LaneOverlay" type="Node2D" parent="World"]
 script = ExtResource("5_lanes")
@@ -34,6 +43,15 @@ script = ExtResource("8_bulldoze_tool")
 
 [node name="RouteTool" type="Node2D" parent="World/Tools"]
 script = ExtResource("9_route_tool")
+
+[node name="ResidentialTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_lot_tool")
+hint = "Click or drag to place homes (green). Each home gets one commuter."
+
+[node name="IndustrialTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_lot_tool")
+lot_type = 2
+hint = "Click or drag to place workplaces (yellow)"
 
 [node name="MapCamera" type="Camera2D" parent="."]
 script = ExtResource("2_camera")

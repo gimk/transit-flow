@@ -129,3 +129,33 @@ func test_route_tool_shows_route_between_two_clicked_roads() -> void:
 	roads.remove_segment(roads.find_segment_at(_grid_point(0, 2), 4.0))
 	await wait_process_frames(2)
 	assert_null(tool._route)
+
+
+func test_lot_tools_place_homes_and_workplaces_and_bulldoze_removes_them() -> void:
+	var lots := Game.simulation.lots
+	var home_cell := Grid.world_to_cell(_grid_point(-2, -2) + Vector2(32, 32))
+	var work_cell := Grid.world_to_cell(_grid_point(2, -2) + Vector2(32, 32))
+	await _press_action(&"tool_residential")
+	await _mouse_left(Grid.cell_center(home_cell), true)
+	await _mouse_left(Grid.cell_center(home_cell), false)
+	await _press_action(&"tool_industrial")
+	await _mouse_left(Grid.cell_center(work_cell), true)
+	await _mouse_left(Grid.cell_center(work_cell), false)
+	assert_eq(lots.lots[lots.get_lot_at_cell(home_cell)].type, Lot.Type.RESIDENTIAL)
+	assert_eq(lots.lots[lots.get_lot_at_cell(work_cell)].type, Lot.Type.INDUSTRIAL)
+	assert_eq(Game.simulation.citizens.citizens.size(), 1)
+
+	await _press_action(&"tool_bulldoze")
+	await _mouse_motion(Grid.cell_center(home_cell))
+	await _mouse_left(Grid.cell_center(home_cell), true)
+	await _mouse_left(Grid.cell_center(home_cell), false)
+	assert_eq(lots.get_lot_at_cell(home_cell), -1)
+	assert_eq(Game.simulation.citizens.citizens.size(), 0)
+
+
+func test_main_scene_has_its_key_nodes() -> void:
+	for path in ["World/GridRenderer", "World/RoadRenderer", "World/LotRenderer", "World/VehicleRenderer",
+			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD"]:
+		assert_not_null(_main.get_node_or_null(path), path)
+	for tool_id: StringName in ToolManager.TOOL_SHORTCUTS.values():
+		assert_not_null(_main.get_node_or_null("World/Tools/" + tool_id), "tool " + tool_id)
