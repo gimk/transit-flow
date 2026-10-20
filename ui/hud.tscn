@@ -1,6 +1,7 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://ui/hud.gd" id="1_hud"]
+[ext_resource type="Script" path="res://ui/debug_menu.gd" id="2_debug_menu"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -171,3 +172,13 @@ grow_horizontal = 2
 theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
 theme_override_constants/outline_size = 6
 horizontal_alignment = 1
+
+[node name="DebugMenu" type="PanelContainer" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -212.0
+offset_top = 48.0
+offset_right = -12.0
+grow_horizontal = 0
+script = ExtResource("2_debug_menu")

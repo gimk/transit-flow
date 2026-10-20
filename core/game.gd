@@ -41,6 +41,31 @@ func new_simulation(sim: Simulation = null) -> void:
 	Events.simulation_reset.emit()
 
 
+## Saves to the quicksave slot and tells the player how it went.
+func quick_save() -> void:
+	var error := save_game()
+	Events.notification_posted.emit("Game saved" if error == OK else "Save failed (%s)" % error_string(error))
+
+
+func quick_load() -> void:
+	var error := load_game()
+	Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
+
+
+## Starts over on an empty map.
+func new_empty_game() -> void:
+	new_simulation()
+	Events.notification_posted.emit("New empty map")
+
+
+## Steps the debug stress traffic through STRESS_TRAFFIC_STEPS (0, 250, 500 …).
+func cycle_stress_traffic() -> void:
+	var stress := simulation.stress
+	var step := (STRESS_TRAFFIC_STEPS.find(stress.target_count) + 1) % STRESS_TRAFFIC_STEPS.size()
+	stress.target_count = STRESS_TRAFFIC_STEPS[step]
+	Events.notification_posted.emit("Stress traffic: %d vehicles" % stress.target_count)
+
+
 ## Replaces the game with the "Bottleneck" playtest scenario (F7) and centers on it.
 func load_bottleneck_scenario() -> void:
 	new_simulation()
@@ -110,18 +135,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("sim_speed_3"):
 		set_speed(3)
 	elif event.is_action_pressed("quick_save"):
-		var error := save_game()
-		Events.notification_posted.emit("Game saved" if error == OK else "Save failed (%s)" % error_string(error))
+		quick_save()
 	elif event.is_action_pressed("quick_load"):
-		var error := load_game()
-		Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
+		quick_load()
 	elif event.is_action_pressed("debug_load_scenario"):
 		load_bottleneck_scenario()
 	elif event.is_action_pressed("debug_stress_traffic"):
-		var stress := simulation.stress
-		var step := (STRESS_TRAFFIC_STEPS.find(stress.target_count) + 1) % STRESS_TRAFFIC_STEPS.size()
-		stress.target_count = STRESS_TRAFFIC_STEPS[step]
-		Events.notification_posted.emit("Stress traffic: %d vehicles" % stress.target_count)
+		cycle_stress_traffic()
 	else:
 		return
 	get_viewport().set_input_as_handled()

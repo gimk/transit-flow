@@ -12,17 +12,31 @@ const ARROW_SPACING := 32.0
 const ARROW_SIZE := 4.0
 
 
+const OVERLAY_ID := &"lanes"
+
+
 func _ready() -> void:
 	visible = false
+	Events.debug_overlay_toggle_requested.connect(_on_toggle_requested)
 	Events.simulation_reset.connect(queue_redraw)
 	Events.road_network_changed.connect(func(_nodes: Array, _segments: Array) -> void: queue_redraw())
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_lane_overlay"):
-		visible = not visible
-		queue_redraw()
+		toggle()
 		get_viewport().set_input_as_handled()
+
+
+func toggle() -> void:
+	visible = not visible
+	queue_redraw()
+	Events.debug_overlay_changed.emit(OVERLAY_ID, visible)
+
+
+func _on_toggle_requested(overlay_id: StringName) -> void:
+	if overlay_id == OVERLAY_ID:
+		toggle()
 
 
 func _draw() -> void:

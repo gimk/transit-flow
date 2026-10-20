@@ -129,6 +129,10 @@ debug_load_scenario={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":4194338)]
 }
+toggle_debug_menu={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194332)]
+}
 toggle_heatmap={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":4194335)]

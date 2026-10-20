@@ -186,3 +186,40 @@ func test_bottleneck_scenario_loads() -> void:
 	var controlled := Game.simulation.roads.nodes.values().filter(
 		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.STOP_SIGN)
 	assert_eq(controlled.size(), 1)
+
+
+func _debug_button(prefix: String) -> Button:
+	for button: Button in _main.get_node("HUD/DebugMenu").find_children("*", "Button", true, false):
+		if button.text.begins_with(prefix):
+			return button
+	return null
+
+
+func test_debug_menu_buttons_drive_the_debug_functions() -> void:
+	var heatmap: HeatmapOverlay = _main.get_node("World/HeatmapOverlay")
+	var heatmap_button := _debug_button("Congestion heatmap")
+	assert_not_null(heatmap_button)
+	heatmap_button.pressed.emit()
+	assert_true(heatmap.visible, "button shows the heatmap")
+	heatmap.toggle()  # As if F4 was pressed.
+	assert_false(heatmap_button.button_pressed, "button follows the keyboard toggle")
+
+	_debug_button("Stress traffic").pressed.emit()
+	assert_eq(Game.simulation.stress.target_count, Game.STRESS_TRAFFIC_STEPS[1])
+	await wait_process_frames(20)
+	assert_string_contains(_debug_button("Stress traffic").text, str(Game.STRESS_TRAFFIC_STEPS[1]))
+
+	_debug_button("Bottleneck").pressed.emit()
+	assert_eq(Game.simulation.citizens.citizens.size(), 28)
+	_debug_button("New empty map").pressed.emit()
+	assert_eq(Game.simulation.roads.segments.size(), 0)
+
+
+func test_debug_menu_folds_away() -> void:
+	var menu: DebugMenu = _main.get_node("HUD/DebugMenu")
+	var body: Control = menu.get_child(0).get_child(0).get_child(1)
+	assert_true(body.visible)
+	await _press_action(&"toggle_debug_menu")
+	assert_false(body.visible)
+	await _press_action(&"toggle_debug_menu")
+	assert_true(body.visible)

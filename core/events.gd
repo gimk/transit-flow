@@ -21,6 +21,11 @@ signal tool_changed(tool_id: StringName)
 ## Contextual help or error text for the active tool ("" hides it).
 signal tool_hint_changed(text: String)
 
+## Debug views (overlay ids: &"lanes", &"heatmap"). UI asks with *_toggle_requested;
+## the overlay answers with *_changed so buttons and shortcuts stay in sync.
+signal debug_overlay_toggle_requested(overlay_id: StringName)
+signal debug_overlay_changed(overlay_id: StringName, shown: bool)
+
 ## Ask the map camera to center on a world position.
 signal camera_focus_requested(world_position: Vector2)
 
