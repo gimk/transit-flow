@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://tools/tool_manager.gd" id="6_tools"]
 [ext_resource type="Script" path="res://tools/road_tool.gd" id="7_road_tool"]
 [ext_resource type="Script" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
+[ext_resource type="Script" path="res://tools/route_tool.gd" id="9_route_tool"]
 
 [node name="Main" type="Node2D"]
 
@@ -30,6 +31,9 @@ script = ExtResource("7_road_tool")
 
 [node name="BulldozeTool" type="Node2D" parent="World/Tools"]
 script = ExtResource("8_bulldoze_tool")
+
+[node name="RouteTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("9_route_tool")
 
 [node name="MapCamera" type="Camera2D" parent="."]
 script = ExtResource("2_camera")

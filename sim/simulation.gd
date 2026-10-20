@@ -9,8 +9,14 @@ const TICK_DT := 1.0 / TICK_RATE
 const SAVE_VERSION := 1
 
 var clock := SimClock.new()
-var roads := RoadNetwork.new()
+var roads: RoadNetwork
+var router: Router
 var tick_count := 0
+
+
+func _init(p_roads: RoadNetwork = null) -> void:
+	roads = p_roads if p_roads != null else RoadNetwork.new()
+	router = Router.new(roads)
 
 
 func step() -> void:
@@ -36,8 +42,7 @@ func to_dict() -> Dictionary:
 static func from_dict(data: Dictionary) -> Simulation:
 	if int(data.get("version", -1)) != SAVE_VERSION:
 		return null
-	var sim := Simulation.new()
+	var sim := Simulation.new(RoadNetwork.from_dict(data.roads))
 	sim.tick_count = int(data.tick_count)
 	sim.clock.total_minutes = float(data.clock_minutes)
-	sim.roads = RoadNetwork.from_dict(data.roads)
 	return sim

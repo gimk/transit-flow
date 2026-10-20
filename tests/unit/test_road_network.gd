@@ -18,12 +18,13 @@ func test_road_type_resource_loads() -> void:
 	assert_eq(road_type.id, &"local_2lane")
 
 
-func test_add_road_creates_two_nodes_one_segment_two_lanes() -> void:
+func test_add_road_creates_two_nodes_one_segment_two_road_lanes() -> void:
 	var id := _add(Vector2(0, 0), Vector2(128, 0))
 	assert_ne(id, -1)
 	assert_eq(roads.nodes.size(), 2)
 	assert_eq(roads.segments.size(), 1)
-	assert_eq(roads.lanes.size(), 2)
+	assert_eq(roads.segments[id].lane_ids.size(), 2)
+	assert_eq(roads.lanes.size(), 4, "2 road lanes + a U-turn connector at each dead end")
 
 
 func test_lanes_connect_the_segment_nodes_in_both_directions() -> void:
@@ -92,7 +93,7 @@ func test_remove_segment_removes_lanes_and_orphan_nodes_only() -> void:
 	_add(Vector2(128, 0), Vector2(128, 128))
 	assert_true(roads.remove_segment(first))
 	assert_eq(roads.segments.size(), 1)
-	assert_eq(roads.lanes.size(), 2)
+	assert_eq(roads.lanes.size(), 4, "2 road lanes + 2 dead-end U-turns")
 	assert_eq(roads.nodes.size(), 2, "the shared corner node is kept")
 	assert_eq(roads.find_node_at(Vector2(0, 0)), -1, "the dead-end node is removed")
 
@@ -129,7 +130,7 @@ func test_save_round_trip_through_json() -> void:
 	var loaded := RoadNetwork.from_dict(parsed)
 
 	assert_eq_deep(loaded.to_dict(), saved)
-	assert_eq(loaded.lanes.size(), 4)
+	assert_eq(loaded.lanes.size(), 8, "4 road lanes + 2 corner connectors + 2 dead-end U-turns")
 	assert_eq(loaded.nodes[loaded.find_node_at(Vector2(128, 0))].get_degree(), 2)
 	# Ids keep counting from where the saved network left off.
 	var next_id := loaded.add_road(Vector2(0, 0), Vector2(0, 128), road_type)

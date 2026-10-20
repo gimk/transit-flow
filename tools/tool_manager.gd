@@ -41,6 +41,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		select_tool(&"RoadTool")
 	elif event.is_action_pressed("tool_bulldoze"):
 		select_tool(&"BulldozeTool")
+	elif event.is_action_pressed("tool_route"):
+		select_tool(&"RouteTool")
 	elif event.is_action_pressed("tool_cancel"):
 		# First Escape aborts the current drag, the second one puts the tool away.
 		if active_tool == null or not active_tool.cancel():

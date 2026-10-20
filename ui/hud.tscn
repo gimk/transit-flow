@@ -104,6 +104,14 @@ tooltip_text = "Bulldoze (B)"
 toggle_mode = true
 text = "Bulldoze"
 
+[node name="RouteButton" type="Button" parent="Toolbar/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Route inspector (T): click two roads to see the quickest route"
+toggle_mode = true
+text = "Route"
+
 [node name="HintLabel" type="Label" parent="."]
 unique_name_in_owner = true
 anchors_preset = 7

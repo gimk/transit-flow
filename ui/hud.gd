@@ -11,6 +11,7 @@ const NOTIFICATION_SECONDS := 2.0
 @onready var _tool_buttons: Dictionary[StringName, Button] = {
 	&"RoadTool": %RoadButton,
 	&"BulldozeTool": %BulldozeButton,
+	&"RouteTool": %RouteButton,
 }
 @onready var _hint_label: Label = %HintLabel
 @onready var _notification_label: Label = %NotificationLabel

@@ -110,3 +110,22 @@ func test_quick_save_and_load_restores_roads() -> void:
 	var renderer: RoadRenderer = _main.get_node("World/RoadRenderer")
 	assert_eq(renderer.get_node("Surfaces").get_child_count(), 1, "renderer rebuilt after load")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+func test_route_tool_shows_route_between_two_clicked_roads() -> void:
+	var t := RoadType.load_by_id(&"local_2lane")
+	var roads := Game.simulation.roads
+	roads.add_road(_grid_point(-3, 0), _grid_point(0, 0), t)
+	roads.add_road(_grid_point(0, 0), _grid_point(0, 3), t)
+	await _press_action(&"tool_route")
+	var tool: RouteTool = _main.get_node("World/Tools/RouteTool")
+	# South side of the east-west road = eastbound lane; west side of the north-south road = southbound.
+	await _mouse_left(_grid_point(-2, 0) + Vector2(0, 7), true)
+	await _mouse_left(_grid_point(0, 2) + Vector2(-7, 0), true)
+	assert_not_null(tool._route)
+	assert_eq(tool._route.lane_ids.size(), 3)
+	assert_eq(roads.lanes[tool._route.lane_ids[1]].turn, Lane.Turn.RIGHT)
+	# Bulldozing a road on the route clears it rather than leaving a stale drawing.
+	roads.remove_segment(roads.find_segment_at(_grid_point(0, 2), 4.0))
+	await wait_process_frames(2)
+	assert_null(tool._route)

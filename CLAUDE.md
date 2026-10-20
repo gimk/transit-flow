@@ -41,7 +41,8 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Cross-system notifications go through the `Events` autoload signal bus.
 - **Everything is a lane**: roads and intersection turns are `Lane`s holding a `Curve2D`; never move vehicles tile-by-tile, never use `TileMapLayer` for roads (zones only).
 - Grid snapping is a UI aid only (`Grid.snap_to_point`); the sim works in world pixels.
-- Road edits go through `RoadNetwork` commands, which emit `changed(node_ids, segment_ids)`; views update incrementally from those ids (ids may refer to removed things). Lanes are derived data: never saved, rebuilt from centerlines.
+- Road edits go through `RoadNetwork` commands, which emit `changed(node_ids, segment_ids)`; views update incrementally from those ids (ids may refer to removed things). Lanes are derived data: never saved, rebuilt from centerlines. Road lanes keep their ids for the segment's lifetime; connector lanes (junction turns, `segment_id == -1`) are regenerated with new ids whenever their node changes.
+- Routing: `Simulation.router.find_route(from_lane, from_distance, to_lane, to_distance)` returns a `Route` (lane ids + start/end distances) or null. Trip endpoints are positions along road lanes, never nodes.
 - Build tools extend `BuildTool`, live under the `ToolManager` node (node name = tool id), and read the pointer with `get_pointer_position()` / `get_snapped_pointer_position()`, never `get_global_mouse_position()` (which ignores synthetic test input).
 - Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly.
 
@@ -49,9 +50,9 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 
 ```
 core/    autoloads (Game, Events) + Grid helpers
-sim/     simulation state & systems (SimClock, Simulation, roads/; later routing/traffic/city)
+sim/     simulation state & systems (SimClock, Simulation, roads/, routing/; later traffic/city)
 view/    renderers, camera, overlays
-tools/   player build tools (ToolManager, RoadTool, BulldozeTool)
+tools/   player tools (ToolManager, RoadTool, BulldozeTool, RouteTool debug inspector)
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
 tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest

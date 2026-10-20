@@ -2,10 +2,11 @@ class_name LaneOverlay
 extends Node2D
 ## Debug view (toggle: F3): every lane as a thin line with direction arrows,
 ## and every node as a dot. Forward lanes (start -> end of their segment) are cyan,
-## backward lanes orange.
+## backward lanes orange, junction connectors violet (no arrows: they're short).
 
 const FORWARD_COLOR := Color(0.3, 0.9, 1.0, 0.9)
 const BACKWARD_COLOR := Color(1.0, 0.65, 0.2, 0.9)
+const CONNECTOR_COLOR := Color(0.8, 0.55, 1.0, 0.8)
 const NODE_COLOR := Color(1, 1, 1, 0.8)
 const ARROW_SPACING := 32.0
 const ARROW_SIZE := 4.0
@@ -27,6 +28,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func _draw() -> void:
 	var roads := Game.simulation.roads
 	for lane: Lane in roads.lanes.values():
+		if lane.is_connector():
+			draw_polyline(LaneBuilder.get_polyline(lane.curve), CONNECTOR_COLOR, 1.0, true)
+			continue
 		var segment := roads.segments[lane.segment_id]
 		var color := FORWARD_COLOR if lane.from_node_id == segment.start_node_id else BACKWARD_COLOR
 		draw_polyline(LaneBuilder.get_polyline(lane.curve), color, 1.0, true)

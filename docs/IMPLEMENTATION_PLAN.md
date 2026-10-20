@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1a done. Next: Phase 1b.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1b done. Next: Phase 1c.
 
 ---
 
@@ -146,12 +146,19 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 - Lanes currently run node-to-node and overlap at corners. Phase 1b must trim lanes back from junction nodes (by about half the widest connected road) so connector lanes have room; that makes a segment's lanes depend on its nodes' other segments, so rebuild lanes for all segments touching a dirty node.
 - Node/segment lookups are linear scans. Fine for now; add a spatial hash when maps get large (profile in Phase 2b).
 
-### Phase 1b — Lane graph + routing
-- Connector lanes at nodes (straight / left / right; no U-turns).
-- `LaneGraph` (AStar2D subclass) with travel-time costs; `Router` returning lane-id lists.
-- Debug: click two points on roads → route is drawn.
+### Phase 1b — Lane graph + routing ✅
+- Road lanes are trimmed back from junction nodes by half the widest connected road (dead ends untrimmed). Road lane ids are stable for a segment's lifetime; only their geometry is refreshed.
+- Connector lanes per node (`Lane.segment_id == -1`, `Lane.turn`): straight / right / left, never U-turns at junctions; **dead ends get a U-turn connector** so no lane is a trap. Multi-lane rule: straight keeps its lane, right turns curb→curb, left turns center→center. Connector speed = slower lane × turn factor.
+- `Lane.outgoing_lane_ids` wires road lane → connectors → next road lane.
+- `LaneGraph` (AStar2D, one point per lane, cost = travel time × (1 + congestion)), `Route`, `Router` (lazy graph rebuild on network change, path cache per lane pair, same-lane-behind handled by looping).
+- `RouteTool` debug inspector (T): click origin and destination on any road lane, see route + free-flow time.
 
 **Done when:** routes are correct on a hand-built test map (including "longer but faster" choices once a second road type exists), with unit tests on a few fixed layouts.
+
+*Notes carried forward:*
+- The graph is rebuilt in full on any network change. Fine at this scale; make it incremental if profiling in Phase 2b says so.
+- Connector ids change whenever their junction is rebuilt. Vehicles on a connector at that moment must be handled in Phase 2b (re-route or despawn).
+- Left turns at 4-ways cross each other's paths; conflicts between connectors are Phase 2b's conflict table.
 
 ### Phase 1c — A single car
 - Green (Residential) and Yellow (Industrial) placeholder lots with access points.
