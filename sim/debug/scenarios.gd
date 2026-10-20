@@ -4,10 +4,11 @@ extends RefCounted
 
 
 ## "Bottleneck": a suburb of 28 homes (56 commuters) in the west commutes along one main
-## road to 24 factories in the east, through a stop-sign T-junction that also takes a
-## side street of commuters. Everyone leaves within ~30 s, so a queue builds at the stop sign.
+## road to 24 factories in the east, through a T-junction with traffic lights that also
+## serve a side street of commuters. Everyone leaves within ~30 s, so a queue builds at
+## the lights.
 ## Returns positions (world px) tests need:
-## - "junction": the stop-sign junction,
+## - "junction": the light-controlled junction,
 ## - "bypass": [from, to] pairs for three roads that route around it (not built).
 static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 	var road_type := RoadType.load_by_id(&"local_2lane")
@@ -15,7 +16,7 @@ static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 
 	sim.roads.add_road(at.call(-15, 0), at.call(15, 0), road_type)
 	sim.roads.add_road(at.call(0, 0), at.call(0, 7), road_type)
-	sim.roads.set_node_control(sim.roads.find_node_at(at.call(0, 0)), RoadNode.JunctionControl.STOP_SIGN)
+	sim.roads.set_node_control(sim.roads.find_node_at(at.call(0, 0)), RoadNode.JunctionControl.TRAFFIC_LIGHT)
 
 	for x in range(-14, -2):
 		sim.lots.add_lot(origin + Vector2i(x, -1), Lot.Type.RESIDENTIAL)

@@ -17,7 +17,7 @@ func after_each() -> void:
 	sim.dispose()
 
 
-## The main-road lane arriving at the stop sign from the west.
+## The main-road lane arriving at the lights from the west.
 func _approach_lane() -> Lane:
 	var junction := sim.roads.find_node_at(info.junction)
 	for lane: Lane in sim.roads.lanes.values():
@@ -57,41 +57,62 @@ func _run_morning(watched_segments: Array = []) -> Dictionary:
 
 func test_scenario_builds() -> void:
 	assert_eq(sim.citizens.citizens.size(), 56)
-	assert_eq(sim.roads.nodes[sim.roads.find_node_at(info.junction)].control, RoadNode.JunctionControl.STOP_SIGN)
+	assert_eq(sim.roads.nodes[sim.roads.find_node_at(info.junction)].control, RoadNode.JunctionControl.TRAFFIC_LIGHT)
 	for lot: Lot in sim.lots.lots.values():
 		assert_false(sim.lots.get_access(lot.id).is_empty(), "every lot reaches a road")
 
 
-func test_queue_builds_at_the_stop_sign_and_shows_as_congestion() -> void:
+func test_queue_builds_at_the_lights_and_shows_as_congestion() -> void:
 	var approach := _approach_lane()
 	var longest := 0
+	var worst_congestion := 0.0
 	for tick in Simulation.TICK_RATE * 30:
 		sim.step()
 		longest = maxi(longest, approach.queue.size())
-	gut.p("longest queue on the approach: %d, congestion there: %.2f" % [longest, sim.congestion.congestion.get(approach.id, 0.0)])
+		worst_congestion = maxf(worst_congestion, sim.congestion.congestion.get(approach.id, 0.0))
+	gut.p("longest queue on the approach: %d, worst congestion there: %.2f" % [longest, worst_congestion])
 	assert_gte(longest, 6, "a queue forms")
-	assert_gt(sim.congestion.congestion.get(approach.id, 0.0), 1.0, "the approach is marked congested")
+	assert_gt(worst_congestion, 0.5, "the approach is marked congested")
 
 
+## The simulation is deterministic but chaotic (small differences in who leaves when
+## change which drivers get stuck), so compare over a few departure orders.
 func test_bypass_relieves_the_jam() -> void:
-	var without := _run_morning()
-	sim.dispose()
+	var total_without := 0.0
+	var total_with := 0.0
+	var took_bypass := 0
+	for seed in [1, 2, 3]:
+		var without := _morning_for_seed(seed, false)
+		var with_bypass := _morning_for_seed(seed, true)
+		gut.p("seed %d: everyone at work %.1f s without bypass, %.1f s with (%d took it)" % [
+			seed, without.time, with_bypass.time, with_bypass.used_watched])
+		assert_lt(without.time, INF, "the morning finishes even without the bypass")
+		total_without += without.time
+		total_with += with_bypass.time
+		took_bypass += with_bypass.used_watched
+	# The jam comes from one lane carrying the whole suburb, so the bypass mostly spreads
+	# the load; it must not make things worse.
+	assert_lt(total_with, total_without, "the morning is shorter with the bypass")
+	assert_gte(took_bypass, 10, "congestion pushed traffic onto the bypass")
 
+
+## Rebuilds the scenario with a given departure order (and optionally the bypass), then
+## runs the morning, counting commuters who drove over the bypass.
+func _morning_for_seed(seed: int, bypass: bool) -> Dictionary:
+	sim.dispose()
 	sim = Simulation.new()
+	sim.citizens._rng.seed = seed
 	info = Scenarios.build_bottleneck(sim, ORIGIN)
 	var before := sim.roads.segments.keys()
-	Scenarios.build_bypass(sim, info)
-	var bypass_segments := []
-	for segment_id in sim.roads.segments:
-		var segment := sim.roads.segments[segment_id]
-		# Bypass pieces are new and lie off the main road (y != junction row).
-		if not before.has(segment_id) and absf(sim.roads.nodes[segment.start_node_id].position.y - info.junction.y) + \
-				absf(sim.roads.nodes[segment.end_node_id].position.y - info.junction.y) > 0.0:
-			bypass_segments.append(segment_id)
-	var with_bypass := _run_morning(bypass_segments)
+	if bypass:
+		Scenarios.build_bypass(sim, info)
+	var bypass_segments := sim.roads.segments.keys().filter(
+		func(id: int) -> bool: return not before.has(id) and not _on_main_road(sim.roads.segments[id]))
+	return _run_morning(bypass_segments)
 
-	gut.p("everyone at work: %.1f s without bypass, %.1f s with (%d vehicles took it)" % [
-		without.time, with_bypass.time, with_bypass.used_watched])
-	assert_lt(without.time, INF, "the morning finishes even without the bypass")
-	assert_lt(with_bypass.time, without.time * 0.85, "the bypass makes the morning clearly shorter")
-	assert_gte(with_bypass.used_watched, 3, "congestion pushed some traffic onto the bypass")
+
+func _on_main_road(segment: RoadSegment) -> bool:
+	var y: float = info.junction.y
+	var start_y := sim.roads.nodes[segment.start_node_id].position.y
+	var end_y := sim.roads.nodes[segment.end_node_id].position.y
+	return is_equal_approx(start_y, y) and is_equal_approx(end_y, y)

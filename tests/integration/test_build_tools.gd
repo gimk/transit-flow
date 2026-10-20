@@ -188,7 +188,7 @@ func test_signal_tool_cycles_junction_control() -> void:
 	var node := roads.nodes[roads.find_node_at(_grid_point(0, 0))]
 	await _press_action(&"tool_signals")
 	await _mouse_motion(_grid_point(0, 0) + Vector2(5, 5))
-	var expected := [RoadNode.JunctionControl.STOP_SIGN, RoadNode.JunctionControl.TRAFFIC_LIGHT, RoadNode.JunctionControl.NONE]
+	var expected := [RoadNode.JunctionControl.TRAFFIC_LIGHT, RoadNode.JunctionControl.NONE]
 	for control in expected:
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), true)
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), false)
@@ -200,7 +200,7 @@ func test_bottleneck_scenario_loads() -> void:
 	await wait_process_frames(2)
 	assert_eq(Game.simulation.citizens.citizens.size(), 56)
 	var controlled := Game.simulation.roads.nodes.values().filter(
-		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.STOP_SIGN)
+		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.TRAFFIC_LIGHT)
 	assert_eq(controlled.size(), 1)
 
 

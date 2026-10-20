@@ -165,7 +165,7 @@ text = "Dezone"
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
-tooltip_text = "Junction control (L): click a junction to cycle none / stop sign / traffic lights"
+tooltip_text = "Traffic lights (L): click a junction to toggle its lights"
 toggle_mode = true
 text = "Signals"
 

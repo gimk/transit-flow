@@ -86,20 +86,18 @@ func test_late_drivers_turn_impatient_then_give_up() -> void:
 	assert_signal_emitted_with_parameters(sim.vehicles, "vehicle_failed", [vehicle])
 
 
-## Flow reacts to the network: the bottleneck morning scores worse with its stop sign
-## than with the junction left uncontrolled.
-func test_flow_reacts_to_junction_control() -> void:
-	var with_stop := _bottleneck_flow(RoadNode.JunctionControl.STOP_SIGN)
-	var uncontrolled := _bottleneck_flow(RoadNode.JunctionControl.NONE)
-	gut.p("bottleneck morning flow: %.0f%% with the stop sign, %.0f%% uncontrolled" % [with_stop, uncontrolled])
-	assert_gt(uncontrolled, with_stop + 5.0)
-
-
-func _bottleneck_flow(control: RoadNode.JunctionControl) -> float:
-	sim.dispose()
-	sim = Simulation.new()
+## Flow reacts to the network: cutting the road the commuters need mid-morning makes
+## their trips fail, and Flow drops.
+func test_flow_drops_when_the_commute_road_is_cut() -> void:
 	var info := Scenarios.build_bottleneck(sim, Vector2i(30, 30))
-	sim.roads.set_node_control(sim.roads.find_node_at(info.junction), control)
-	for tick in Simulation.TICK_RATE * 120:
+	for tick in Simulation.TICK_RATE * 40:
 		sim.step()
-	return sim.flow.get_flow_percent(sim.get_sim_time())
+	var before := sim.flow.get_flow_percent(sim.get_sim_time())
+	# The main road just east of the junction, between the suburb and the factories.
+	sim.roads.remove_segment(sim.roads.find_segment_at(info.junction + Vector2(G, 0), 4.0))
+	for tick in Simulation.TICK_RATE * 20:
+		sim.step()
+	var after := sim.flow.get_flow_percent(sim.get_sim_time())
+	gut.p("bottleneck flow: %.0f%% before cutting the road, %.0f%% after" % [before, after])
+	assert_gt(before, 50.0, "the morning was flowing")
+	assert_lt(after, before - 10.0, "failed trips pull Flow down")

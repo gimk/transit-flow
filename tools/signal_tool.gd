@@ -1,16 +1,15 @@
 class_name SignalTool
 extends BuildTool
-## Click a junction where 3+ roads meet to cycle how traffic takes turns there:
-## none (first come, first served) -> stop sign -> traffic lights -> none.
+## Click a junction where 3+ roads meet to toggle traffic lights on or off (without them
+## traffic takes turns first come, first served).
 
 const PICK_DISTANCE := 24.0
 const HIGHLIGHT_COLOR := Color(1, 1, 1, 0.9)
 const CONTROL_NAMES := {
 	RoadNode.JunctionControl.NONE: "No control (first come, first served)",
-	RoadNode.JunctionControl.STOP_SIGN: "Stop sign (everyone stops first)",
 	RoadNode.JunctionControl.TRAFFIC_LIGHT: "Traffic lights (directions alternate)",
 }
-const IDLE_HINT := "Click a junction (3+ roads) to cycle: none → stop sign → traffic lights"
+const IDLE_HINT := "Click a junction (3+ roads) to toggle traffic lights"
 
 var _hovered_node_id := -1
 

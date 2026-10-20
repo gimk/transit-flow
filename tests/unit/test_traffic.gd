@@ -130,10 +130,6 @@ func test_stress_grid_with_traffic_lights() -> void:
 	_stress_grid(RoadNode.JunctionControl.TRAFFIC_LIGHT)
 
 
-func test_stress_grid_with_stop_signs() -> void:
-	_stress_grid(RoadNode.JunctionControl.STOP_SIGN)
-
-
 ## 250 random trips on a 5 x 5 street grid for 2 sim minutes, with every junction under
 ## `control`, checking the safety rules on every tick.
 func _stress_grid(control: RoadNode.JunctionControl) -> void:

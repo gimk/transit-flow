@@ -268,7 +268,7 @@ func to_dict() -> Dictionary:
 			"id": node.id,
 			"position": [node.position.x, node.position.y],
 			"layer": node.elevation_layer,
-			"control": node.control,
+			"control": RoadNode.JunctionControl.find_key(node.control).to_lower(),
 		})
 	var segment_list: Array = []
 	for segment: RoadSegment in segments.values():
@@ -298,7 +298,7 @@ static func from_dict(data: Dictionary) -> RoadNetwork:
 	var network := RoadNetwork.new()
 	for entry: Dictionary in data.get("nodes", []):
 		var node := RoadNode.new(int(entry.id), Vector2(entry.position[0], entry.position[1]), int(entry.layer))
-		node.control = int(entry.get("control", RoadNode.JunctionControl.NONE)) as RoadNode.JunctionControl
+		node.control = _control_from_save(entry.get("control", "none"))
 		network.nodes[node.id] = node
 	for entry: Dictionary in data.get("segments", []):
 		var road_type := RoadType.load_by_id(StringName(entry.type))
@@ -523,6 +523,15 @@ func _compute_conflicts(node: RoadNode) -> void:
 			b.conflicting_lane_ids.append(a.id)
 			a.conflict_zones[b.id] = zone_a
 			b.conflict_zones[a.id] = zone_b
+
+
+## Junction control is saved by name. Older saves stored the enum number, back when it
+## also had stop signs (0 none, 1 stop sign, 2 lights): stop signs load as no control.
+static func _control_from_save(value: Variant) -> RoadNode.JunctionControl:
+	if value is String:
+		var key: String = value.to_upper()
+		return RoadNode.JunctionControl.get(key, RoadNode.JunctionControl.NONE)
+	return RoadNode.JunctionControl.TRAFFIC_LIGHT if int(value) == 2 else RoadNode.JunctionControl.NONE
 
 
 static func _with_end_zone(zone: Vector2, length: float) -> Vector2:

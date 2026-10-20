@@ -218,8 +218,8 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - Lanes and vehicles reference each other: discarded networks/simulations must be `dispose()`d (see CLAUDE.md).
 
 ### Phase 2c — Signals & the first jam ✅ (playtest pending)
-- Junction control per node (`RoadNode.control`: none / stop sign / traffic lights, saved; only for 3+ roads, reset when a junction loses roads). `RoadNetwork.set_node_control()` command; `SignalTool` (L) cycles it.
-- Stop sign: a vehicle must stand at the stop line for 0.3 s before asking to enter; then the usual conflict / room / first-come rules apply.
+- Junction control per node (`RoadNode.control`: none / traffic lights, saved by name; only for 3+ roads, reset when a junction loses roads). `RoadNetwork.set_node_control()` command; `SignalTool` (L) toggles it.
+- Stop signs existed in this phase and were removed after playtesting (2026-10-20): next to an uncontrolled junction with conflict-zone timing they added nothing, and actuated lights cover busy junctions. Old saves load their stop signs as no control.
 - Traffic lights (`TrafficLights`, vehicle-actuated): two phases by road axis (`Lane.signal_phase`). A light rests on green while nobody waits elsewhere; otherwise min green 3 s, extended while its vehicles keep moving, handed over when its approach is empty or blocked (front vehicle standing 1 s+ on green) or after max 12 s; 1 s clearance; phases without waiting vehicles are skipped. Only green lanes may enter; left turns still yield via the conflict zones.
 - Junction entry uses conflict *zones* (the stretch where two connector paths come within 8 px) with timing: a vehicle may go if every vehicle on a conflicting connector will have left the shared zone 0.5 s before it could get there. Non-meeting movements run in parallel and waiting vehicles start before the junction is empty. Safety net: inside the junction a vehicle stops short of a zone an earlier entrant hasn't cleared.
 - Playtest feedback round 1 (stop signs / lights too slow, one-by-one, start-up delay, lights too long and blind) addressed by the two bullets above. Grid stress test, 250 vehicles, arrivals in 2 sim-minutes: none 674 → 942, stop signs 534 → 623, lights 442 → 703; no zone overlaps or stuck vehicles under any control.
@@ -230,7 +230,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 
 **Done when:** a single bottleneck intersection visibly jams, adding a parallel road visibly relieves it, and rerouting is observable. ⭐ **First "is this fun?" checkpoint** — play it before going further.
 
-**How to playtest:** run the game, press **F7** (Bottleneck scenario), **F4** (heatmap), **3** (4× speed). Watch the queue form at the stop sign, then try: build your own bypass (R), switch the junction to lights or back to uncontrolled (L), add homes/industry (H/I), F6 for extra random traffic. Questions to answer: is watching and fixing the jam satisfying? Is it readable? What's missing to make it a game?
+**How to playtest:** run the game, press **F7** (Bottleneck scenario), **F4** (heatmap), **3** (4× speed). Watch the queue form at the lights, then try: build your own bypass (R), toggle the lights (L), zone more (H/C/I), F6 for extra random traffic. Questions to answer: is watching and fixing the jam satisfying? Is it readable? What's missing to make it a game?
 
 *Notes carried forward:*
 - Only vehicles that are held up re-route, at most 50 per 5 s; free-flowing vehicles keep their routes until the network changes.
@@ -243,7 +243,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - **3a Zoning.** `ZoneSystem`: paint R/C/I cells (`ZoneTool`: drag a rectangle; H/C/I, X dezone). A zoned cell next to a road develops into a building (`Lot`) after 2–10 s; cells out of road reach wait (dashed red outline) and re-check when roads change. Rezoning / dezoning / bulldozing removes the building. Zones are drawn with `_draw` rather than a `TileMapLayer` (simpler; revisit if large maps get slow). Vehicles got kinds (car 11×6, truck 17×7) with real lengths used everywhere.
 - **3b City life.** `ExternalConnections`: highway points on the map edge (new maps start with one entering from the west, HWY sign). `CitizenSystem`: 2 residents per home, jobs at the nearest shop (2 jobs) or factory (3 jobs) with room, personal schedules (leave home 06:30–09:00, leave work 16:00–19:00, 35% shop 30–60 min on the way home). `FreightSystem`: trucks for raw materials and imports from the highway, goods factory → shop, exports, at a rate peaking 10:00–16:00. (The planned separate `TripScheduler` lives inside these two systems.)
 - **3c Score.** Patience: trips are timed against their free-flow time (+2 s); past 2× + 15 s the driver turns red, past 4× + 60 s they give up (failed trip). `FlowMetric`: per trip `ideal / actual` capped at 1, failures 0, averaged over the last game day; HUD shows Flow % (green ≥ 80, amber ≥ 60, red), population and jobs. `DayNight` `CanvasModulate` tint (debug toggle).
-- Measured: one day in a small zoned city gives cars/trucks started per period: morning 80/22, midday 0/84, evening 88/24, night 8/20 (flow 88%). Bottleneck morning flow: 62% with its stop sign vs 90% uncontrolled.
+- Measured: one day in a small zoned city gives cars/trucks started per period: morning 80/22, midday 0/84, evening 88/24, night 8/20 (flow 88%). Flow reacts to the network: cutting the bottleneck scenario's commute road mid-morning takes Flow from 88% to 30%.
 
 **Done when:** one in-game day plays through all four pulse periods with visibly different traffic patterns, and Flow % reacts to network changes.
 

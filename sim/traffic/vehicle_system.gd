@@ -12,7 +12,7 @@ extends RefCounted
 ##
 ## Junctions. Conflicting connectors (paths that cross or merge) only share a short
 ## stretch, their conflict zone. A vehicle at a stop line may enter its connector if:
-## - the junction's control allows it (stop sign: it stood at the line; lights: green),
+## - the junction's traffic light, if it has one, is green for its lane,
 ## - everyone on or allowed onto a conflicting connector will have left the shared zone
 ##   before this vehicle could reach it (_conflicts_clear), so movements that don't meet
 ##   flow in parallel and a waiting vehicle starts before the junction is empty,
@@ -57,10 +57,6 @@ const IMPATIENT_FACTOR := 2.0
 const IMPATIENT_GRACE := 15.0
 const GIVE_UP_FACTOR := 4.0
 const GIVE_UP_GRACE := 60.0
-## A vehicle within this of its stop line counts as standing at it.
-const STOP_LINE_TOLERANCE := 2.0
-## How long a vehicle must stand at a stop sign before it may go.
-const STOP_DWELL := 0.3
 ## Safety margin between one vehicle leaving a conflict zone and the next reaching it.
 const CONFLICT_MARGIN := 0.5  ## Sim seconds.
 ## Below this speed a vehicle's progress through a junction can't be predicted.
@@ -191,7 +187,7 @@ func step(dt: float) -> void:
 	if _reroute_pending:
 		_reroute_pending = false
 		_reroute_all()
-	_prepare(dt)
+	_prepare()
 	var arrived: Array[Vehicle] = []
 	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
@@ -222,7 +218,7 @@ func step(dt: float) -> void:
 
 # --- Pass 1: what is ahead, junction requests ----------------------------------
 
-func _prepare(dt: float) -> void:
+func _prepare() -> void:
 	for lane: Lane in _occupied_lanes.values():
 		var queue := lane.queue
 		for i in queue.size():
@@ -233,7 +229,7 @@ func _prepare(dt: float) -> void:
 				vehicle.leader_gap = leader.distance - vehicle.distance - (leader.length + vehicle.length) * 0.5
 				vehicle.leader_speed = leader.speed
 			else:
-				_request_junction(vehicle, dt)
+				_request_junction(vehicle)
 				_scan_ahead(vehicle)
 				_yield_in_junction(vehicle)
 
@@ -296,7 +292,7 @@ func _yield_in_junction(vehicle: Vehicle) -> void:
 
 
 ## A front-most vehicle close enough to its next junction asks to enter it.
-func _request_junction(vehicle: Vehicle, dt: float) -> void:
+func _request_junction(vehicle: Vehicle) -> void:
 	if vehicle.next_lanes.is_empty():
 		return
 	var connector := vehicle.next_lanes[0]
@@ -304,15 +300,9 @@ func _request_junction(vehicle: Vehicle, dt: float) -> void:
 		return
 	var to_line := vehicle.lane.length - vehicle.distance - vehicle.length * 0.5
 	if to_line > vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN:
-		vehicle.stop_dwell = 0.0
 		return
-	if to_line <= STOP_LINE_TOLERANCE and vehicle.speed < STOPPED_SPEED:
-		vehicle.stop_dwell += dt
-	else:
-		vehicle.stop_dwell = 0.0
 	if _control_allows(vehicle, connector) and _can_enter(vehicle, connector):
 		_grant(vehicle, connector)
-		vehicle.stop_dwell = 0.0
 	else:
 		_start_waiting(vehicle, connector)
 
@@ -378,15 +368,12 @@ static func _time_to_cover(distance: float, speed: float, top_speed: float) -> f
 	return accelerating_time + (distance - accelerating_distance) / top_speed
 
 
-## What the junction's control says: a stop sign needs a full stop at the line first;
-## a traffic light needs green for the lane the vehicle is on.
+## What the junction's control says: at a traffic light, green for the vehicle's lane.
 func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
 	if node == null:
 		return true
 	match node.control:
-		RoadNode.JunctionControl.STOP_SIGN:
-			return vehicle.stop_dwell >= STOP_DWELL
 		RoadNode.JunctionControl.TRAFFIC_LIGHT:
 			return _signals.get_light(node, vehicle.lane.signal_phase) == TrafficLights.Light.GREEN
 	return true

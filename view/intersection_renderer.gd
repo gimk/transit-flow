@@ -1,9 +1,8 @@
 class_name IntersectionRenderer
 extends Node2D
-## Draws junction controls at each stop line: a red bar (and a red dot in the junction)
-## for stop signs, a bar coloured by the current light for traffic lights.
+## Draws traffic lights: a bar at each stop line of a light-controlled junction, coloured
+## by the light that lane currently has.
 
-const STOP_COLOR := Color("e53935")
 const LIGHT_COLORS := {
 	TrafficLights.Light.GREEN: Color("43a047"),
 	TrafficLights.Light.AMBER: Color("fdd835"),
@@ -29,7 +28,7 @@ func _refresh() -> void:
 
 
 func _process(_delta: float) -> void:
-	# Lights change with sim time; stop signs only change with the network.
+	# Lights change with sim time, not only with the network.
 	if _has_lights:
 		queue_redraw()
 
@@ -45,11 +44,7 @@ func _draw() -> void:
 				var lane := roads.lanes[lane_id]
 				if lane.to_node_id != node.id:
 					continue
-				var color := STOP_COLOR
-				if node.control == RoadNode.JunctionControl.TRAFFIC_LIGHT:
-					color = LIGHT_COLORS[Game.simulation.signals.get_light(node, lane.signal_phase)]
+				var color: Color = LIGHT_COLORS[Game.simulation.signals.get_light(node, lane.signal_phase)]
 				var pose := lane.sample_pose(lane.length)
 				var across := pose.y.normalized() * segment.road_type.lane_width * 0.5
 				draw_line(pose.origin - across, pose.origin + across, color, BAR_WIDTH)
-		if node.control == RoadNode.JunctionControl.STOP_SIGN:
-			draw_circle(node.position, 4.0, STOP_COLOR)

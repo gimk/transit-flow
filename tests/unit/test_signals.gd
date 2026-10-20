@@ -1,5 +1,5 @@
 extends GutTest
-## Phase 2c: stop signs and traffic lights.
+## Traffic lights and junction control.
 
 const G := 64.0
 const DT := Simulation.TICK_DT
@@ -47,7 +47,7 @@ func test_only_junctions_can_be_controlled() -> void:
 	_road(Vector2(0, 4), Vector2(4, 4))
 	_road(Vector2(4, 4), Vector2(4, 8))
 	var corner := sim.roads.find_node_at(Vector2(4, 4) * G)
-	assert_false(sim.roads.set_node_control(corner, RoadNode.JunctionControl.STOP_SIGN))
+	assert_false(sim.roads.set_node_control(corner, RoadNode.JunctionControl.TRAFFIC_LIGHT))
 	var node_id := _four_way()
 	watch_signals(sim.roads)
 	assert_true(sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT))
@@ -82,21 +82,6 @@ func test_vehicle_sharing_the_green_does_not_stop() -> void:
 		if entry_speed < 0.0 and east.lane.is_connector():
 			entry_speed = east.speed
 	assert_gt(entry_speed, 20.0, "drove into the junction without stopping")
-
-
-func test_stop_sign_requires_a_full_stop() -> void:
-	var node_id := _four_way()
-	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.STOP_SIGN)
-	var east := _spawn(Vector2(1, 4) + Vector2(0, 7) / G, Vector2(7, 4) + Vector2(0, 7) / G)
-	var slowest_before := INF
-	for tick in Simulation.TICK_RATE * 10:
-		sim.vehicles.step(DT)
-		if not sim.vehicles.vehicles.has(east.id):
-			break
-		if not east.lane.is_connector() and east.lane.to_node_id == node_id:
-			slowest_before = minf(slowest_before, east.speed)
-	assert_lt(slowest_before, VehicleSystem.STOPPED_SPEED, "stopped at the line")
-	assert_false(sim.vehicles.vehicles.has(east.id), "then carried on and arrived")
 
 
 ## Steps the whole simulation (signals included) for `seconds`, calling `each_tick`.
@@ -151,3 +136,16 @@ func test_continuous_stream_yields_after_max_green() -> void:
 	assert_gt(entered.spawned, 10, "east-west really was busy")
 	assert_gte(entered.at, TrafficLights.MIN_GREEN, "east-west kept its green a while")
 	assert_lt(entered.at, TrafficLights.MAX_GREEN + TrafficLights.CLEARANCE_TIME + 2.0, "but not past the maximum")
+
+
+func test_older_saves_with_numeric_controls_still_load() -> void:
+	var node_id := _four_way()
+	sim.roads.set_node_control(node_id, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	var data := sim.roads.to_dict()
+	assert_true(data.nodes.any(func(n: Dictionary) -> bool: return n.control == "traffic_light"), "saved by name")
+	var junction: Dictionary = data.nodes.filter(func(n: Dictionary) -> bool: return n.id == node_id)[0]
+	for legacy: Array in [[2, RoadNode.JunctionControl.TRAFFIC_LIGHT], [1, RoadNode.JunctionControl.NONE]]:
+		junction.control = legacy[0]  # 1 was a stop sign, 2 traffic lights.
+		var loaded := RoadNetwork.from_dict(data)
+		assert_eq(loaded.nodes[node_id].control, legacy[1])
+		loaded.dispose()

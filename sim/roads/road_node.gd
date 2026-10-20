@@ -3,7 +3,7 @@ extends RefCounted
 ## A point where road segments meet: a dead end, a corner or a junction.
 ## Owns the connector lanes that link incoming lanes to outgoing lanes through it.
 
-enum JunctionControl { NONE, STOP_SIGN, TRAFFIC_LIGHT }
+enum JunctionControl { NONE, TRAFFIC_LIGHT }
 
 var id: int
 var position: Vector2
