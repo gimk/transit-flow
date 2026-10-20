@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c). Next: playtest the living city, then Phase 4.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Next: Phase 4 (tool palette), then the simulation phases 5–8 (multi-lane and one-way roads, driveways, pedestrians, buses and mode choice).
 
 ---
 
@@ -185,7 +185,7 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 **Done when:** arbitrary grid layouts produce a valid graph (tested by fuzzing random road placements and asserting graph invariants).
 
 *Notes carried forward:*
-- Curved segments can't be split yet ("Can't join a curved road in the middle yet"). Phase 4 needs a proper Bézier split (de Casteljau).
+- Curved segments can't be split yet ("Can't join a curved road in the middle yet"). Phase 9 (curves) needs a proper Bézier split (de Casteljau).
 - `add_road` returns only the first new segment id; use `add_road_pieces` when you need all of them.
 - Removing a segment never merges the two segments left at a now-degree-2 straight node. Harmless (a straight connector joins them), but a "merge collinear segments" clean-up would reduce node count.
 
@@ -259,18 +259,85 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
   - Next steps considered: road hierarchy (bigger road has priority, once multi-lane roads exist), left-turners waiting inside the box at lights, and making lights clearly better than no control at busy crossings.
 
 *Notes carried forward:*
-- Buildings need a road on their cell edge, so blocks deeper than 2 cells leave unbuildable middles. Fine for now; Phase 5 density/lot sizes may change it.
+- Buildings need a road on their cell edge, so blocks deeper than 2 cells leave unbuildable middles. Fine for now; Phase 10+ density/lot sizes may change it.
 - Citizens, vehicles, light states and the Flow history aren't saved; a loaded game restarts them (people at home).
-- Only one highway; no new residents arrive from outside yet, and goods have no economy (trucks are traffic only). Demand quotas and growth are Phase 5.
+- Only one highway; no new residents arrive from outside yet, and goods have no economy (trucks are traffic only). Demand quotas and growth are Phase 10+.
 
-### Phase 4 — Curves & buses
-- Curved road drawing (control-point drag, minimum radius); everything else should "just work" thanks to the lane model — this phase validates the core architectural bet.
-- Bus stops on lanes, `BusLineTool`, bus vehicles on fixed routes; citizens choose bus vs. car by comparing estimated trip times (mode choice).
+### Phase 4 — Interface for more than one road and zone type
+Small, and first, because every later phase adds types the player must pick from.
+- **Tool palette.** The bottom toolbar keeps one button per tool family (Roads, Zones, Signals, Bulldoze, Route). A family with variants opens a sub-menu just above it: road types (2-lane, 4-lane avenue, one-way 1/2/3 lanes, later bus lanes) and zone types (Residential, Commercial, Industrial, Dezone). The chosen variant is remembered per family. Keyboard shortcuts stay (R cycles road types while the road tool is active).
+- **Hint line** moves just above the toolbar (and above the sub-menu when it's open), next to where the player is looking, instead of the top bar.
+- `ToolManager` gains "tool + variant" (e.g. `RoadTool.road_type`), so tools stay single nodes. The HUD builds the palette from data (`data/road_types/*.tres` + the zone list), so a new road type appears without UI code.
+- Tests: an integration test clicks a family, picks a variant from its sub-menu, and builds with it; the hint sits above the toolbar.
 
-**Done when:** a curved bypass and a bus line both measurably change Flow %.
+**Done when:** the player can build every road type and paint every zone from the palette, and the hint reads next to the tools.
 
-### Phase 5+ — Toward the full game (order to be revisited after Phase 3 playtests)
-- Road hierarchy (4- and 6-lane, bus lanes, truck-only roads), lane-turn rules UI.
+### Phase 5 — Multi-lane and one-way roads
+The lane model was built for this (`RoadType.lanes_per_direction`, and junction connectors already match lanes across a junction). What's missing is the behaviour.
+- **5a Road types.** A 4-lane avenue (2+2) and one-way roads (1–3 lanes, a `RoadType.one_way` flag). A segment's start→end is its direction, set by the drag; a "reverse" action flips it. Rendering: lane markings, direction arrows on one-way roads. Upgrading a road in place (drag the new type over it) keeps its nodes and lots.
+- **5b Lane choice and lane changing.** Routes stay lane-level, but a vehicle may use any parallel lane of the same road. The route fixes the lane it must be in *at the next junction* (the lanes whose connectors lead where it's going). It changes lanes before that, in gaps (gap acceptance on the target lane, reusing the junction gap logic), preferring the faster lane and keeping right otherwise. Vehicles that miss their lane re-route rather than stop dead. Lane-to-lane turn rules: the left lane turns left, the right lane turns right, the middle goes straight (overridable later).
+- **5c Junctions with many lanes.** Conflict zones per lane pair (more connectors, so check the cost); parallel non-conflicting turns from different lanes; light phases per approach with an optional protected left. Road hierarchy for priority at junctions without lights: the bigger road has priority and side roads yield, with priority to the right only between equal roads. This replaces the round-1 tie-breaker.
+- Tests:
+  - lane changes are safe (no overlaps during a change, using the shared checks);
+  - vehicles reach the correct turn lane before the junction;
+  - one-way roads are never driven backwards (routing + a stress test);
+  - a 4-lane arterial carries roughly twice a 2-lane road's flow.
+- Measure: a Town variant with Main Street as a 4-lane avenue and a one-way pair downtown; the benchmark at 500/1k/2k (lane changes add work per vehicle).
+
+**Done when:** a 4-lane arterial visibly relieves a jam that a second 2-lane road wouldn't, and a one-way grid downtown flows better than the same grid two-way.
+
+### Phase 6 — Driveways: cars leave and arrive physically
+Today a trip starts and ends instantly on the lane in front of the lot. Real departures and arrivals cause friction, and the player should see it near busy shops.
+- **Leaving.** A car starts in the lot's driveway (off the road) and waits for a gap to pull out. To the near lane it merges (a right turn). To the far lane it crosses the near lane (a left turn out, needing a gap in both directions). It enters slowly and accelerates in traffic. Blocked driveways queue cars on the lot, counted as waiting and shown on the lot.
+- **Arriving.** The car slows to driveway speed before its lot, so the cars behind it brake. Turning into a far-side driveway waits for an oncoming gap and holds up the queue behind it (the classic left-turn-in jam). The car then leaves the road. Trucks take longer: a wider turn and loading time on site.
+- **Parking capacity** per lot: homes a few spaces, shops and factories more by size. When a lot is full, cars go to the next lot of the same kind, or park further away and walk (ties into Phase 7). Kept simple: no on-street parking yet.
+- Driveways are short connector-like lanes from the lot to the road, with conflict zones against the road's lanes. They reuse junction grants, gap acceptance and the safety checks.
+- Tests:
+  - a car pulling out never conflicts with through traffic;
+  - a left-in arrival blocks the lane behind it until it can turn;
+  - in the Town, busy shop streets show more delay than residential streets;
+  - Flow is still scored against free-flow time, with driveway time included in the ideal.
+
+**Done when:** a commercial street lined with busy shops visibly slows through traffic, and giving the shops a side street or back access road measurably improves Flow.
+
+### Phase 7 — Pedestrians and walking
+- **Sidewalks** as pedestrian lanes, generated with each road type (both sides; none on highways). **Crosswalks** at junctions as pedestrian connectors, with conflict zones against vehicle connectors. Mid-block crossings later.
+- **Pedestrians** are lightweight agents on pedestrian lanes: no overtaking physics, just speed limited by crowding.
+  - At a junction without lights, cars yield to pedestrians on the crosswalk, and a pedestrian waits for a gap in cars before stepping out.
+  - At lights, pedestrians get a walk phase with the parallel traffic, so turning cars wait for them.
+- **Walking trips**: citizens walk when the destination is close, and later to and from bus stops and parking. Walking disturbs traffic only where it crosses roads. That's exactly what the player should design around: pedestrian-heavy downtowns, crossings away from busy junctions.
+- **Performance gate** before this phase: pedestrians at least double the agent count. Decide then whether they share `VehicleSystem` or get a cheaper system of their own, and revisit the C#/GDExtension option (see Key Risks).
+- Tests:
+  - no pedestrian is ever on a crosswalk while a car is in the same conflict zone;
+  - short trips are walked;
+  - a busy crossing reduces car throughput at its junction.
+
+**Done when:** a downtown with heavy foot traffic slows turning cars, and moving a crossing or adding lights changes it visibly.
+
+### Phase 8 — Buses and mode choice
+- **Buses** (was Phase 4): bus stops on lanes (curbside, where the bus blocks its lane while it waits; bus bays where it pulls out of the lane come later), `BusLineTool`, buses on fixed routes with a timetable or headway, capacity, and boarding time per passenger.
+- **Multimodal trips.** A trip is a list of legs, each with a mode: walk, car, bus (later tram, metro, train). A multimodal router searches a combined graph: pedestrian lanes, road lanes (car), and bus lines (edges between stops, with an expected wait of half the headway).
+- **Mode choice rules**, applied per citizen and per trip:
+  - at most 3 different modes per trip, and a cap on transfers;
+  - pick the lowest generalized cost: in-vehicle time + walking time ×2 + waiting time ×2 + a penalty per transfer, with an optional small per-mode preference per citizen so not everyone makes the same choice;
+  - walking legs are limited in length (~10–15 game minutes), and a trip is walked entirely only when it's short;
+  - car availability: a citizen without a car (or whose car is parked elsewhere) can't drive, and one who drove out drives back;
+  - re-evaluated for every trip, so congestion and new bus lines shift people between modes over the days.
+- Flow scores each trip by its total door-to-door time against the best free-flow multimodal time. Transit trips are scored like car trips.
+- Tests:
+  - a citizen near a bus line to their job takes the bus when it's quicker and the car when it isn't;
+  - no trip uses more than 3 modes;
+  - adding a bus line moves commuters off a jammed road and Flow rises.
+
+**Done when:** a bus line on a congested corridor measurably raises Flow, and the share of each mode is visible (HUD / debug panel).
+
+### Phase 9 — Curves (was Phase 4)
+- Curved road drawing (control-point drag, minimum radius). Everything else should "just work" thanks to the lane model, so this phase still validates the core architectural bet. It comes after the simulation phases because simulation comes before mechanics; it can move earlier at any time, since nothing above depends on it.
+
+**Done when:** a curved bypass changes Flow like a straight one would, with smooth driving through the curves.
+
+### Phase 10+ — Toward the full game (order to be revisited)
+- More road types (6-lane, bus lanes, truck-only roads), lane-turn rules UI.
 - Demand quotas, level-up loop, Infrastructure Points, map expansion.
 - Density auto-upgrade driven by connectivity + local flow.
 - Elevation: bridges, highway ramps, subway layer with "Underground View".
@@ -287,6 +354,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 | **GDScript performance** at thousands of vehicles | Measured in Phase 2b: ~7 µs/vehicle/tick, so 2k cars don't hold 60 FPS. Options, cheapest first: (a) lower the tick rate to 10 Hz (halves cost; rendering already interpolates); (b) run the sim tick on a worker thread with a snapshot for rendering (removes frame hitches, not total cost); (c) port `VehicleSystem` to **C#** (needs the Godot .NET build + .NET SDK; typically 5–20× faster for this kind of loop); (d) port it to a C++ **GDExtension** (fastest, heaviest toolchain). The `VehicleSystem` API boundary stays the same in all cases. |
 | **Network edits while vehicles are driving** | All edits go through `RoadNetwork` commands that emit dirty sets; affected vehicles reroute or despawn; edit is applied between ticks only. |
 | **Curves arriving late breaks assumptions** | Lanes are polyline `Curve2D` from day 1; Phase 1 tests include a hand-made curved segment even before the curve tool exists. |
+| **Agent count grows with pedestrians and buses** (Phases 7–8) | Performance gate at the start of Phase 7: measure, then decide between a separate cheap pedestrian system and porting the hot loops (C#/GDExtension, see above). Pedestrians are lightweight agents; they only interact with cars at crosswalks. |
 | **Fun is unproven** | Explicit playtest checkpoint at end of Phase 2c, before investing in zones/economy. |
 
 ### Defaults I've assumed (change any of these early if you disagree)
