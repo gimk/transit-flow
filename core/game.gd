@@ -300,6 +300,14 @@ func set_speed(index: int) -> void:
 	Events.speed_changed.emit(speed_index, SPEED_MULTIPLIERS[speed_index])
 
 
+## Switches between a window and exclusive fullscreen (F11). Exclusive fullscreen
+## presents straight to the screen, bypassing the desktop compositor, which can avoid
+## tearing and hitches on laptops with two GPUs.
+func toggle_fullscreen() -> void:
+	var fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fullscreen else DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+
+
 func toggle_pause() -> void:
 	set_speed(_last_running_speed_index if is_paused() else 0)
 
@@ -325,6 +333,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		load_bottleneck_scenario()
 	elif event.is_action_pressed("debug_load_town"):
 		load_town_scenario()
+	elif event.is_action_pressed("toggle_fullscreen"):
+		toggle_fullscreen()
 	elif event.is_action_pressed("debug_stress_traffic"):
 		cycle_stress_traffic()
 	else:

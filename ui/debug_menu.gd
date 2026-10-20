@@ -36,6 +36,7 @@ func _ready() -> void:
 	_add_button("Quicksave", "F5", Game.quick_save)
 	_add_button("Quickload", "F9", Game.quick_load)
 	_add_button("New empty map", "", Game.new_empty_game)
+	_add_button("Fullscreen", "F11", Game.toggle_fullscreen)
 	_add_section("Traffic")
 	_stress_button = _add_button("Stress traffic", "F6", Game.cycle_stress_traffic)
 	_add_button("Rush hour now", "", Game.rush_hour_now)
