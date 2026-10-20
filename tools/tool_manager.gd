@@ -8,8 +8,10 @@ const TOOL_SHORTCUTS := {
 	&"tool_road": &"RoadTool",
 	&"tool_bulldoze": &"BulldozeTool",
 	&"tool_route": &"RouteTool",
-	&"tool_residential": &"ResidentialTool",
-	&"tool_industrial": &"IndustrialTool",
+	&"tool_residential": &"ResidentialZoneTool",
+	&"tool_commercial": &"CommercialZoneTool",
+	&"tool_industrial": &"IndustrialZoneTool",
+	&"tool_dezone": &"DezoneTool",
 	&"tool_signals": &"SignalTool",
 }
 

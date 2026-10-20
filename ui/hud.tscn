@@ -117,17 +117,33 @@ text = "Bulldoze"
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
-tooltip_text = "Place homes (H)"
+tooltip_text = "Zone Residential (H)"
 toggle_mode = true
-text = "Homes"
+text = "Residential"
+
+[node name="CommercialButton" type="Button" parent="Toolbar/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Zone Commercial (C)"
+toggle_mode = true
+text = "Commercial"
 
 [node name="IndustrialButton" type="Button" parent="Toolbar/Buttons"]
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
-tooltip_text = "Place workplaces (I)"
+tooltip_text = "Zone Industrial (I)"
 toggle_mode = true
-text = "Industry"
+text = "Industrial"
+
+[node name="DezoneButton" type="Button" parent="Toolbar/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+tooltip_text = "Remove zoning (X)"
+toggle_mode = true
+text = "Dezone"
 
 [node name="SignalButton" type="Button" parent="Toolbar/Buttons"]
 unique_name_in_owner = true

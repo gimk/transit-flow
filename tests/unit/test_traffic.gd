@@ -43,7 +43,7 @@ func _min_queue_gap() -> float:
 	for lane_id in sim.roads.lanes:
 		var queue := sim.vehicles.get_lane_queue(lane_id)
 		for i in range(1, queue.size()):
-			smallest = minf(smallest, queue[i - 1].distance - queue[i].distance - Vehicle.LENGTH)
+			smallest = minf(smallest, queue[i - 1].distance - queue[i].distance - (queue[i - 1].length + queue[i].length) * 0.5)
 	return smallest
 
 
@@ -63,7 +63,7 @@ func _connector_conflict_violations() -> int:
 
 
 func _in_zone(vehicle: Vehicle, zone: Vector2) -> bool:
-	return vehicle.distance + Vehicle.LENGTH * 0.5 >= zone.x and vehicle.distance - Vehicle.LENGTH * 0.5 <= zone.y
+	return vehicle.distance + vehicle.length * 0.5 >= zone.x and vehicle.distance - vehicle.length * 0.5 <= zone.y
 
 
 func test_follower_queues_behind_a_stopping_leader() -> void:
@@ -77,7 +77,7 @@ func test_follower_queues_behind_a_stopping_leader() -> void:
 	for i in 400:
 		sim.vehicles.step(DT)
 		if sim.vehicles.vehicles.has(leader.id) and sim.vehicles.vehicles.has(follower.id):
-			smallest = minf(smallest, leader.distance - follower.distance - Vehicle.LENGTH)
+			smallest = minf(smallest, leader.distance - follower.distance - (leader.length + follower.length) * 0.5)
 	assert_gte(smallest, VehicleSystem.MIN_GAP - 0.01, "never closer than the minimum gap")
 	assert_eq(sim.vehicles.vehicles.size(), 0, "both eventually arrive")
 

@@ -1,71 +1,86 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://dmuvt84dpa22c"]
 
-[ext_resource type="Script" path="res://view/grid_renderer.gd" id="1_grid"]
-[ext_resource type="Script" path="res://view/map_camera.gd" id="2_camera"]
+[ext_resource type="Script" uid="uid://bfmyseqheruog" path="res://view/grid_renderer.gd" id="1_grid"]
+[ext_resource type="Script" uid="uid://dog0pkiatx1x0" path="res://view/map_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://ui/hud.tscn" id="3_hud"]
-[ext_resource type="Script" path="res://view/road_renderer.gd" id="4_roads"]
-[ext_resource type="Script" path="res://view/lane_overlay.gd" id="5_lanes"]
-[ext_resource type="Script" path="res://tools/tool_manager.gd" id="6_tools"]
-[ext_resource type="Script" path="res://tools/road_tool.gd" id="7_road_tool"]
-[ext_resource type="Script" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
-[ext_resource type="Script" path="res://tools/route_tool.gd" id="9_route_tool"]
-[ext_resource type="Script" path="res://view/lot_renderer.gd" id="10_lots"]
-[ext_resource type="Script" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
-[ext_resource type="Script" path="res://tools/lot_tool.gd" id="12_lot_tool"]
-[ext_resource type="Script" path="res://view/intersection_renderer.gd" id="13_intersections"]
-[ext_resource type="Script" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
-[ext_resource type="Script" path="res://tools/signal_tool.gd" id="15_signal_tool"]
+[ext_resource type="Script" uid="uid://b857n81tvn32p" path="res://view/road_renderer.gd" id="4_roads"]
+[ext_resource type="Script" uid="uid://dyjfvcy076kgr" path="res://view/lane_overlay.gd" id="5_lanes"]
+[ext_resource type="Script" uid="uid://dv4owihtffhgw" path="res://tools/tool_manager.gd" id="6_tools"]
+[ext_resource type="Script" uid="uid://d31cleklq3ndo" path="res://tools/road_tool.gd" id="7_road_tool"]
+[ext_resource type="Script" uid="uid://dug7rhpm2dygc" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
+[ext_resource type="Script" uid="uid://dcvg10y0fcwn6" path="res://tools/route_tool.gd" id="9_route_tool"]
+[ext_resource type="Script" uid="uid://u4r8qaxexhoi" path="res://view/lot_renderer.gd" id="10_lots"]
+[ext_resource type="Script" uid="uid://bk1g48shsnbkp" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
+[ext_resource type="Script" path="res://tools/zone_tool.gd" id="12_zone_tool"]
+[ext_resource type="Script" path="res://view/zone_renderer.gd" id="16_zones"]
+[ext_resource type="Script" uid="uid://dceukk0ff5qlu" path="res://view/intersection_renderer.gd" id="13_intersections"]
+[ext_resource type="Script" uid="uid://blpje5h1ldfb1" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
+[ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
 
-[node name="Main" type="Node2D"]
+[node name="Main" type="Node2D" unique_id=1531639300]
 
-[node name="World" type="Node2D" parent="."]
+[node name="World" type="Node2D" parent="." unique_id=130975011]
 
-[node name="GridRenderer" type="Node2D" parent="World"]
+[node name="GridRenderer" type="Node2D" parent="World" unique_id=1275227272]
 script = ExtResource("1_grid")
+map_color = Color(0.17898983, 0.1531992, 0.098189585, 1)
 
-[node name="RoadRenderer" type="Node2D" parent="World"]
+[node name="ZoneRenderer" type="Node2D" parent="World"]
+script = ExtResource("16_zones")
+
+[node name="RoadRenderer" type="Node2D" parent="World" unique_id=311894543]
 script = ExtResource("4_roads")
 
-[node name="IntersectionRenderer" type="Node2D" parent="World"]
+[node name="IntersectionRenderer" type="Node2D" parent="World" unique_id=1419823866]
 script = ExtResource("13_intersections")
 
-[node name="HeatmapOverlay" type="Node2D" parent="World"]
+[node name="HeatmapOverlay" type="Node2D" parent="World" unique_id=1057836235]
 script = ExtResource("14_heatmap")
 
-[node name="LotRenderer" type="Node2D" parent="World"]
+[node name="LotRenderer" type="Node2D" parent="World" unique_id=557388674]
 script = ExtResource("10_lots")
 
-[node name="VehicleRenderer" type="MultiMeshInstance2D" parent="World"]
+[node name="VehicleRenderer" type="MultiMeshInstance2D" parent="World" unique_id=386211279]
 script = ExtResource("11_vehicles")
 
-[node name="LaneOverlay" type="Node2D" parent="World"]
+[node name="LaneOverlay" type="Node2D" parent="World" unique_id=2125858775]
 script = ExtResource("5_lanes")
 
-[node name="Tools" type="Node2D" parent="World"]
+[node name="Tools" type="Node2D" parent="World" unique_id=424843082]
 script = ExtResource("6_tools")
 
-[node name="RoadTool" type="Node2D" parent="World/Tools"]
+[node name="RoadTool" type="Node2D" parent="World/Tools" unique_id=514153494]
 script = ExtResource("7_road_tool")
 
-[node name="BulldozeTool" type="Node2D" parent="World/Tools"]
+[node name="BulldozeTool" type="Node2D" parent="World/Tools" unique_id=1996469539]
 script = ExtResource("8_bulldoze_tool")
 
-[node name="RouteTool" type="Node2D" parent="World/Tools"]
+[node name="RouteTool" type="Node2D" parent="World/Tools" unique_id=1746665589]
 script = ExtResource("9_route_tool")
 
-[node name="ResidentialTool" type="Node2D" parent="World/Tools"]
-script = ExtResource("12_lot_tool")
-hint = "Click or drag to place homes (green). Each home gets one commuter."
+[node name="ResidentialZoneTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_zone_tool")
+hint = "Drag to zone Residential (green): homes, whose people commute"
 
-[node name="IndustrialTool" type="Node2D" parent="World/Tools"]
-script = ExtResource("12_lot_tool")
-lot_type = 2
-hint = "Click or drag to place workplaces (yellow)"
+[node name="CommercialZoneTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_zone_tool")
+zone_type = 1
+hint = "Drag to zone Commercial (blue): shops, which employ people and need goods"
 
-[node name="SignalTool" type="Node2D" parent="World/Tools"]
+[node name="IndustrialZoneTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_zone_tool")
+zone_type = 2
+hint = "Drag to zone Industrial (yellow): factories, which employ people and ship goods"
+
+[node name="DezoneTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("12_zone_tool")
+erase = true
+hint = "Drag to remove zoning (and the buildings on it)"
+
+[node name="SignalTool" type="Node2D" parent="World/Tools" unique_id=653219520]
 script = ExtResource("15_signal_tool")
 
-[node name="MapCamera" type="Camera2D" parent="."]
+[node name="MapCamera" type="Camera2D" parent="." unique_id=1405124855]
 script = ExtResource("2_camera")
 
-[node name="HUD" parent="." instance=ExtResource("3_hud")]
+[node name="HUD" parent="." unique_id=1873966071 instance=ExtResource("3_hud")]

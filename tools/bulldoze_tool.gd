@@ -27,7 +27,13 @@ func _process(_delta: float) -> void:
 			sim.roads.remove_segment(segment_id)
 			segment_id = -1
 		elif lot_id != -1:
-			sim.lots.remove_lot(lot_id)
+			var cell: Vector2i = sim.lots.lots[lot_id].cell
+			if sim.zones.zones.has(cell):
+				# Otherwise the zone would just grow the building back.
+				var cells: Array[Vector2i] = [cell]
+				sim.zones.erase(cells)
+			else:
+				sim.lots.remove_lot(lot_id)
 			lot_id = -1
 	if segment_id != _hovered_segment_id or lot_id != _hovered_lot_id:
 		_hovered_segment_id = segment_id

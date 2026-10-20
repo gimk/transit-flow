@@ -38,6 +38,7 @@ func new_simulation(sim: Simulation = null) -> void:
 	simulation.clock.day_started.connect(Events.day_started.emit)
 	simulation.roads.changed.connect(Events.road_network_changed.emit)
 	simulation.lots.changed.connect(Events.lots_changed.emit)
+	simulation.zones.changed.connect(Events.zones_changed.emit)
 	Events.simulation_reset.emit()
 
 

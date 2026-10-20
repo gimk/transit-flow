@@ -1,0 +1,30 @@
+class_name ZoneRenderer
+extends Node2D
+## Draws zoned cells as a light tint of their zone colour (under roads and buildings).
+## Cells still waiting for a road get a dashed red outline so the player sees why
+## nothing grows there.
+
+const FILL_ALPHA := 0.16
+const NO_ROAD_COLOR := Color(1.0, 0.35, 0.3, 0.6)
+
+
+func _ready() -> void:
+	Events.simulation_reset.connect(queue_redraw)
+	Events.zones_changed.connect(queue_redraw)
+	Events.road_network_changed.connect(func(_nodes: Array, _segments: Array) -> void: queue_redraw())
+
+
+func _draw() -> void:
+	var zones := Game.simulation.zones
+	var size := Vector2.ONE * Grid.CELL_SIZE
+	for cell: Vector2i in zones.zones:
+		var rect := Rect2(Vector2(cell) * Grid.CELL_SIZE, size)
+		var color: Color = LotRenderer.COLORS[zones.zones[cell]]
+		color.a = FILL_ALPHA
+		draw_rect(rect, color)
+		if zones.is_waiting_for_road(cell):
+			var inner := rect.grow(-6.0)
+			var corners := [inner.position, Vector2(inner.end.x, inner.position.y), inner.end,
+				Vector2(inner.position.x, inner.end.y), inner.position]
+			for i in 4:
+				draw_dashed_line(corners[i], corners[i + 1], NO_ROAD_COLOR, 1.5, 4.0)

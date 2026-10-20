@@ -3,10 +3,19 @@ extends RefCounted
 ## A vehicle driving a route. Only VehicleSystem creates, moves and removes vehicles.
 ## `distance` is the position of the vehicle's center along its current lane.
 
-const LENGTH := 11.0
-const WIDTH := 6.0
+enum Kind { CAR, TRUCK }
+
+const CAR_LENGTH := 11.0
+const CAR_WIDTH := 6.0
+const TRUCK_LENGTH := 17.0
+const TRUCK_WIDTH := 7.0
+## The longest vehicle there is: assumed wherever a vehicle's length isn't known yet.
+const MAX_LENGTH := TRUCK_LENGTH
 
 var id: int
+var kind := Kind.CAR
+var length := CAR_LENGTH
+var width := CAR_WIDTH
 ## Who the trip belongs to (a citizen id, or a debug/traffic owner code).
 var owner_id := -1
 ## Where the trip ends. If `destination_lot_id` is set, re-routing follows that lot's
@@ -50,6 +59,12 @@ var position := Vector2.ZERO
 var rotation := 0.0
 var previous_position := Vector2.ZERO
 var previous_rotation := 0.0
+
+
+func set_kind(p_kind: Kind) -> void:
+	kind = p_kind
+	length = TRUCK_LENGTH if kind == Kind.TRUCK else CAR_LENGTH
+	width = TRUCK_WIDTH if kind == Kind.TRUCK else CAR_WIDTH
 
 
 func is_on_last_lane() -> bool:

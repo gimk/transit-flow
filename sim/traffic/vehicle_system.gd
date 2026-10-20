@@ -94,11 +94,12 @@ func _init(roads: RoadNetwork, router: Router, lots: LotSystem, signals: Traffic
 
 ## Puts a new vehicle at the start of `route`. Returns null if there's no room there.
 ## `destination_lot_id` may be -1 for trips to a plain lane position.
-func spawn(route: Route, destination_lot_id: int, owner_id: int) -> Vehicle:
-	var lane: Lane = _roads.lanes.get(route.lane_ids[0])
-	if lane == null or not can_spawn_at(lane.id, route.start_distance):
-		return null
+func spawn(route: Route, destination_lot_id: int, owner_id: int, kind := Vehicle.Kind.CAR) -> Vehicle:
 	var vehicle := Vehicle.new()
+	vehicle.set_kind(kind)
+	var lane: Lane = _roads.lanes.get(route.lane_ids[0])
+	if lane == null or not can_spawn_at(lane.id, route.start_distance, vehicle.length):
+		return null
 	vehicle.id = _next_id
 	_next_id += 1
 	vehicle.owner_id = owner_id
@@ -119,13 +120,13 @@ func spawn(route: Route, destination_lot_id: int, owner_id: int) -> Vehicle:
 
 ## True if a vehicle could appear at `distance` along the lane without touching another
 ## one, and with enough room for the vehicle behind to brake.
-func can_spawn_at(lane_id: int, distance: float) -> bool:
+func can_spawn_at(lane_id: int, distance: float, length := Vehicle.MAX_LENGTH) -> bool:
 	var lane: Lane = _roads.lanes.get(lane_id)
 	if lane == null:
 		return false
 	for other: Vehicle in lane.queue:
 		var ahead_by := other.distance - distance
-		var needed := Vehicle.LENGTH + MIN_GAP
+		var needed := (other.length + length) * 0.5 + MIN_GAP
 		if ahead_by < 0.0:
 			needed += other.speed * other.speed / (2.0 * MAX_DECELERATION)
 		if absf(ahead_by) < needed:
@@ -208,7 +209,7 @@ func _prepare(dt: float) -> void:
 			vehicle.stop_gap = INF
 			if i > 0:
 				var leader: Vehicle = queue[i - 1]
-				vehicle.leader_gap = leader.distance - vehicle.distance - Vehicle.LENGTH
+				vehicle.leader_gap = leader.distance - vehicle.distance - (leader.length + vehicle.length) * 0.5
 				vehicle.leader_speed = leader.speed
 			else:
 				_request_junction(vehicle, dt)
@@ -226,17 +227,17 @@ func _scan_ahead(vehicle: Vehicle) -> void:
 	for out in vehicle.lane.outgoing_lanes:
 		var queue := out.queue
 		if not queue.is_empty():
-			_consider_leader(vehicle, ahead + queue.back().distance - Vehicle.LENGTH, queue.back().speed)
-	var horizon := vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN + Vehicle.LENGTH
+			_consider_leader(vehicle, ahead + queue.back().distance - (queue.back().length + vehicle.length) * 0.5, queue.back().speed)
+	var horizon := vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN + vehicle.length
 	for next in vehicle.next_lanes:
 		if ahead > horizon:
 			return
 		if next.is_connector() and next != vehicle.granted_connector:
-			vehicle.stop_gap = ahead - Vehicle.LENGTH * 0.5
+			vehicle.stop_gap = ahead - vehicle.length * 0.5
 			return
 		var queue := next.queue
 		if not queue.is_empty():
-			_consider_leader(vehicle, ahead + queue.back().distance - Vehicle.LENGTH, queue.back().speed)
+			_consider_leader(vehicle, ahead + queue.back().distance - (queue.back().length + vehicle.length) * 0.5, queue.back().speed)
 			return
 		ahead += next.length
 
@@ -256,7 +257,7 @@ func _yield_in_junction(vehicle: Vehicle) -> void:
 	var connector := vehicle.lane if on_connector else vehicle.granted_connector
 	if connector == null:
 		return
-	var front := vehicle.distance + Vehicle.LENGTH * 0.5
+	var front := vehicle.distance + vehicle.length * 0.5
 	if not on_connector:
 		front -= vehicle.lane.length
 	for other_id in connector.conflicting_lane_ids:
@@ -269,7 +270,7 @@ func _yield_in_junction(vehicle: Vehicle) -> void:
 			var other_on_it := other.lane.id == other_id
 			var other_connector := other.lane if other_on_it else other.granted_connector
 			var along := other.distance if other_on_it else other.distance - other.lane.length
-			if along - Vehicle.LENGTH * 0.5 < other_connector.conflict_zones[connector.id].y:
+			if along - other.length * 0.5 < other_connector.conflict_zones[connector.id].y:
 				vehicle.stop_gap = minf(vehicle.stop_gap, my_zone.x - front - 1.0)
 
 
@@ -280,7 +281,7 @@ func _request_junction(vehicle: Vehicle, dt: float) -> void:
 	var connector := vehicle.next_lanes[0]
 	if not connector.is_connector() or connector == vehicle.granted_connector:
 		return
-	var to_line := vehicle.lane.length - vehicle.distance - Vehicle.LENGTH * 0.5
+	var to_line := vehicle.lane.length - vehicle.distance - vehicle.length * 0.5
 	if to_line > vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN:
 		vehicle.stop_dwell = 0.0
 		return
@@ -298,7 +299,7 @@ func _request_junction(vehicle: Vehicle, dt: float) -> void:
 func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 	if not _conflicts_clear(vehicle, connector):
 		return false
-	if not _exit_has_room(connector):
+	if not _exit_has_room(connector, vehicle):
 		return false
 	var since := vehicle.waiting_since if vehicle.requested_connector == connector else _time
 	for other: Vehicle in _waiting.get(connector.from_node_id, []):
@@ -308,7 +309,7 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 		var wanted := other.requested_connector
 		if not connector.conflicting_lane_ids.has(wanted.id):
 			continue
-		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) and _exit_has_room(wanted):
+		if _control_allows(other, wanted) and _conflicts_clear(other, wanted) and _exit_has_room(wanted, other):
 			return false
 	return true
 
@@ -320,7 +321,7 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 ## other one kept its current speed. So a waiting vehicle starts as soon as the way will
 ## be clear by the time it gets there, rather than waiting for the junction to empty.
 func _conflicts_clear(vehicle: Vehicle, connector: Lane) -> bool:
-	var to_line := maxf(vehicle.lane.length - vehicle.distance - Vehicle.LENGTH * 0.5, 0.0)
+	var to_line := maxf(vehicle.lane.length - vehicle.distance - vehicle.length * 0.5, 0.0)
 	var top_speed := maxf(vehicle.lane.speed_limit, connector.speed_limit)
 	for other_id in connector.conflicting_lane_ids:
 		var users: Array = _connector_vehicles.get(other_id, [])
@@ -334,7 +335,7 @@ func _conflicts_clear(vehicle: Vehicle, connector: Lane) -> bool:
 			var their_zone: Vector2 = other_connector.conflict_zones[connector.id]
 			# Position along the other connector; negative while still approaching it.
 			var along := other.distance if on_it else other.distance - other.lane.length
-			var rear := along - Vehicle.LENGTH * 0.5
+			var rear := along - other.length * 0.5
 			if rear >= their_zone.y:
 				continue
 			if other.speed < MIN_PREDICT_SPEED:
@@ -370,20 +371,20 @@ func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
 	return true
 
 
-## Is there room for one more vehicle at the start of the lane this connector leads to,
-## counting vehicles already allowed in but not there yet?
-func _exit_has_room(connector: Lane) -> bool:
+## Is there room for `vehicle` at the start of the lane this connector leads to, counting
+## vehicles already allowed in but not there yet (assumed to be the longest kind)?
+func _exit_has_room(connector: Lane, vehicle: Vehicle) -> bool:
 	var exit_lane := connector.outgoing_lanes[0]
 	var queue := exit_lane.queue
 	var reserved: int = _reserved_entries.get(exit_lane.id, 0)
-	var needed := Vehicle.LENGTH + MIN_GAP
+	var needed := vehicle.length + MIN_GAP
 	if exit_lane.length < needed:
 		# Too short to ever fit a whole vehicle: allow one at a time.
 		return queue.is_empty() and reserved == 0
 	var free := exit_lane.length
 	if not queue.is_empty():
-		free = queue.back().distance - Vehicle.LENGTH * 0.5
-	return free - reserved * needed >= needed
+		free = queue.back().distance - queue.back().length * 0.5
+	return free - reserved * (Vehicle.MAX_LENGTH + MIN_GAP) >= needed
 
 
 func _grant(vehicle: Vehicle, connector: Lane) -> void:

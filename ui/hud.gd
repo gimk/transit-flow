@@ -12,8 +12,10 @@ const NOTIFICATION_SECONDS := 2.0
 @onready var _tool_buttons: Dictionary[StringName, Button] = {
 	&"RoadTool": %RoadButton,
 	&"BulldozeTool": %BulldozeButton,
-	&"ResidentialTool": %ResidentialButton,
-	&"IndustrialTool": %IndustrialButton,
+	&"ResidentialZoneTool": %ResidentialButton,
+	&"CommercialZoneTool": %CommercialButton,
+	&"IndustrialZoneTool": %IndustrialButton,
+	&"DezoneTool": %DezoneButton,
 	&"SignalTool": %SignalButton,
 	&"RouteTool": %RouteButton,
 }

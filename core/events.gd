@@ -14,6 +14,8 @@ signal day_started(day: int)
 signal road_network_changed(node_ids: Array, segment_ids: Array)
 ## Relayed from LotSystem.changed.
 signal lots_changed
+## Relayed from ZoneSystem.changed.
+signal zones_changed
 
 ## UI asks for a tool by id ("" = no tool); ToolManager answers with tool_changed.
 signal tool_requested(tool_id: StringName)

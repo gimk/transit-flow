@@ -1,15 +1,16 @@
 class_name VehicleRenderer
 extends MultiMeshInstance2D
 ## Draws every vehicle in one batch, interpolating between the last two sim ticks so
-## motion stays smooth at any frame rate and sim speed.
+## motion stays smooth at any frame rate and sim speed. The mesh is a unit square scaled
+## per instance to the vehicle's length and width, so cars and trucks share one batch.
 
-const CAR_SIZE := Vector2(Vehicle.LENGTH, Vehicle.WIDTH)
 const MIN_CAPACITY := 64
+const TRUCK_COLOR := Color("b08d6a")
 
 
 func _ready() -> void:
 	var mesh := QuadMesh.new()
-	mesh.size = CAR_SIZE
+	mesh.size = Vector2.ONE
 	multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	multimesh.use_colors = true
@@ -28,9 +29,16 @@ func _process(_delta: float) -> void:
 	for vehicle: Vehicle in vehicles.values():
 		var position_now := vehicle.previous_position.lerp(vehicle.position, alpha)
 		var rotation_now := lerp_angle(vehicle.previous_rotation, vehicle.rotation, alpha)
-		multimesh.set_instance_transform_2d(i, Transform2D(rotation_now, position_now))
-		multimesh.set_instance_color(i, color_for(vehicle.owner_id if vehicle.owner_id >= 0 else vehicle.id))
+		var size := Vector2(vehicle.length, vehicle.width)
+		multimesh.set_instance_transform_2d(i, Transform2D(rotation_now, size, 0.0, position_now))
+		multimesh.set_instance_color(i, color_for_vehicle(vehicle))
 		i += 1
+
+
+static func color_for_vehicle(vehicle: Vehicle) -> Color:
+	if vehicle.kind == Vehicle.Kind.TRUCK:
+		return TRUCK_COLOR
+	return color_for(vehicle.owner_id if vehicle.owner_id >= 0 else vehicle.id)
 
 
 ## A stable, distinct pastel per owner, so you can follow one commuter around

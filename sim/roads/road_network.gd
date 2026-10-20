@@ -20,7 +20,7 @@ const EPSILON := 0.5
 ## No segment may be shorter than this (it would leave no room between junctions).
 const MIN_SEGMENT_LENGTH := 16.0
 ## Connectors whose paths come closer than this (center to center) conflict: two
-## vehicles (Vehicle.WIDTH wide) on them at once could touch.
+## vehicles (up to Vehicle.TRUCK_WIDTH wide) on them at once could touch.
 const CONFLICT_DISTANCE := 8.0
 ## A connector counts as going straight if it turns by less than this.
 const STRAIGHT_MAX_ANGLE := PI / 6.0  # 30°
@@ -526,7 +526,7 @@ func _compute_conflicts(node: RoadNode) -> void:
 
 
 static func _with_end_zone(zone: Vector2, length: float) -> Vector2:
-	var end_zone := Vector2(maxf(length - Vehicle.LENGTH, 0.0), length)
+	var end_zone := Vector2(maxf(length - Vehicle.MAX_LENGTH, 0.0), length)
 	if zone.x < 0.0:
 		return end_zone
 	return Vector2(minf(zone.x, end_zone.x), length)

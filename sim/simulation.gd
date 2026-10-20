@@ -11,6 +11,7 @@ var clock := SimClock.new()
 var roads: RoadNetwork
 var router: Router
 var lots: LotSystem
+var zones: ZoneSystem
 var signals: TrafficLights
 var vehicles: VehicleSystem
 var citizens: CitizenSystem
@@ -23,6 +24,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	roads = p_roads if p_roads != null else RoadNetwork.new()
 	router = Router.new(roads)
 	lots = LotSystem.new(roads)
+	zones = ZoneSystem.new(roads, lots)
 	signals = TrafficLights.new(roads)
 	vehicles = VehicleSystem.new(roads, router, lots, signals)
 	citizens = CitizenSystem.new(lots, router, vehicles)
@@ -33,6 +35,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 func step() -> void:
 	tick_count += 1
 	clock.advance(TICK_DT)
+	zones.step(get_sim_time())
 	citizens.step(get_sim_time())
 	stress.step()
 	signals.step(TICK_DT)
@@ -60,6 +63,7 @@ func to_dict() -> Dictionary:
 		"clock_minutes": clock.total_minutes,
 		"roads": roads.to_dict(),
 		"lots": lots.to_dict(),
+		"zones": zones.to_dict(),
 	}
 
 
@@ -71,4 +75,5 @@ static func from_dict(data: Dictionary) -> Simulation:
 	sim.tick_count = int(data.tick_count)
 	sim.clock.total_minutes = float(data.clock_minutes)
 	sim.lots.restore(data.get("lots", {}))
+	sim.zones.restore(data.get("zones", {}))
 	return sim

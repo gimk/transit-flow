@@ -133,30 +133,46 @@ func test_route_tool_shows_route_between_two_clicked_roads() -> void:
 	assert_null(tool._route)
 
 
-func test_lot_tools_place_homes_and_workplaces_and_bulldoze_removes_them() -> void:
-	var lots := Game.simulation.lots
-	var home_cell := Grid.world_to_cell(_grid_point(-2, -2) + Vector2(32, 32))
-	var work_cell := Grid.world_to_cell(_grid_point(2, -2) + Vector2(32, 32))
+func test_zone_tools_paint_areas_that_develop_next_to_roads() -> void:
+	var sim := Game.simulation
+	sim.roads.add_road(_grid_point(-4, 0), _grid_point(4, 0), RoadType.load_by_id(&"local_2lane"))
+	var row := Grid.world_to_cell(_grid_point(0, -1) + Vector2(32, 32)).y
+	var first := Vector2i(Grid.world_to_cell(_grid_point(-3, 0)).x, row)
+	var last := first + Vector2i(2, 0)
 	await _press_action(&"tool_residential")
-	await _mouse_left(Grid.cell_center(home_cell), true)
-	await _mouse_left(Grid.cell_center(home_cell), false)
-	await _press_action(&"tool_industrial")
-	await _mouse_left(Grid.cell_center(work_cell), true)
-	await _mouse_left(Grid.cell_center(work_cell), false)
-	assert_eq(lots.lots[lots.get_lot_at_cell(home_cell)].type, Lot.Type.RESIDENTIAL)
-	assert_eq(lots.lots[lots.get_lot_at_cell(work_cell)].type, Lot.Type.INDUSTRIAL)
-	assert_eq(Game.simulation.citizens.citizens.size(), 1)
+	await _mouse_left(Grid.cell_center(first), true)
+	await _mouse_motion(Grid.cell_center(last))
+	await _mouse_left(Grid.cell_center(last), false)
+	for x in range(first.x, last.x + 1):
+		assert_eq(sim.zones.zones.get(Vector2i(x, row)), Lot.Type.RESIDENTIAL)
+	# A cell two rows away from any road is zoned but can't develop.
+	var far := first + Vector2i(0, -3)
+	await _press_action(&"tool_commercial")
+	await _mouse_left(Grid.cell_center(far), true)
+	await _mouse_left(Grid.cell_center(far), false)
+
+	sim.zones.step(1000.0)
+	for x in range(first.x, last.x + 1):
+		assert_ne(sim.lots.get_lot_at_cell(Vector2i(x, row)), -1, "developed next to the road")
+	assert_eq(sim.lots.get_lot_at_cell(far), -1, "no road, no building")
+	assert_true(sim.zones.is_waiting_for_road(far))
+
+	await _press_action(&"tool_dezone")
+	await _mouse_left(Grid.cell_center(last), true)
+	await _mouse_left(Grid.cell_center(last), false)
+	assert_false(sim.zones.zones.has(last))
+	assert_eq(sim.lots.get_lot_at_cell(last), -1, "dezoning removes the building")
 
 	await _press_action(&"tool_bulldoze")
-	await _mouse_motion(Grid.cell_center(home_cell))
-	await _mouse_left(Grid.cell_center(home_cell), true)
-	await _mouse_left(Grid.cell_center(home_cell), false)
-	assert_eq(lots.get_lot_at_cell(home_cell), -1)
-	assert_eq(Game.simulation.citizens.citizens.size(), 0)
+	await _mouse_motion(Grid.cell_center(first))
+	await _mouse_left(Grid.cell_center(first), true)
+	await _mouse_left(Grid.cell_center(first), false)
+	assert_eq(sim.lots.get_lot_at_cell(first), -1)
+	assert_false(sim.zones.zones.has(first), "bulldozing a building also dezones it")
 
 
 func test_main_scene_has_its_key_nodes() -> void:
-	for path in ["World/GridRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
+	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
 			"World/VehicleRenderer", "World/HeatmapOverlay",
 			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD"]:
 		assert_not_null(_main.get_node_or_null(path), path)
