@@ -3,7 +3,7 @@ extends MultiMeshInstance2D
 ## Draws every vehicle in one batch, interpolating between the last two sim ticks so
 ## motion stays smooth at any frame rate and sim speed.
 
-const CAR_SIZE := Vector2(11, 6)
+const CAR_SIZE := Vector2(Vehicle.LENGTH, Vehicle.WIDTH)
 const MIN_CAPACITY := 64
 
 
@@ -29,10 +29,11 @@ func _process(_delta: float) -> void:
 		var position_now := vehicle.previous_position.lerp(vehicle.position, alpha)
 		var rotation_now := lerp_angle(vehicle.previous_rotation, vehicle.rotation, alpha)
 		multimesh.set_instance_transform_2d(i, Transform2D(rotation_now, position_now))
-		multimesh.set_instance_color(i, color_for(vehicle.owner_id))
+		multimesh.set_instance_color(i, color_for(vehicle.owner_id if vehicle.owner_id >= 0 else vehicle.id))
 		i += 1
 
 
-## A stable, distinct pastel per owner, so you can follow one commuter around.
+## A stable, distinct pastel per owner, so you can follow one commuter around
+## (per vehicle for ownerless debug traffic).
 static func color_for(owner_id: int) -> Color:
 	return Color.from_hsv(fmod(owner_id * 0.618034, 1.0), 0.45, 1.0)

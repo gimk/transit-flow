@@ -6,6 +6,7 @@ const NOTIFICATION_SECONDS := 2.0
 
 @onready var _time_label: Label = %TimeLabel
 @onready var _period_label: Label = %PeriodLabel
+@onready var _stats_label: Label = %StatsLabel
 @onready var _speed_buttons: Array[Button] = [%PauseButton, %Speed1Button, %Speed2Button, %Speed3Button]
 ## Tool id (= ToolManager child node name) -> its toolbar button.
 @onready var _tool_buttons: Dictionary[StringName, Button] = {
@@ -40,6 +41,11 @@ func _process(_delta: float) -> void:
 	var clock := Game.simulation.clock
 	_time_label.text = "Day %d · %s" % [clock.get_day(), clock.format_time()]
 	_period_label.text = clock.get_period_name()
+	# Counting stuck vehicles walks every vehicle, so refresh a few times a second only.
+	if Engine.get_process_frames() % 15 == 0:
+		var vehicles := Game.simulation.vehicles
+		_stats_label.text = "%d vehicles · %d stuck · tick %.1f ms" % [
+			vehicles.vehicles.size(), vehicles.get_stuck_count(), Game.average_tick_ms]
 
 
 func _on_speed_changed(speed_index: int, _multiplier: int) -> void:

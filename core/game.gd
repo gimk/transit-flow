@@ -8,12 +8,16 @@ const SPEED_MULTIPLIERS: Array[int] = [0, 1, 2, 4]
 ## so a slow frame makes the sim run slower instead of spiralling.
 const MAX_TICKS_PER_FRAME := 16
 const QUICKSAVE_PATH := "user://quicksave.json"
+## Vehicle counts the F6 debug key cycles through.
+const STRESS_TRAFFIC_STEPS: Array[int] = [0, 250, 500, 1000, 2000]
 
 var simulation: Simulation
 var speed_index := 1
 ## How far (0–1) the current frame sits between the last tick and the next.
 ## Renderers use it to interpolate moving things smoothly.
 var interpolation_alpha := 0.0
+## Smoothed cost of one simulation tick, for the debug readout.
+var average_tick_ms := 0.0
 
 var _last_running_speed_index := 1
 var _accumulator := 0.0
@@ -25,6 +29,8 @@ func _ready() -> void:
 
 ## Replaces the running simulation (a fresh one if `sim` is null) and tells everyone to resync.
 func new_simulation(sim: Simulation = null) -> void:
+	if simulation != null:
+		simulation.dispose()
 	simulation = sim if sim != null else Simulation.new()
 	_accumulator = 0.0
 	interpolation_alpha = 0.0
@@ -60,7 +66,10 @@ func _process(delta: float) -> void:
 	_accumulator += delta * SPEED_MULTIPLIERS[speed_index]
 	var ticks := 0
 	while _accumulator >= Simulation.TICK_DT and ticks < MAX_TICKS_PER_FRAME:
+		var started := Time.get_ticks_usec()
 		simulation.step()
+		var tick_ms := (Time.get_ticks_usec() - started) / 1000.0
+		average_tick_ms = lerpf(average_tick_ms, tick_ms, 0.05)
 		_accumulator -= Simulation.TICK_DT
 		ticks += 1
 	if ticks == MAX_TICKS_PER_FRAME:
@@ -98,6 +107,16 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("quick_load"):
 		var error := load_game()
 		Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
+	elif event.is_action_pressed("debug_stress_traffic"):
+		var stress := simulation.stress
+		var step := (STRESS_TRAFFIC_STEPS.find(stress.target_count) + 1) % STRESS_TRAFFIC_STEPS.size()
+		stress.target_count = STRESS_TRAFFIC_STEPS[step]
+		Events.notification_posted.emit("Stress traffic: %d vehicles" % stress.target_count)
 	else:
 		return
 	get_viewport().set_input_as_handled()
+
+
+func _exit_tree() -> void:
+	if simulation != null:
+		simulation.dispose()

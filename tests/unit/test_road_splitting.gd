@@ -13,6 +13,10 @@ func before_each() -> void:
 	road_type = RoadType.load_by_id(&"local_2lane")
 
 
+func after_each() -> void:
+	roads.dispose()
+
+
 func _add(from: Vector2, to: Vector2, layer := 0) -> Array[int]:
 	return roads.add_road_pieces(from * G, to * G, road_type, layer)
 
@@ -200,3 +204,4 @@ func test_random_grid_roads_keep_the_graph_valid() -> void:
 	var reloaded := RoadNetwork.from_dict(JSON.parse_string(JSON.stringify(roads.to_dict(), "", true, true)))
 	assert_eq(reloaded.segments.size(), roads.segments.size())
 	assert_eq(reloaded.lanes.size(), roads.lanes.size())
+	reloaded.dispose()

@@ -20,6 +20,8 @@ func test_save_round_trip_through_json() -> void:
 	assert_not_null(loaded)
 	assert_eq_deep(loaded.to_dict(), saved)
 	assert_eq(loaded.clock.format_time(), sim.clock.format_time())
+	loaded.dispose()
+	sim.dispose()
 
 
 func test_rejects_unknown_save_version() -> void:

@@ -21,7 +21,10 @@ Godot is not on PATH. Console build:
 "$GODOT" --headless --import                         # re-scan project; required after adding/renaming a class_name
 "$GODOT" --headless -s addons/gut/gut_cmdln.gd       # run all tests (config: .gutconfig.json)
 "$GODOT" --path . --write-movie <scratch>/f.png --fixed-fps 60 --quit-after 120   # run the game 2 s and dump frames to inspect visually
+"$GODOT" --headless --script res://benchmarks/traffic_benchmark.gd   # traffic perf at 500/1k/2k/5k vehicles (~40 s)
 ```
+
+In game: F3 lane overlay, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles); the HUD top bar shows vehicles, stuck count and tick cost.
 
 For a visual check of a specific setup, pass `--script <scratch>/x.gd` (a `SceneTree` subclass that instantiates `res://scenes/main.tscn`, builds state via `root.get_node("Game").simulation`, and toggles overlays) together with `--write-movie`.
 
@@ -46,8 +49,10 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Routing: `Simulation.router.find_route(from_lane, from_distance, to_lane, to_distance)` returns a `Route` (lane ids + start/end distances) or null. Trip endpoints are positions along road lanes, never nodes.
 - Build tools extend `BuildTool`, live under the `ToolManager` node (node name = tool id), and read the pointer with `get_pointer_position()` / `get_snapped_pointer_position()`, never `get_global_mouse_position()` (which ignores synthetic test input).
 - Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly. Roads and lots are saved; citizens and vehicles are not yet (recreated from homes on load).
+- **`dispose()` discarded simulations and road networks** (`Simulation.dispose()`, `RoadNetwork.dispose()`): lanes link to each other (`Lane.outgoing_lanes`) and to the vehicles in their queues, so without it they are never freed. `Game` does it when replacing or exiting; tests do it in `after_each`. A "resources still in use at exit" error means something wasn't disposed.
+- Vehicles: only `VehicleSystem` creates, moves or removes them. Per-lane queues live on `Lane.queue` (front-most first). Junction entry is granted per connector using the conflict table on `Lane.conflicting_lane_ids`; see the `VehicleSystem` class doc. Hot paths hold `Lane` objects (`Lane.outgoing_lanes`, `Vehicle.next_lanes`) rather than ids.
 - **Never connect a lambda that captures `self` to a signal of another sim object** (e.g. `roads.changed.connect(func(): _dirty = true)`): the lambda keeps `self` alive through the signal, forming a reference cycle that leaks the whole `Simulation` ("resources still in use at exit"). Connect a bound method instead.
-- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → vehicles → citizens); `step()` runs citizens (departures) then vehicles (movement, arrivals).
+- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → vehicles → citizens → stress); `step()` runs citizens and stress traffic (departures) then vehicles (movement, arrivals).
 
 ## Layout
 
@@ -58,6 +63,7 @@ view/    renderers, camera, overlays
 tools/   player tools (ToolManager + RoadTool, BulldozeTool, LotTool x2, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
+benchmarks/  headless perf scripts (run with --script)
 tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest
 data/    Resources (.tres), e.g. data/road_types/
 addons/gut/  third-party, don't edit

@@ -152,6 +152,16 @@ static func distance_along_polyline(points: PackedVector2Array, point: Vector2) 
 	return best_distance
 
 
+## Smallest distance between any two points of two polylines (0 if they cross).
+static func polyline_distance(a: PackedVector2Array, b: PackedVector2Array) -> float:
+	var best := INF
+	for i in a.size() - 1:
+		for j in b.size() - 1:
+			var closest := Geometry2D.get_closest_points_between_segments(a[i], a[i + 1], b[j], b[j + 1])
+			best = minf(best, closest[0].distance_to(closest[1]))
+	return best
+
+
 static func polyline_length(points: PackedVector2Array) -> float:
 	var length := 0.0
 	for i in points.size() - 1:

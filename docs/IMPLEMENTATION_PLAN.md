@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2a done. Next: Phase 2b.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2b done (performance decision pending, see Phase 2b). Next: Phase 2c.
 
 ---
 
@@ -189,12 +189,31 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 - `add_road` returns only the first new segment id; use `add_road_pieces` when you need all of them.
 - Removing a segment never merges the two segments left at a now-degree-2 straight node. Harmless (a straight connector joins them), but a "merge collinear segments" clean-up would reduce node count.
 
-### Phase 2b — Many vehicles & queuing
-- Struct-of-arrays `VehicleSystem`, car-following across lane boundaries, `MultiMeshInstance2D` renderer.
-- `Uncontrolled` intersections with conflict table + don't-block-the-box.
-- Stress spawner: N cars with random lot-to-lot trips.
+### Phase 2b — Many vehicles & queuing ✅ (performance decision pending)
+- Each lane keeps its vehicle queue (`Lane.queue`, front-most first). Each tick: a prepare pass computes every vehicle's gap to the vehicle ahead (looking along its route for the front-most one) and its stop line; then a move pass picks speeds (lane limits, turns, own stop, `sqrt(v_lead² + 2·b·gap)` following plus a 0.8 s headway) and moves, clamped so nobody gets closer than `MIN_GAP` (4 px) or crosses a stop line. Gaps are taken at the start of the tick and vehicles only move forward, so overlaps are impossible by construction.
+- Junctions (uncontrolled): per-node conflict table (connectors whose paths come within 8 px, or that feed the same lane). A front-most vehicle near its stop line asks to enter; it is granted only if no conflicting connector is in use or promised, the exit lane has room for the whole vehicle including others already granted ("don't block the box"), and no longer-waiting vehicle at the same junction wants a conflicting move (first come, first served). Grants are never revoked.
+- Spawning checks the lane is free (with braking room for the vehicle behind); citizens retry after 0.5 s.
+- `StressTraffic` (debug load: random lane-to-lane trips), F6 in game cycles 0/250/500/1000/2000; HUD shows vehicles, stuck (stopped 30 s+) and smoothed tick cost.
+- `benchmarks/traffic_benchmark.gd`: headless, 20×20 street grid.
+- Not done as planned: vehicles are still objects, not struct-of-arrays. Moving queues onto `Lane`, holding lanes as objects instead of ids, and a math-only pose for straight lanes gave ~30%. Real struct-of-arrays in GDScript would mostly trade object access for packed-array access, which isn't clearly faster.
 
 **Done when:** 500 cars run on a grid without overlapping, without permanent deadlock, at 60 FPS. Record a perf baseline at 1k / 2k / 5k cars → **this decides whether the sim core stays in GDScript** (see §5).
+
+**Benchmark (2026-10-20, GDScript, this laptop):**
+
+| vehicles | avg tick | worst tick | render fill | stuck |
+|---|---|---|---|---|
+| 500 | 3.3 ms | 7.9 ms | 0.3 ms | 0 |
+| 1 000 | 6.9 ms | 13.8 ms | 0.6 ms | 0 |
+| 2 000 | 14.2 ms | 22.6 ms | 1.1 ms | 0 |
+| 5 000 | 32.9 ms | 41.2 ms | 3.1 ms | 0 |
+
+Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the per-vehicle passes (routing is cheap: ~1.4 ms per uncached A*, rarely needed). Budget: at 1× a tick runs every third frame and must fit in one frame with rendering (≲ 10 ms); at 4× ~1.3 ticks run per frame (≲ 7 ms each). So: **500 cars OK at every speed, ~1 000 OK at 1×, 2 000+ not OK** in GDScript. Per §5 this triggers moving `VehicleSystem` out of GDScript (options in §5).
+
+*Other notes carried forward:*
+- Vehicles on a junction's old connectors after a rebuild aren't counted against the new connectors' conflicts for the moment they take to clear it.
+- Gridlock around a block (A waits on B waits on … A) is still possible under heavy load; the 30 s "stuck" counter makes it visible. Patience-based despawn (Phase 3) is the release valve.
+- Lanes and vehicles reference each other: discarded networks/simulations must be `dispose()`d (see CLAUDE.md).
 
 ### Phase 2c — Signals & the first jam
 - `StopSign` and `TrafficLight` controllers; `SignalTool` to toggle them per node.
@@ -233,7 +252,7 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 | Risk | Mitigation |
 |---|---|
 | **Intersection deadlocks / gridlock** that the player can't fix | Don't-block-the-box from Phase 2b; deadlock detector in debug (vehicle stopped > N s with stopped vehicle ahead in a cycle); patience despawn as the last-resort release valve. |
-| **GDScript performance** at thousands of vehicles | Sim isolated in `RefCounted` classes + struct-of-arrays + route cache + fixed 20 Hz tick. Measure at Phase 2b. If 2k cars can't hold 60 FPS, port `VehicleSystem` (and maybe `Router`) to C# or a GDExtension — the API boundary stays the same. |
+| **GDScript performance** at thousands of vehicles | Measured in Phase 2b: ~7 µs/vehicle/tick, so 2k cars don't hold 60 FPS. Options, cheapest first: (a) lower the tick rate to 10 Hz (halves cost; rendering already interpolates); (b) run the sim tick on a worker thread with a snapshot for rendering (removes frame hitches, not total cost); (c) port `VehicleSystem` to **C#** (needs the Godot .NET build + .NET SDK; typically 5–20× faster for this kind of loop); (d) port it to a C++ **GDExtension** (fastest, heaviest toolchain). The `VehicleSystem` API boundary stays the same in all cases. |
 | **Network edits while vehicles are driving** | All edits go through `RoadNetwork` commands that emit dirty sets; affected vehicles reroute or despawn; edit is applied between ticks only. |
 | **Curves arriving late breaks assumptions** | Lanes are polyline `Curve2D` from day 1; Phase 1 tests include a hand-made curved segment even before the curve tool exists. |
 | **Fun is unproven** | Explicit playtest checkpoint at end of Phase 2c, before investing in zones/economy. |

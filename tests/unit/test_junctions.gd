@@ -12,6 +12,10 @@ func before_each() -> void:
 	road_type = RoadType.load_by_id(&"local_2lane")
 
 
+func after_each() -> void:
+	roads.dispose()
+
+
 func _add(from: Vector2, to: Vector2, type: RoadType = road_type) -> int:
 	return roads.add_road(from * G, to * G, type)
 

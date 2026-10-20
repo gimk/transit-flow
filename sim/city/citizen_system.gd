@@ -6,6 +6,7 @@ extends RefCounted
 
 const DWELL_TIME := 8.0  ## Sim seconds at home / at work (40 game minutes).
 const RETRY_DELAY := 2.0  ## Wait before retrying when there's no work or no route.
+const SPAWN_RETRY_DELAY := 0.5  ## Wait when the lane at the driveway is occupied.
 const FIRST_DEPARTURE_DELAY := 1.0
 
 var citizens: Dictionary[int, Citizen] = {}
@@ -50,7 +51,12 @@ func _depart(citizen: Citizen) -> void:
 	if route == null:
 		citizen.next_departure = _time + RETRY_DELAY
 		return
-	citizen.vehicle_id = _vehicles.spawn(route, to_lot, citizen.id).id
+	var vehicle := _vehicles.spawn(route, to_lot, citizen.id)
+	if vehicle == null:
+		# Something is parked on our driveway; try again shortly.
+		citizen.next_departure = _time + SPAWN_RETRY_DELAY
+		return
+	citizen.vehicle_id = vehicle.id
 	citizen.state = Citizen.State.DRIVING_TO_WORK if to_work else Citizen.State.DRIVING_HOME
 
 

@@ -13,6 +13,7 @@ var router: Router
 var lots: LotSystem
 var vehicles: VehicleSystem
 var citizens: CitizenSystem
+var stress: StressTraffic
 var tick_count := 0
 
 
@@ -22,13 +23,22 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	lots = LotSystem.new(roads)
 	vehicles = VehicleSystem.new(roads, router, lots)
 	citizens = CitizenSystem.new(lots, router, vehicles)
+	stress = StressTraffic.new(roads, router, vehicles)
 
 
 func step() -> void:
 	tick_count += 1
 	clock.advance(TICK_DT)
 	citizens.step(get_sim_time())
+	stress.step()
 	vehicles.step(TICK_DT)
+
+
+## Breaks internal reference cycles so the simulation can be freed. Call before
+## dropping the last reference to a simulation (Game does this when replacing it).
+func dispose() -> void:
+	vehicles.dispose()
+	roads.dispose()
 
 
 ## Simulated seconds since the start of the game.

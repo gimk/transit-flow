@@ -10,6 +10,10 @@ func before_each() -> void:
 	sim = Simulation.new()
 
 
+func after_each() -> void:
+	sim.dispose()
+
+
 func _road(from: Vector2, to: Vector2) -> int:
 	return sim.roads.add_road(from * G, to * G, RoadType.load_by_id(&"local_2lane"))
 
@@ -100,3 +104,4 @@ func test_save_round_trip_keeps_lots() -> void:
 	var loaded := Simulation.from_dict(JSON.parse_string(JSON.stringify(saved, "", true, true)))
 	assert_eq_deep(loaded.to_dict(), saved)
 	assert_eq(loaded.citizens.citizens.size(), 1, "citizens are recreated from homes")
+	loaded.dispose()

@@ -19,6 +19,9 @@ signal changed(node_ids: Array, segment_ids: Array)
 const EPSILON := 0.5
 ## No segment may be shorter than this (it would leave no room between junctions).
 const MIN_SEGMENT_LENGTH := 16.0
+## Connectors whose paths come closer than this (center to center) conflict: two
+## vehicles (Vehicle.WIDTH wide) on them at once could touch.
+const CONFLICT_DISTANCE := 8.0
 ## A connector counts as going straight if it turns by less than this.
 const STRAIGHT_MAX_ANGLE := PI / 6.0  # 30°
 ## Connector speed limit relative to the slower of the two lanes it joins.
@@ -103,6 +106,15 @@ func remove_segment(segment_id: int) -> bool:
 	touched_segments.append(segment_id)
 	changed.emit(touched_nodes, touched_segments)
 	return true
+
+
+## Breaks the reference cycles between lanes (lanes link to each other through
+## outgoing_lanes, and to the vehicles in their queues). Call before discarding a
+## network, or it will never be freed.
+func dispose() -> void:
+	for lane: Lane in lanes.values():
+		lane.outgoing_lanes.clear()
+		lane.queue.clear()
 
 
 # --- Queries ----------------------------------------------------------------
@@ -322,6 +334,7 @@ func _split_segment(segment_id: int, point: Vector2) -> int:
 ## Removes a segment and its lanes from the graph, leaving its nodes in place.
 func _detach_segment(segment: RoadSegment) -> void:
 	for lane_id in segment.lane_ids:
+		lanes[lane_id].outgoing_lanes.clear()
 		lanes.erase(lane_id)
 	segments.erase(segment.id)
 	nodes[segment.start_node_id].segment_ids.erase(segment.id)
@@ -402,6 +415,8 @@ func _update_lane_geometry(segment: RoadSegment) -> void:
 
 func _erase_connectors(node: RoadNode) -> void:
 	for lane_id in node.connector_lane_ids:
+		# Vehicles still on a removed connector only need its outgoing_lane_ids.
+		lanes[lane_id].outgoing_lanes.clear()
 		lanes.erase(lane_id)
 	node.connector_lane_ids.clear()
 
@@ -420,6 +435,7 @@ func _rebuild_connectors(node: RoadNode) -> void:
 
 	for in_lane in incoming:
 		in_lane.outgoing_lane_ids.clear()
+		in_lane.outgoing_lanes.clear()
 		for out_lane in outgoing:
 			var turn := _classify_movement(node, in_lane, out_lane)
 			if turn == Lane.Turn.NONE:
@@ -435,9 +451,35 @@ func _rebuild_connectors(node: RoadNode) -> void:
 			_next_lane_id += 1
 			connector.turn = turn
 			connector.outgoing_lane_ids.append(out_lane.id)
+			connector.outgoing_lanes.append(out_lane)
+			connector.feeder_lane_id = in_lane.id
 			in_lane.outgoing_lane_ids.append(connector.id)
+			in_lane.outgoing_lanes.append(connector)
 			lanes[connector.id] = connector
 			node.connector_lane_ids.append(connector.id)
+	_compute_conflicts(node)
+
+
+## Marks which of the node's connectors can't be used at the same time: those whose
+## paths come closer than CONFLICT_DISTANCE (crossing), and those feeding the same
+## lane (merging). Connectors leaving the same lane don't conflict: vehicles on them
+## already follow each other.
+func _compute_conflicts(node: RoadNode) -> void:
+	var connectors: Array[Lane] = []
+	var polylines: Array[PackedVector2Array] = []
+	for lane_id in node.connector_lane_ids:
+		connectors.append(lanes[lane_id])
+		polylines.append(LaneBuilder.get_polyline(lanes[lane_id].curve))
+	for i in connectors.size():
+		for j in range(i + 1, connectors.size()):
+			var a := connectors[i]
+			var b := connectors[j]
+			if a.feeder_lane_id == b.feeder_lane_id:
+				continue
+			var merge := a.outgoing_lane_ids[0] == b.outgoing_lane_ids[0]
+			if merge or LaneBuilder.polyline_distance(polylines[i], polylines[j]) < CONFLICT_DISTANCE:
+				a.conflicting_lane_ids.append(b.id)
+				b.conflicting_lane_ids.append(a.id)
 
 
 ## Which movement (if any) is allowed from `in_lane` into `out_lane` through `node`.

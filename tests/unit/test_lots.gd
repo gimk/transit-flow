@@ -11,6 +11,10 @@ func before_each() -> void:
 	lots = LotSystem.new(roads)
 
 
+func after_each() -> void:
+	roads.dispose()
+
+
 func _road(from: Vector2, to: Vector2) -> int:
 	return roads.add_road(from * G, to * G, RoadType.load_by_id(&"local_2lane"))
 

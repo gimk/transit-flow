@@ -9,6 +9,10 @@ func before_each() -> void:
 	road_type = RoadType.load_by_id(&"local_2lane")
 
 
+func after_each() -> void:
+	roads.dispose()
+
+
 func _add(from: Vector2, to: Vector2, layer := 0) -> int:
 	return roads.add_road(from, to, road_type, layer)
 
@@ -115,3 +119,4 @@ func test_save_round_trip_through_json() -> void:
 	# Ids keep counting from where the saved network left off.
 	var next_id := loaded.add_road(Vector2(0, 0), Vector2(0, 128), road_type)
 	assert_eq(next_id, removed + 1)
+	loaded.dispose()
