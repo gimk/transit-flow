@@ -1,10 +1,12 @@
 class_name RoadTool
 extends BuildTool
 ## Click-drag between grid points to build a straight, axis-aligned road.
-## The preview turns red and the hint explains why when the road can't be built.
+## Crossing or touching existing roads creates junctions there (white dots in the
+## preview). The preview turns red and the hint explains why when the road can't be built.
 
 const VALID_COLOR := Color(0.45, 0.85, 1.0, 0.6)
 const INVALID_COLOR := Color(1.0, 0.35, 0.3, 0.6)
+const JUNCTION_COLOR := Color(1, 1, 1, 0.9)
 const IDLE_HINT := "Drag to build a road · Right-click / Esc to cancel"
 
 var road_type: RoadType
@@ -14,6 +16,8 @@ var _start := Vector2.ZERO
 var _end := Vector2.ZERO
 var _hover := Vector2.INF
 var _error := ""
+## Where the dragged road meets existing roads (junctions it will create or join).
+var _junctions: Array[Vector2] = []
 
 
 func _ready() -> void:
@@ -68,10 +72,16 @@ func cancel() -> bool:
 
 func _update_preview() -> void:
 	_error = ""
+	_junctions.clear()
 	if _dragging:
 		_end = _axis_locked(_start, _hover)
 		if _start != _end:
-			_error = Game.simulation.roads.validate_road(_start, _end)
+			var roads := Game.simulation.roads
+			var plan := roads.plan_road(_start, _end)
+			_error = plan.error
+			for point: Vector2 in plan.points:
+				if roads.find_node_at(point) != -1 or roads.find_segment_at(point, RoadNetwork.EPSILON) != -1:
+					_junctions.append(point)
 		var cells := roundi(_start.distance_to(_end) / Grid.CELL_SIZE)
 		Events.tool_hint_changed.emit(_error if _error != "" else "%d cell%s" % [cells, "" if cells == 1 else "s"])
 	else:
@@ -97,3 +107,6 @@ func _draw() -> void:
 	draw_line(_start, _end, color, width)
 	draw_circle(_start, width * 0.5, color)
 	draw_circle(_end, width * 0.5, color)
+	if _error == "":
+		for point in _junctions:
+			draw_circle(point, 4.0, JUNCTION_COLOR)

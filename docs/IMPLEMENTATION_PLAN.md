@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1 done (1a–1c). Next: Phase 2a.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2a done. Next: Phase 2b.
 
 ---
 
@@ -175,10 +175,19 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 - A vehicle finishing a replaced connector can jump a few px if the junction's trim radius changed.
 - Re-routing everyone on every edit is O(vehicles) A* queries (helped by the path cache). Profile in Phase 2b.
 
-### Phase 2a — Crossings & splitting
-- Drawing a road across an existing one (same layer) splits both and creates a 4-way node. T-junctions when ending on a segment.
+### Phase 2a — Crossings & splitting ✅
+- `RoadNetwork.plan_road()` (pure, used by both the preview and the build) finds every point where a new straight road meets existing roads or nodes on its layer; `add_road_pieces()` splits existing segments there (`_split_segment`, keeping direction and type), creates the junction nodes and builds the new road as one segment per piece. Pieces running along an existing road are skipped (extending a road works; a road entirely on top of one is rejected). Pieces shorter than `MIN_SEGMENT_LENGTH` (16 px) are rejected.
+- Covers crossings (4-way), T-junctions (ending or starting on a road), passing through existing nodes, crossing many roads at once, and collinear overlaps. Other elevation layers are ignored.
+- Road tool preview marks the junctions the road will create or join.
+- Vehicles on a lane that gets replaced by a split "re-snap" to the lane now under them (same heading, within 2 px) and re-route, so building a crossing under traffic doesn't kill trips.
+- Fuzz test: 60 random grid roads with random bulldozing, then all graph invariants + save/load round-trip.
 
 **Done when:** arbitrary grid layouts produce a valid graph (tested by fuzzing random road placements and asserting graph invariants).
+
+*Notes carried forward:*
+- Curved segments can't be split yet ("Can't join a curved road in the middle yet"). Phase 4 needs a proper Bézier split (de Casteljau).
+- `add_road` returns only the first new segment id; use `add_road_pieces` when you need all of them.
+- Removing a segment never merges the two segments left at a now-degree-2 straight node. Harmless (a straight connector joins them), but a "merge collinear segments" clean-up would reduce node count.
 
 ### Phase 2b — Many vehicles & queuing
 - Struct-of-arrays `VehicleSystem`, car-following across lane boundaries, `MultiMeshInstance2D` renderer.

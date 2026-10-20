@@ -16,6 +16,8 @@ const MIN_SPEED := 4.0
 const ARRIVAL_EPSILON := 0.5
 ## Extra look-ahead beyond braking distance when checking upcoming lanes.
 const LOOKAHEAD_MARGIN := 20.0
+## How far a vehicle may be from a rebuilt lane to be moved onto it.
+const RESNAP_DISTANCE := 2.0
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -144,13 +146,11 @@ func _reroute(vehicle: Vehicle) -> bool:
 	var destination := _lots.get_access(vehicle.destination_lot_id)
 	if destination.is_empty():
 		return false
+	var lane_gone: bool = _roads.lanes.get(vehicle.lane.id) != vehicle.lane
+	if lane_gone and not vehicle.lane.is_connector() and not _resnap(vehicle):
+		return false
 	if _roads.lanes.get(vehicle.lane.id) == vehicle.lane:
-		var route := _router.find_route(vehicle.lane.id, vehicle.distance, destination.lane_id, destination.distance)
-		if route == null:
-			return false
-		vehicle.next_lane_ids = _to_int_array(route.lane_ids.slice(1))
-		vehicle.end_distance = route.end_distance
-		return true
+		return _route_from_current_lane(vehicle, destination)
 	# On a connector that was just replaced: finish it, then continue from the lane it feeds.
 	if vehicle.lane.is_connector():
 		var exit_lane_id: int = vehicle.lane.outgoing_lane_ids[0]
@@ -160,6 +160,32 @@ func _reroute(vehicle: Vehicle) -> bool:
 				vehicle.next_lane_ids = _to_int_array(route.lane_ids)
 				vehicle.end_distance = route.end_distance
 				return true
+		# Its exit was rebuilt too: try the new connector now under it.
+		if _resnap(vehicle):
+			return _route_from_current_lane(vehicle, destination)
+	return false
+
+
+func _route_from_current_lane(vehicle: Vehicle, destination: Dictionary) -> bool:
+	var route := _router.find_route(vehicle.lane.id, vehicle.distance, destination.lane_id, destination.distance)
+	if route == null:
+		return false
+	vehicle.next_lane_ids = _to_int_array(route.lane_ids.slice(1))
+	vehicle.end_distance = route.end_distance
+	return true
+
+
+## The road under the vehicle was rebuilt (e.g. split by a new crossing): move it onto
+## whichever lane now runs right under it in the same direction, if any.
+func _resnap(vehicle: Vehicle) -> bool:
+	var heading := Vector2.from_angle(vehicle.rotation)
+	for lane: Lane in _roads.lanes.values():
+		var offset := lane.curve.get_closest_offset(vehicle.position)
+		var pose := lane.curve.sample_baked_with_rotation(offset)
+		if pose.origin.distance_to(vehicle.position) <= RESNAP_DISTANCE and pose.x.normalized().dot(heading) > 0.9:
+			vehicle.lane = lane
+			vehicle.distance = offset
+			return true
 	return false
 
 

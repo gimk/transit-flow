@@ -10,13 +10,15 @@ extends RefCounted
 ## to its outgoing lanes (rebuilt, with new ids, whenever the junction changes).
 ## Dead ends get a U-turn connector so no lane is a trap.
 ##
-## Phase 1 rule: roads may only meet at their endpoints. Crossings and T-junctions
-## onto the middle of a road are rejected until Phase 2a splits segments.
+## Building a road that crosses, touches or passes through existing roads on the same
+## elevation layer splits everything at those points and creates junction nodes there.
 
 signal changed(node_ids: Array, segment_ids: Array)
 
 ## Positions closer than this are treated as the same point.
 const EPSILON := 0.5
+## No segment may be shorter than this (it would leave no room between junctions).
+const MIN_SEGMENT_LENGTH := 16.0
 ## A connector counts as going straight if it turns by less than this.
 const STRAIGHT_MAX_ANGLE := PI / 6.0  # 30°
 ## Connector speed limit relative to the slower of the two lanes it joins.
@@ -38,26 +40,51 @@ var _next_lane_id := 1
 
 # --- Commands ---------------------------------------------------------------
 
-## Adds a straight road. Returns the new segment id, or -1 if the road is invalid.
+## Adds a straight road, splitting it and any existing road it meets into separate
+## segments joined at junctions. Returns the first new segment id, or -1 if invalid.
 func add_road(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer := 0) -> int:
-	return add_road_with_centerline(straight_curve(from, to), road_type, elevation_layer)
+	var ids := add_road_pieces(from, to, road_type, elevation_layer)
+	return ids[0] if not ids.is_empty() else -1
 
 
-func add_road_with_centerline(centerline: Curve2D, road_type: RoadType, elevation_layer := 0) -> int:
-	if validate_centerline(centerline, elevation_layer) != "":
-		return -1
-	var last := centerline.point_count - 1
-	var start_id := _get_or_create_node(centerline.get_point_position(0), elevation_layer)
-	var end_id := _get_or_create_node(centerline.get_point_position(last), elevation_layer)
-	# Make the curve end exactly on the (possibly pre-existing) nodes.
-	centerline.set_point_position(0, nodes[start_id].position)
-	centerline.set_point_position(last, nodes[end_id].position)
+## Like add_road, but returns every new segment id (in order from `from` to `to`).
+func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer := 0) -> Array[int]:
+	var plan := plan_road(from, to, elevation_layer)
+	var new_ids: Array[int] = []
+	if plan.error != "":
+		return new_ids
+	var touched_segments := []
+	var junction_ids := []
+	for point: Vector2 in plan.points:
+		var node_id := find_node_at(point, elevation_layer)
+		if node_id == -1:
+			var split_id := _find_segment_with_interior_point(point, elevation_layer)
+			if split_id != -1:
+				var old := segments[split_id]
+				junction_ids.append_array([old.start_node_id, old.end_node_id])
+				touched_segments.append(split_id)
+				node_id = _split_segment(split_id, point)
+				touched_segments.append_array(nodes[node_id].segment_ids)
+			else:
+				node_id = _create_node(point, elevation_layer)
+		junction_ids.append(node_id)
+		plan.node_ids.append(node_id)
 
-	var segment := _insert_segment(_next_segment_id, start_id, end_id, road_type, elevation_layer, centerline)
-	_next_segment_id += 1
-	var touched_nodes := [start_id, end_id]
-	changed.emit(touched_nodes, _refresh_junctions(touched_nodes))
-	return segment.id
+	for i in plan.overlaps.size():
+		if plan.overlaps[i]:
+			continue
+		var start_id: int = plan.node_ids[i]
+		var end_id: int = plan.node_ids[i + 1]
+		var centerline := straight_curve(nodes[start_id].position, nodes[end_id].position)
+		var segment := _insert_segment(_next_segment_id, start_id, end_id, road_type, elevation_layer, centerline)
+		_next_segment_id += 1
+		new_ids.append(segment.id)
+
+	for segment_id in _refresh_junctions(junction_ids):
+		if not touched_segments.has(segment_id):
+			touched_segments.append(segment_id)
+	changed.emit(junction_ids, touched_segments)
+	return new_ids
 
 
 ## Removes a segment and its lanes. Nodes left without any segment are removed too.
@@ -65,13 +92,10 @@ func remove_segment(segment_id: int) -> bool:
 	var segment: RoadSegment = segments.get(segment_id)
 	if segment == null:
 		return false
-	for lane_id in segment.lane_ids:
-		lanes.erase(lane_id)
-	segments.erase(segment_id)
+	_detach_segment(segment)
 	var touched_nodes := [segment.start_node_id, segment.end_node_id]
 	for node_id: int in touched_nodes:
 		var node := nodes[node_id]
-		node.segment_ids.erase(segment_id)
 		if node.segment_ids.is_empty():
 			_erase_connectors(node)
 			nodes.erase(node_id)
@@ -85,38 +109,65 @@ func remove_segment(segment_id: int) -> bool:
 
 ## Returns "" if the road can be built, otherwise a player-facing reason.
 func validate_road(from: Vector2, to: Vector2, elevation_layer := 0) -> String:
-	return validate_centerline(straight_curve(from, to), elevation_layer)
+	return plan_road(from, to, elevation_layer).error
 
 
-func validate_centerline(centerline: Curve2D, elevation_layer := 0) -> String:
-	var points := LaneBuilder.get_polyline(centerline)
-	if points.size() < 2 or points[0].distance_to(points[-1]) <= EPSILON:
-		return "Road is too short"
-	var start := points[0]
-	var end := points[-1]
+## Works out, without changing anything, how a straight road from `from` to `to` would
+## be built. Returns:
+## - "error": "" or a player-facing reason it can't be built,
+## - "points": where the road will have nodes, in order (its ends plus every point
+##   where it meets an existing road or node on the same layer),
+## - "overlaps": per consecutive pair of points, true if that piece runs along an
+##   existing road and won't be built again,
+## - "node_ids": empty; filled in by add_road_pieces.
+func plan_road(from: Vector2, to: Vector2, elevation_layer := 0) -> Dictionary:
+	var plan := { "error": "", "points": [], "overlaps": [], "node_ids": [] }
+	if from.distance_to(to) < MIN_SEGMENT_LENGTH:
+		plan.error = "Road is too short"
+		return plan
 
-	var start_node := find_node_at(start, elevation_layer)
-	var end_node := find_node_at(end, elevation_layer)
-	if start_node != -1 and end_node != -1 and get_segment_between(start_node, end_node) != -1:
-		return "Road already exists"
-
+	var points: Array[Vector2] = [from, to]
 	for node: RoadNode in nodes.values():
-		if node.elevation_layer != elevation_layer:
-			continue
-		if node.position.distance_to(start) <= EPSILON or node.position.distance_to(end) <= EPSILON:
-			continue
-		if LaneBuilder.distance_to_polyline(node.position, points) <= EPSILON:
-			return "Road can't pass through a junction yet"
-
+		if node.elevation_layer == elevation_layer and _distance_to_line(node.position, from, to) <= EPSILON:
+			points.append(node.position)
 	for segment: RoadSegment in segments.values():
 		if segment.elevation_layer != elevation_layer:
 			continue
-		var other := LaneBuilder.get_polyline(segment.centerline)
-		if _is_on_interior(start, other) or _is_on_interior(end, other):
-			return "Roads can only connect at their ends for now"
-		if _polylines_cross(points, other):
-			return "Roads can't cross yet"
-	return ""
+		var polyline := LaneBuilder.get_polyline(segment.centerline)
+		var meets := false
+		for endpoint in [from, to]:
+			if _is_on_interior(endpoint, polyline):
+				meets = true
+		for i in polyline.size() - 1:
+			var hit: Variant = Geometry2D.segment_intersects_segment(from, to, polyline[i], polyline[i + 1])
+			if hit != null:
+				points.append(hit)
+				if _is_on_interior(hit, polyline):
+					meets = true
+		if meets and _is_curved(segment):
+			plan.error = "Can't join a curved road in the middle yet"
+			return plan
+
+	points.sort_custom(func(a: Vector2, b: Vector2) -> bool: return from.distance_squared_to(a) < from.distance_squared_to(b))
+	for point in points:
+		if plan.points.is_empty() or plan.points[-1].distance_to(point) > EPSILON:
+			plan.points.append(point)
+
+	var builds_something := false
+	for i in plan.points.size() - 1:
+		var a: Vector2 = plan.points[i]
+		var b: Vector2 = plan.points[i + 1]
+		if a.distance_to(b) < MIN_SEGMENT_LENGTH:
+			plan.error = "Too close to an existing junction"
+			return plan
+		# Pieces only meet other roads at their ends, so a piece whose middle lies on a
+		# road runs along that road.
+		var overlaps := find_segment_at((a + b) * 0.5, EPSILON, elevation_layer) != -1
+		plan.overlaps.append(overlaps)
+		builds_something = builds_something or not overlaps
+	if not builds_something:
+		plan.error = "Road already exists"
+	return plan
 
 
 ## Id of the node at `position` on the given layer, or -1.
@@ -241,14 +292,55 @@ static func from_dict(data: Dictionary) -> RoadNetwork:
 
 # --- Internals --------------------------------------------------------------
 
-func _get_or_create_node(position: Vector2, elevation_layer: int) -> int:
-	var existing := find_node_at(position, elevation_layer)
-	if existing != -1:
-		return existing
+func _create_node(position: Vector2, elevation_layer: int) -> int:
 	var node := RoadNode.new(_next_node_id, position, elevation_layer)
 	_next_node_id += 1
 	nodes[node.id] = node
 	return node.id
+
+
+## Splits a segment at `point` (on its interior) into two segments joined by a new
+## node, keeping the original direction. Returns the new node id. The caller must
+## refresh the junctions at both original ends and at the new node.
+func _split_segment(segment_id: int, point: Vector2) -> int:
+	var old := segments[segment_id]
+	var polyline := LaneBuilder.get_polyline(old.centerline)
+	var at := LaneBuilder.distance_along_polyline(polyline, point)
+	var first := LaneBuilder.sub_polyline(polyline, 0.0, at)
+	var second := LaneBuilder.sub_polyline(polyline, at, LaneBuilder.polyline_length(polyline))
+	first[first.size() - 1] = point
+	second[0] = point
+	_detach_segment(old)
+	var node_id := _create_node(point, old.elevation_layer)
+	for piece: Array in [[old.start_node_id, node_id, first], [node_id, old.end_node_id, second]]:
+		_insert_segment(_next_segment_id, piece[0], piece[1], old.road_type, old.elevation_layer,
+			LaneBuilder.polyline_to_curve(piece[2]))
+		_next_segment_id += 1
+	return node_id
+
+
+## Removes a segment and its lanes from the graph, leaving its nodes in place.
+func _detach_segment(segment: RoadSegment) -> void:
+	for lane_id in segment.lane_ids:
+		lanes.erase(lane_id)
+	segments.erase(segment.id)
+	nodes[segment.start_node_id].segment_ids.erase(segment.id)
+	nodes[segment.end_node_id].segment_ids.erase(segment.id)
+
+
+func _find_segment_with_interior_point(point: Vector2, elevation_layer: int) -> int:
+	for segment: RoadSegment in segments.values():
+		if segment.elevation_layer == elevation_layer and _is_on_interior(point, LaneBuilder.get_polyline(segment.centerline)):
+			return segment.id
+	return -1
+
+
+static func _is_curved(segment: RoadSegment) -> bool:
+	return LaneBuilder.has_handles(segment.centerline)
+
+
+static func _distance_to_line(point: Vector2, from: Vector2, to: Vector2) -> float:
+	return Geometry2D.get_closest_point_to_segment(point, from, to).distance_to(point)
 
 
 func _insert_segment(id: int, start_id: int, end_id: int, road_type: RoadType,
@@ -266,6 +358,7 @@ func _insert_segment(id: int, start_id: int, end_id: int, road_type: RoadType,
 ## Returns the ids of the segments whose lanes were updated.
 ## (Lanes only change at the trimmed end, so connectors at the far nodes stay valid.)
 func _refresh_junctions(node_ids: Array) -> Array:
+	node_ids = _unique(node_ids)
 	var segment_ids := []
 	for node_id: int in node_ids:
 		if not nodes.has(node_id):
@@ -381,16 +474,9 @@ func _is_on_interior(point: Vector2, polyline: PackedVector2Array) -> bool:
 	return LaneBuilder.distance_to_polyline(point, polyline) <= EPSILON
 
 
-## True if the polylines touch anywhere other than at an end they share.
-## Collinear overlaps are caught earlier by the node/endpoint checks.
-func _polylines_cross(a: PackedVector2Array, b: PackedVector2Array) -> bool:
-	for i in a.size() - 1:
-		for j in b.size() - 1:
-			var hit: Variant = Geometry2D.segment_intersects_segment(a[i], a[i + 1], b[j], b[j + 1])
-			if hit == null:
-				continue
-			var at_end_of_a: bool = hit.distance_to(a[0]) <= EPSILON or hit.distance_to(a[-1]) <= EPSILON
-			var at_end_of_b: bool = hit.distance_to(b[0]) <= EPSILON or hit.distance_to(b[-1]) <= EPSILON
-			if not (at_end_of_a and at_end_of_b):
-				return true
-	return false
+static func _unique(values: Array) -> Array:
+	var result := []
+	for value in values:
+		if not result.has(value):
+			result.append(value)
+	return result

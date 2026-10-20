@@ -57,30 +57,10 @@ func test_rejects_duplicate_road_in_either_direction() -> void:
 	assert_eq(_add(Vector2(128, 0), Vector2(0, 0)), -1)
 
 
-func test_rejects_crossing_on_same_layer() -> void:
-	_add(Vector2(0, 64), Vector2(128, 64))
-	assert_eq(_add(Vector2(64, 0), Vector2(64, 128)), -1)
-
-
 func test_allows_crossing_on_different_layers() -> void:
 	_add(Vector2(0, 64), Vector2(128, 64), 0)
 	assert_ne(_add(Vector2(64, 0), Vector2(64, 128), 1), -1)
 	assert_eq(roads.nodes.size(), 4)
-
-
-func test_rejects_ending_in_the_middle_of_a_road() -> void:
-	_add(Vector2(0, 64), Vector2(128, 64))
-	assert_eq(_add(Vector2(64, 0), Vector2(64, 64)), -1)
-
-
-func test_rejects_passing_through_an_existing_node() -> void:
-	_add(Vector2(64, 0), Vector2(64, 64))
-	assert_eq(_add(Vector2(0, 64), Vector2(128, 64)), -1)
-
-
-func test_rejects_collinear_overlap() -> void:
-	_add(Vector2(0, 0), Vector2(128, 0))
-	assert_eq(_add(Vector2(64, 0), Vector2(256, 0)), -1)
 
 
 func test_allows_extending_a_road_in_a_straight_line() -> void:

@@ -74,7 +74,7 @@ static func build_connector_curve(from_curve: Curve2D, to_curve: Curve2D) -> Cur
 ## (exact for grid roads), its baked points otherwise.
 static func get_polyline(curve: Curve2D) -> PackedVector2Array:
 	var source: PackedVector2Array
-	if _has_handles(curve):
+	if has_handles(curve):
 		source = curve.get_baked_points()
 	else:
 		for i in curve.point_count:
@@ -137,6 +137,21 @@ static func sub_polyline(points: PackedVector2Array, from_distance: float, to_di
 	return result
 
 
+## Distance along the polyline to the point on it closest to `point`.
+static func distance_along_polyline(points: PackedVector2Array, point: Vector2) -> float:
+	var best_gap := INF
+	var best_distance := 0.0
+	var walked := 0.0
+	for i in points.size() - 1:
+		var closest := Geometry2D.get_closest_point_to_segment(point, points[i], points[i + 1])
+		var gap := closest.distance_to(point)
+		if gap < best_gap:
+			best_gap = gap
+			best_distance = walked + points[i].distance_to(closest)
+		walked += points[i].distance_to(points[i + 1])
+	return best_distance
+
+
 static func polyline_length(points: PackedVector2Array) -> float:
 	var length := 0.0
 	for i in points.size() - 1:
@@ -170,7 +185,7 @@ static func end_direction(curve: Curve2D) -> Vector2:
 	return (points[-1] - points[-2]).normalized()
 
 
-static func _has_handles(curve: Curve2D) -> bool:
+static func has_handles(curve: Curve2D) -> bool:
 	for i in curve.point_count:
 		if curve.get_point_in(i) != Vector2.ZERO or curve.get_point_out(i) != Vector2.ZERO:
 			return true

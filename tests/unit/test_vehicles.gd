@@ -124,3 +124,22 @@ func test_finishes_a_connector_that_was_rebuilt_under_it() -> void:
 	watch_signals(vehicles)
 	assert_ne(_run_until_gone(vehicle), -1)
 	assert_signal_emitted(vehicles, "vehicle_arrived")
+
+
+func test_keeps_driving_when_its_road_is_split_by_a_new_crossing() -> void:
+	_road(Vector2(0, 4), Vector2(10, 4))
+	var vehicle := _spawn_to_lot(Vector2i(0, 4), Vector2i(9, 4))
+	for i in 20:
+		vehicles.step(DT)
+	var lane_before := vehicle.lane.id
+	var position_before := vehicle.position
+	# Cross ahead of the car, and also right where the car is.
+	_road(Vector2(6, 0), Vector2(6, 8))
+	_road(Vector2(floorf(vehicle.position.x / G), 0), Vector2(floorf(vehicle.position.x / G), 8))
+	assert_false(roads.lanes.has(lane_before), "the lane it was on was replaced")
+	watch_signals(vehicles)
+	vehicles.step(DT)
+	assert_signal_not_emitted(vehicles, "vehicle_failed")
+	assert_lt(vehicle.position.distance_to(position_before), 10.0, "no jump")
+	assert_ne(_run_until_gone(vehicle), -1)
+	assert_signal_emitted(vehicles, "vehicle_arrived")

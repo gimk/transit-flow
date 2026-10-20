@@ -70,12 +70,14 @@ func test_road_tool_builds_axis_locked_road_from_drag() -> void:
 	assert_ne(roads.find_node_at(_grid_point(2, 0)), -1)
 
 
-func test_road_tool_rejects_crossing_drag() -> void:
+func test_road_tool_crossing_drag_creates_a_junction() -> void:
 	Game.simulation.roads.add_road(_grid_point(-2, 0), _grid_point(2, 0), RoadType.load_by_id(&"local_2lane"))
 	await _press_action(&"tool_road")
 	await _drag(_grid_point(0, -2), _grid_point(0, 2))
 	await wait_process_frames(10)
-	assert_eq(Game.simulation.roads.segments.size(), 1)
+	assert_eq(Game.simulation.roads.segments.size(), 4)
+	var center := Game.simulation.roads.find_node_at(_grid_point(0, 0))
+	assert_eq(Game.simulation.roads.nodes[center].get_degree(), 4)
 
 
 func test_bulldoze_tool_removes_clicked_road() -> void:
