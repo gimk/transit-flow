@@ -56,6 +56,11 @@ var gave_up := false
 var leader_gap := INF
 var leader_speed := 0.0
 var stop_gap := INF
+## After a lane change: how far the vehicle still is from its new lane's center (px,
+## positive to the right). It slides across over a moment; drawing only.
+var lateral_offset := 0.0
+## Waiting to change lanes and running out of road: vehicles on the target lane make room.
+var merging := false
 ## How long the vehicle has been (nearly) stationary, in sim seconds.
 var stopped_time := 0.0
 ## How long it has been crawling well below the speed limit (held up), in sim seconds.

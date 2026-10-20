@@ -63,6 +63,16 @@ const GIVE_UP_GRACE := 60.0
 const CONFLICT_MARGIN := 0.5  ## Sim seconds.
 ## Below this speed a vehicle's progress through a junction can't be predicted.
 const MIN_PREDICT_SPEED := 2.0
+## Lane changes (_change_lanes): a vehicle that still has to change lanes stops this far
+## short of its lane's end, and within MERGE_DISTANCE of it (or once stopped) it counts
+## as merging, so the traffic beside it makes room.
+const LANE_CHANGE_END_MARGIN := 2.0
+const MERGE_DISTANCE := 60.0
+## A merging vehicle stopped at the end of its lane this long gives up the lane change,
+## goes on from the lane it's in, and re-routes (sim seconds).
+const MISSED_LANE_WAIT := 2.0
+## How fast a vehicle that changed lanes is drawn sliding across (px per sim second).
+const LANE_CHANGE_SLIDE_SPEED := 20.0
 ## Gap acceptance (_gap_accepted): how far away, in seconds, approaching conflicting
 ## traffic must be before a driver enters, by turn. (Vehicles here drive about 2.5x
 ## faster in car lengths per second than real ones, so these are below real-world gaps.)
@@ -214,12 +224,15 @@ func step(dt: float) -> void:
 	if _reroute_pending:
 		_reroute_pending = false
 		_reroute_all()
+	_change_lanes()
 	_prepare()
+	_make_room_for_mergers()
 	var arrived: Array[Vehicle] = []
 	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
 		vehicle.previous_position = vehicle.position
 		vehicle.previous_rotation = vehicle.rotation
+		vehicle.lateral_offset = move_toward(vehicle.lateral_offset, 0.0, LANE_CHANGE_SLIDE_SPEED * dt)
 		_update_speed(vehicle, dt)
 		if _advance(vehicle, dt):
 			arrived.append(vehicle)
@@ -241,6 +254,127 @@ func step(dt: float) -> void:
 		if vehicles.has(vehicle.id):
 			vehicle.gave_up = true
 			_fail(vehicle)
+
+
+# --- Lane changes -----------------------------------------------------------------
+
+## Vehicles whose route continues on the lane beside theirs (Lane.is_beside) move across
+## as soon as there is a safe gap there: room for the whole vehicle, and the vehicle that
+## ends up behind can brake to its speed comfortably. Until then they drive on, and stop
+## at the end of their lane if they must (_scan_ahead), where they count as merging and
+## the traffic beside makes room (_make_room_for_mergers).
+func _change_lanes() -> void:
+	for vehicle: Vehicle in vehicles.values():
+		vehicle.merging = false
+		if vehicle.next_lanes.is_empty() or not vehicle.next_lanes[0].is_beside(vehicle.lane):
+			continue
+		var target := vehicle.next_lanes[0]
+		var target_distance := _distance_beside(vehicle, target)
+		if _has_room_to_change(vehicle, target, target_distance):
+			_move_across(vehicle, target, target_distance)
+			continue
+		var partner := _swap_partner(vehicle, target, target_distance)
+		if partner != null:
+			var partner_distance := _distance_beside(partner, vehicle.lane)
+			var lane := vehicle.lane
+			_move_across(vehicle, target, target_distance)
+			_move_across(partner, lane, partner_distance)
+		elif vehicle.get_remaining_on_lane() < MERGE_DISTANCE or vehicle.speed < STOPPED_SPEED:
+			vehicle.merging = true
+			if vehicle.stopped_time > MISSED_LANE_WAIT and vehicle.lane.queue[0] == vehicle \
+					and vehicle.get_remaining_on_lane() < vehicle.length + MERGE_DISTANCE:
+				_carry_on_without_changing(vehicle)
+
+
+## Two vehicles side by side, each wanting the other's lane (common in jams: a left
+## turner in the right lane next to a right turner in the left one), swap places when
+## neither would then be too close to anyone else. Returns the vehicle to swap with.
+func _swap_partner(vehicle: Vehicle, target: Lane, at: float) -> Vehicle:
+	for other: Vehicle in target.queue:
+		if other.next_lanes.is_empty() or other.next_lanes[0] != vehicle.lane:
+			continue
+		if absf(other.distance - at) > (other.length + vehicle.length) * 0.5 + MIN_GAP:
+			continue
+		var other_at := _distance_beside(other, vehicle.lane)
+		if _has_room_to_change(vehicle, target, at, other) and _has_room_to_change(other, vehicle.lane, other_at, vehicle):
+			return other
+	return null
+
+
+## A driver who couldn't get into the lane they needed before the end of the road goes
+## on through the junction from the lane they're in and finds a new way from there.
+func _carry_on_without_changing(vehicle: Vehicle) -> void:
+	var route := _router.find_route_onward(vehicle.lane.id, _get_destination(vehicle))
+	if route == null:
+		return
+	vehicle.next_lanes = _to_lanes(route.lane_ids)
+	vehicle.end_distance = route.end_distance
+	vehicle.merging = false
+
+
+## Where alongside `target` the vehicle is (lanes of a straight road line up exactly),
+## kept far enough from its end for the whole vehicle to fit.
+func _distance_beside(vehicle: Vehicle, target: Lane) -> float:
+	var at := vehicle.distance
+	if not (vehicle.lane.is_straight and target.is_straight):
+		at = target.curve.get_closest_offset(vehicle.position)
+	return clampf(at, 0.0, maxf(target.length - vehicle.length * 0.5, 0.0))
+
+
+## `ignored`: a vehicle not to count (the one swapping places with this one).
+func _has_room_to_change(vehicle: Vehicle, target: Lane, at: float, ignored: Vehicle = null) -> bool:
+	var half := vehicle.length * 0.5
+	# Not right at the start, where vehicles come out of the junction (and space is
+	# promised to those let in), nor past the end.
+	var promised: int = _reserved_entries.get(target.id, 0)
+	if at - half < MIN_GAP + promised * (Vehicle.MAX_LENGTH + MIN_GAP) or at + half > target.length:
+		return false
+	for other: Vehicle in target.queue:
+		if other == ignored:
+			continue
+		var ahead_by := other.distance - at
+		var needed := (other.length + vehicle.length) * 0.5 + MIN_GAP
+		if ahead_by >= 0.0:
+			# It goes in front of `other`: must be able to brake to its speed.
+			needed += maxf(vehicle.speed * vehicle.speed - other.speed * other.speed, 0.0) / (2.0 * DECELERATION)
+		else:
+			# `other` ends up behind it and must be able to brake to its speed.
+			needed += maxf(other.speed * other.speed - vehicle.speed * vehicle.speed, 0.0) / (2.0 * DECELERATION)
+		if absf(ahead_by) < needed:
+			return false
+	return true
+
+
+func _move_across(vehicle: Vehicle, target: Lane, at: float) -> void:
+	var old_position := vehicle.position
+	_dequeue(vehicle)
+	vehicle.lane = target
+	vehicle.distance = at
+	vehicle.next_lanes.pop_front()
+	_enqueue(vehicle)
+	# Drawn where it was, sliding over to the new lane's center.
+	var pose := target.sample_pose(at)
+	vehicle.lateral_offset = (old_position - pose.origin).dot(_right_of(pose.x))
+	_update_pose(vehicle)
+
+
+## A vehicle on the target lane coming up behind a merging vehicle holds back to let it
+## in, if it can stop comfortably short of it (otherwise the next one will).
+func _make_room_for_mergers() -> void:
+	for merger: Vehicle in vehicles.values():
+		if not merger.merging:
+			continue
+		var target := merger.next_lanes[0]
+		var at := _distance_beside(merger, target)
+		for other: Vehicle in target.queue:
+			if other.distance >= at:
+				continue
+			# The first vehicle behind the merge point.
+			var gap := at - merger.length * 0.5 - other.distance - other.length * 0.5
+			if other.speed * other.speed / (2.0 * DECELERATION) + MIN_GAP <= gap and gap < other.leader_gap:
+				other.leader_gap = gap
+				other.leader_speed = 0.0
+			break
 
 
 # --- Pass 1: what is ahead, junction requests ----------------------------------
@@ -273,6 +407,10 @@ func _scan_ahead(vehicle: Vehicle) -> void:
 		if not queue.is_empty():
 			_consider_leader(vehicle, ahead + queue.back().distance - (queue.back().length + vehicle.length) * 0.5, queue.back().speed)
 	var horizon := vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + LOOKAHEAD_MARGIN + vehicle.length
+	if not vehicle.next_lanes.is_empty() and vehicle.next_lanes[0].is_beside(vehicle.lane):
+		# Still has to change lanes: it can't go on past the end of this one.
+		vehicle.stop_gap = ahead - vehicle.length * 0.5 - LANE_CHANGE_END_MARGIN
+		return
 	for next in vehicle.next_lanes:
 		if ahead > horizon:
 			return
@@ -532,8 +670,13 @@ func _update_speed(vehicle: Vehicle, dt: float) -> void:
 			if ahead > horizon:
 				break
 			var next := vehicle.next_lanes[i]
-			var entry_speed := _entry_speed(next) if next.is_connector() else next.speed_limit
-			target = minf(target, sqrt(entry_speed * entry_speed + 2.0 * DECELERATION * maxf(ahead, 0.0)))
+			var previous := vehicle.lane if i == 0 else vehicle.next_lanes[i - 1]
+			if next.is_beside(previous):
+				# A lane change: the lane beside starts level with the previous one's start.
+				ahead -= previous.length
+			else:
+				var entry_speed := _entry_speed(next) if next.is_connector() else next.speed_limit
+				target = minf(target, sqrt(entry_speed * entry_speed + 2.0 * DECELERATION * maxf(ahead, 0.0)))
 			if i == last_index:
 				var stop := sqrt(2.0 * DECELERATION * maxf(ahead + vehicle.end_distance, 0.0))
 				target = minf(target, maxf(stop, MIN_SPEED))
@@ -578,6 +721,11 @@ func _advance(vehicle: Vehicle, dt: float) -> bool:
 		if move < remaining:
 			vehicle.distance += move
 			return false
+		if vehicle.next_lanes[0].is_beside(vehicle.lane):
+			# Out of road before it could change lanes (stop_gap should prevent this).
+			vehicle.distance = vehicle.lane.length
+			vehicle.speed = 0.0
+			return false
 		move -= maxf(remaining, 0.0)
 		_hop(vehicle, vehicle.next_lanes.pop_front())
 	return false
@@ -600,6 +748,13 @@ func _update_pose(vehicle: Vehicle) -> void:
 	var pose := vehicle.lane.sample_pose(vehicle.distance)
 	vehicle.position = pose.origin
 	vehicle.rotation = pose.get_rotation()
+	if vehicle.lateral_offset != 0.0:
+		vehicle.position += _right_of(pose.x) * vehicle.lateral_offset
+
+
+## Unit vector to the right of a direction (y grows downward).
+static func _right_of(direction: Vector2) -> Vector2:
+	return Vector2(-direction.y, direction.x).normalized()
 
 
 # --- Bookkeeping ---------------------------------------------------------------
@@ -788,6 +943,14 @@ func _route_from_current_lane(vehicle: Vehicle, destination: Array[Dictionary]) 
 	var route := _router.find_best_route([{ "lane_id": vehicle.lane.id, "distance": vehicle.distance }], destination)
 	if route == null:
 		return false
+	var starts_with_lane_change := route.lane_ids.size() > 1 and vehicle.lane.is_beside(_roads.lanes[route.lane_ids[1]])
+	if starts_with_lane_change and vehicle.get_remaining_on_lane() < MERGE_DISTANCE:
+		# Too late to change lanes here: go on from this lane instead, if possible.
+		var onward := _router.find_route_onward(vehicle.lane.id, destination)
+		if onward != null:
+			vehicle.next_lanes = _to_lanes(onward.lane_ids)
+			vehicle.end_distance = onward.end_distance
+			return true
 	vehicle.next_lanes = _to_lanes(route.lane_ids.slice(1))
 	vehicle.end_distance = route.end_distance
 	return true

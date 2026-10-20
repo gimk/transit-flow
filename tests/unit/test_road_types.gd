@@ -158,25 +158,26 @@ func test_vehicles_on_a_road_being_upgraded_carry_on() -> void:
 	assert_true(arrived, "re-snapped onto the new lanes and arrived")
 
 
-## Random traffic on a grid mixing road types: the multi-lane and one-way junctions keep
-## the safety rules and nothing deadlocks.
+## Random traffic on grids mixing road types: multi-lane and one-way junctions and lane
+## changes keep the safety rules and nothing deadlocks. 200 vehicles: at 250 a grid with
+## one-way streets is at the edge of real gridlock (it locks up or not depending on the
+## random trips).
 func test_stress_grid_with_avenues() -> void:
-	_stress_grid(&"avenue_4lane", &"avenue_4lane", &"local_2lane", &"local_2lane", 200)
+	_stress_grid(&"avenue_4lane", &"avenue_4lane", &"local_2lane", &"local_2lane", 300)
 
 
 func test_stress_grid_with_one_way_streets() -> void:
-	_stress_grid(&"local_2lane", &"local_2lane", &"one_way_2lane", &"one_way_1lane", 150)
+	_stress_grid(&"local_2lane", &"local_2lane", &"one_way_2lane", &"one_way_1lane", 200)
 
 
-## Avenues and one-way streets together gridlock: without lane changing, a car in the
-## wrong lane of an avenue circles the block to reach its turn, and the circling traffic
-## locks up. Phase 5b (lane changing) should make this pass.
+## Before lane changing (5b) this gridlocked: a car in the wrong lane of an avenue had to
+## circle the block to reach its turn.
 func test_stress_grid_with_avenues_and_one_way_streets() -> void:
-	pending("needs lane changing (Phase 5b)")
+	_stress_grid(&"avenue_4lane", &"avenue_4lane", &"one_way_2lane", &"one_way_1lane", 300)
 
 
-## 250 random trips on a 5 x 5 grid, 3 cells apart: even rows/columns of `even_*` roads,
-## odd ones of `odd_*` roads (one-way ones alternate direction).
+## 200 random trips for 90 s on a 5 x 5 grid, 3 cells apart: even rows/columns of
+## `even_*` roads, odd ones of `odd_*` roads (one-way ones alternate direction).
 func _stress_grid(even_h: StringName, even_v: StringName, odd_h: StringName, odd_v: StringName, min_arrivals: int) -> void:
 	for i in 5:
 		var at := 1 + i * 3
@@ -188,7 +189,7 @@ func _stress_grid(even_h: StringName, even_v: StringName, odd_h: StringName, odd
 		else:
 			_road(Vector2(1, at), Vector2(13, at), horizontal)
 			_road(Vector2(at, 1), Vector2(at, 13), vertical)
-	sim.stress.target_count = 250
+	sim.stress.target_count = 200
 	var arrived := { "count": 0 }
 	sim.vehicles.vehicle_arrived.connect(func(_v: Vehicle) -> void: arrived.count += 1)
 	var violations := 0
@@ -200,6 +201,6 @@ func _stress_grid(even_h: StringName, even_v: StringName, odd_h: StringName, odd
 	gut.p("grid %s/%s: vehicles %d, arrivals %d, stuck %d, smallest gap %.2f" % [
 		even_h, odd_h, sim.vehicles.vehicles.size(), arrived.count, sim.vehicles.get_stuck_count(), worst_gap])
 	assert_eq(violations, 0, "never two vehicles where conflicting paths meet")
-	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01)
+	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01, "no overlaps, lane changes included")
 	assert_gt(arrived.count, min_arrivals, "traffic flows")
 	assert_eq(sim.vehicles.get_stuck_count(30.0), 0, "no deadlock")

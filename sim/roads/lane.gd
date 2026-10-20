@@ -79,6 +79,12 @@ func is_connector() -> bool:
 	return segment_id == -1
 
 
+## True for another road lane of the same road going the same way (a lane a vehicle can
+## change into, possibly several lanes over).
+func is_beside(other: Lane) -> bool:
+	return other != self and segment_id != -1 and other.segment_id == segment_id and other.from_node_id == from_node_id
+
+
 ## Free-flow time to drive the whole lane, in sim seconds.
 func get_travel_time() -> float:
 	return length / speed_limit
