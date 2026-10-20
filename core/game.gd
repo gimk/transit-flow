@@ -82,7 +82,16 @@ func load_bottleneck_scenario() -> void:
 	new_simulation()
 	var info := Scenarios.build_bottleneck(simulation, Grid.world_to_cell(Grid.map_rect().get_center()))
 	Events.camera_focus_requested.emit(info.junction)
-	Events.notification_posted.emit("Scenario: Bottleneck. Relieve the stop-sign junction (F4 shows congestion)")
+	Events.notification_posted.emit("Scenario: Bottleneck. Relieve the jammed main road (F4 shows congestion)")
+
+
+## Replaces the game with the "Town" scenario (F8): a complete small city that lives
+## through a whole day, starting just before the morning rush.
+func load_town_scenario() -> void:
+	new_simulation()
+	var info := Scenarios.build_town(simulation)
+	Events.camera_focus_requested.emit(info.center)
+	Events.notification_posted.emit("Scenario: Town. Watch a full day; F4 shows congestion, L toggles lights")
 
 
 func save_game(path := QUICKSAVE_PATH) -> Error:
@@ -151,6 +160,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		quick_load()
 	elif event.is_action_pressed("debug_load_scenario"):
 		load_bottleneck_scenario()
+	elif event.is_action_pressed("debug_load_town"):
+		load_town_scenario()
 	elif event.is_action_pressed("debug_stress_traffic"):
 		cycle_stress_traffic()
 	else:

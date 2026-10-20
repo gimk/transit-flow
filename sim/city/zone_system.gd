@@ -96,6 +96,19 @@ func step(time: float) -> void:
 		changed.emit()
 
 
+## Scenarios: every zoned cell with road access develops right away instead of after
+## its delay.
+func develop_all_now() -> void:
+	for cell: Vector2i in _pending.keys():
+		_pending[cell] = _time
+	var waiting := -1
+	# Each step develops a few cells; cells without access stay pending, so stop when a
+	# step no longer shrinks the queue.
+	while _pending.size() != waiting:
+		waiting = _pending.size()
+		step(_time)
+
+
 func to_dict() -> Dictionary:
 	var zone_list: Array = []
 	for cell in zones:

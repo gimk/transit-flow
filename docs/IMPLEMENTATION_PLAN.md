@@ -225,12 +225,12 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - Playtest feedback round 1 (stop signs / lights too slow, one-by-one, start-up delay, lights too long and blind) addressed by the two bullets above. Grid stress test, 250 vehicles, arrivals in 2 sim-minutes: none 674 → 942, stop signs 534 → 623, lights 442 → 703; no zone overlaps or stuck vehicles under any control.
 - `CongestionMonitor`: every 5 s, per road lane, `speed_limit / average speed − 1` (smoothed, capped at 10) becomes the lane's routing penalty; the path cache is cleared and up to 50 vehicles that have been held up (below 30% of the limit for 3 s+) re-route from where they are.
 - `HeatmapOverlay` (F4): congested lanes from yellow to red, under the vehicles. `IntersectionRenderer`: stop bars / live light colours at each stop line.
-- `Scenarios.build_bottleneck` (F7 in game, also used by tests): 28 commuters through one stop-sign T-junction; `build_bypass` adds a 3-road detour.
+- `Scenarios.build_bottleneck` (F7 in game, also used by tests): 28 commuters through one stop-sign T-junction; `build_bypass` adds a 3-road detour. (Since Phase 3: 56 commuters through a light-controlled T-junction.)
 - Measured (tests): queue of 17 on the approach, approach congestion 4.0; with the bypass the morning finishes in 43.4 s instead of 65.7 s (−34%), 12 of 28 commuters re-route onto it.
 
 **Done when:** a single bottleneck intersection visibly jams, adding a parallel road visibly relieves it, and rerouting is observable. ⭐ **First "is this fun?" checkpoint** — play it before going further.
 
-**How to playtest:** run the game, press **F7** (Bottleneck scenario), **F4** (heatmap), **3** (4× speed). Watch the queue form at the lights, then try: build your own bypass (R), toggle the lights (L), zone more (H/C/I), F6 for extra random traffic. Questions to answer: is watching and fixing the jam satisfying? Is it readable? What's missing to make it a game?
+**How to playtest:** run the game, press **F7** (Bottleneck scenario), **F4** (heatmap), **3** (4× speed). Watch the queue form at the lights, then try: build your own bypass (R), toggle the lights (L), zone more (H/C/I), F6 for extra random traffic. For a whole city, press **F8** (Town scenario) and watch a full day. Questions to answer: is watching and fixing the jam satisfying? Is it readable? What's missing to make it a game?
 
 *Notes carried forward:*
 - Only vehicles that are held up re-route, at most 50 per 5 s; free-flowing vehicles keep their routes until the network changes.
@@ -246,6 +246,11 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - Measured: one day in a small zoned city gives cars/trucks started per period: morning 80/22, midday 0/84, evening 88/24, night 8/20 (flow 88%). Flow reacts to the network: cutting the bottleneck scenario's commute road mid-morning takes Flow from 88% to 30%.
 
 **Done when:** one in-game day plays through all four pulse periods with visibly different traffic patterns, and Flow % reacts to network changes.
+
+**Town scenario** (`Scenarios.build_town`, F8 / debug menu, `tests/unit/test_town.gd`): the end-to-end test bed. A 24 × 16-cell town near the north-west corner: ring road, Main Street in from the west highway, the Avenue, two cross streets, two side streets (one fed by a north highway), a cul-de-sac; lights on the five Main Street / Avenue crossings, other junctions uncontrolled; zoned and developed at once (`ZoneSystem.develop_all_now`): 88 homes (176 citizens) in three districts, 38 shops downtown, 37 factories. The test runs a whole day checking safety on every tick.
+- Measured: peak 173 vehicles, ~307 truck trips, 0 failed trips, Flow 78%; the morning rush roughly doubles commute times (median 1.5× ideal) and everyone is at work by 13:30, home by ~02:00. Queues form at the Main Street lights (morning) and on the Avenue / east side street southbound (evening).
+- Same town with no junction control: everyone at work 12:55, Flow 83%; with lights on every junction: 15:35, Flow 67%. On single-lane roads, uncontrolled junctions with conflict-zone timing out-perform the actuated lights; worth revisiting when multi-lane roads arrive.
+- Lane-side access (notes above) is very visible here: homes on the "wrong" side of their street roughly double some ideal trip times (e.g. 30 s for a 15-cell trip).
 
 *Notes carried forward:*
 - Buildings need a road on their cell edge, so blocks deeper than 2 cells leave unbuildable middles. Fine for now; Phase 5 density/lot sizes may change it.

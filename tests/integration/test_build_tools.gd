@@ -227,6 +227,8 @@ func test_debug_menu_buttons_drive_the_debug_functions() -> void:
 
 	_debug_button("Bottleneck").pressed.emit()
 	assert_eq(Game.simulation.citizens.citizens.size(), 56)
+	_debug_button("Town").pressed.emit()
+	assert_eq(Game.simulation.externals.get_active_points().size(), 2, "the Town scenario, with its two highways")
 	_debug_button("New empty map").pressed.emit()
 	assert_eq(Game.simulation.roads.segments.size(), 1, "only the highway stub of a new map")
 	assert_eq(Game.simulation.externals.points.size(), 1)

@@ -41,6 +41,7 @@ func _ready() -> void:
 	_add_button("Rush hour now", "", Game.rush_hour_now)
 	_add_section("Scenarios")
 	_add_button("Bottleneck", "F7", Game.load_bottleneck_scenario)
+	_add_button("Town", "F8", Game.load_town_scenario)
 
 	Events.debug_overlay_changed.connect(_on_overlay_changed)
 	# Lighting starts on.

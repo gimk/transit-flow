@@ -24,7 +24,7 @@ Godot is not on PATH. Console build:
 "$GODOT" --headless --script res://benchmarks/traffic_benchmark.gd   # traffic perf at 500/1k/2k/5k vehicles (~40 s)
 ```
 
-In game: debug panel on the right (`ui/debug_menu.gd`, F1 folds it) has a button for every debug function below; add new ones there too. F3 lane overlay, F4 congestion heatmap, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles), F7 loads the Bottleneck scenario (`Scenarios`); the HUD top bar shows vehicles, stuck count and tick cost. Tool keys: R road, B bulldoze, H/C/I zone residential/commercial/industrial, X dezone, L traffic lights, T route inspector.
+In game: debug panel on the right (`ui/debug_menu.gd`, F1 folds it) has a button for every debug function below; add new ones there too. F3 lane overlay, F4 congestion heatmap, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles), F7 loads the Bottleneck scenario, F8 the Town scenario (a complete small city living through a day; `Scenarios`); the HUD top bar shows vehicles, stuck count and tick cost. Tool keys: R road, B bulldoze, H/C/I zone residential/commercial/industrial, X dezone, L traffic lights, T route inspector.
 
 For a visual check of a specific setup, pass `--script <scratch>/x.gd` (a `SceneTree` subclass that instantiates `res://scenes/main.tscn`, builds state via `root.get_node("Game").simulation`, and toggles overlays) together with `--write-movie`.
 
@@ -66,7 +66,7 @@ tools/   player tools (ToolManager + RoadTool, BulldozeTool, ZoneTool x4, Signal
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
 benchmarks/  headless perf scripts (run with --script)
-tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest
+tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest; traffic_checks.gd = shared safety checks (no overlaps, no conflict-zone violations)
 data/    Resources (.tres), e.g. data/road_types/
 addons/gut/  third-party, don't edit
 ```

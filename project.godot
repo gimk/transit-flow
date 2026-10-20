@@ -137,6 +137,10 @@ debug_load_scenario={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":4194338)]
 }
+debug_load_town={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194339)]
+}
 toggle_debug_menu={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":4194332)]
