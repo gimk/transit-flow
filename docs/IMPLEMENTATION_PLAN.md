@@ -3,14 +3,14 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 0 done.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 1a done. Next: Phase 1b.
 
 ---
 
 ## 1. Guiding Principles
 
 1. **Simulation is separate from presentation.** All traffic, road and zone logic lives in plain `RefCounted` classes with no `Node` dependencies. Scenes only *observe* the sim and draw it. This gives us headless unit tests, deterministic replays, and a clean path to move hot code to C#/GDExtension later.
-2. **Fixed-tick simulation.** The sim advances in fixed steps (start at 20 Hz) driven by an accumulator in `_physics_process`, not by frame `delta`. Rendering interpolates between ticks. Speed controls (pause / 1× / 2× / 4×) just change how many ticks run per frame.
+2. **Fixed-tick simulation.** The sim advances in fixed steps (start at 20 Hz) driven by an accumulator in the `Game` autoload's `_process`; sim code never sees frame `delta`. Rendering interpolates between ticks. Speed controls (pause / 1× / 2× / 4×) just change how many ticks run per frame.
 3. **"Everything is a lane."** The concept's "a grid road is a 2-point curve" idea, pushed one step further: *both* road lanes *and* the turning paths inside intersections are `Lane` objects holding a `Curve2D`. A vehicle's route is just a list of lanes. Curves, ramps, roundabouts and bus lanes all reuse the same movement code.
 4. **Debug views from day one.** Lane IDs, route lines, per-lane occupancy, and trip times are visible via toggleable overlays. A traffic game is impossible to tune blind.
 5. **Data is serializable from day one.** The road network and zones serialize to a `Dictionary` → JSON. Saving/loading test layouts is also how we build repeatable test scenarios.
@@ -131,13 +131,20 @@ Each phase ends with a **playable checkpoint** and explicit acceptance criteria.
 
 **Done when:** you can pan/zoom around a grid, a clock runs on screen, and space/1/2/3 change sim speed.
 
-### Phase 1a — Road network data + drawing
-- `RoadType`, `RoadNode`, `RoadSegment`, `Lane`, `LaneBuilder` (centerline → 2 lanes).
-- `RoadTool`: click-drag between grid points, axis-aligned only, live preview.
-- `RoadRenderer`: `Line2D` per segment from baked points; lane-arrow debug overlay.
-- Save/load network to JSON.
+### Phase 1a — Road network data + drawing ✅
+- `RoadType` (`.tres` in `data/road_types/`), `RoadNode`, `RoadSegment`, `Lane`, `LaneBuilder` (centerline → offset-polyline lanes, right-hand traffic).
+- `RoadNetwork` commands `add_road` / `remove_segment` + `validate_road`, `changed` signal relayed as `Events.road_network_changed`.
+- `ToolManager` + `RoadTool` (drag between grid points, axis-locked, live red/green preview with reason) + `BulldozeTool` (click or sweep). Keys: R / B / Esc; toolbar buttons.
+- `RoadRenderer` (edge + surface `Line2D` layers so junctions merge), `LaneOverlay` debug view (F3).
+- Save/load via `Simulation.to_dict/from_dict` → JSON; F5 quicksave / F9 quickload (`user://quicksave.json`).
+- Unit tests for network rules, lanes and save round-trip; integration tests drive the real tools with synthetic input.
 
 **Done when:** roads can be drawn and removed, connecting at shared endpoints; the lane overlay shows two opposite lanes per road; a saved layout reloads identically. Unit tests cover `add_road` / `remove_segment` / merge-at-shared-node.
+
+*Notes carried forward:*
+- Roads may only meet at endpoints; crossings, T-junctions onto a road's middle and passing through a node are **rejected** with a hint until Phase 2a splits segments.
+- Lanes currently run node-to-node and overlap at corners. Phase 1b must trim lanes back from junction nodes (by about half the widest connected road) so connector lanes have room; that makes a segment's lanes depend on its nodes' other segments, so rebuild lanes for all segments touching a dirty node.
+- Node/segment lookups are linear scans. Fine for now; add a spatial hash when maps get large (profile in Phase 2b).
 
 ### Phase 1b — Lane graph + routing
 - Connector lanes at nodes (straight / left / right; no U-turns).

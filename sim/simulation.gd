@@ -6,8 +6,10 @@ extends RefCounted
 
 const TICK_RATE := 20
 const TICK_DT := 1.0 / TICK_RATE
+const SAVE_VERSION := 1
 
 var clock := SimClock.new()
+var roads := RoadNetwork.new()
 var tick_count := 0
 
 
@@ -19,3 +21,23 @@ func step() -> void:
 ## Simulated seconds since the start of the game.
 func get_sim_time() -> float:
 	return tick_count * TICK_DT
+
+
+func to_dict() -> Dictionary:
+	return {
+		"version": SAVE_VERSION,
+		"tick_count": tick_count,
+		"clock_minutes": clock.total_minutes,
+		"roads": roads.to_dict(),
+	}
+
+
+## Returns null if the data is from an unsupported save version.
+static func from_dict(data: Dictionary) -> Simulation:
+	if int(data.get("version", -1)) != SAVE_VERSION:
+		return null
+	var sim := Simulation.new()
+	sim.tick_count = int(data.tick_count)
+	sim.clock.total_minutes = float(data.clock_minutes)
+	sim.roads = RoadNetwork.from_dict(data.roads)
+	return sim

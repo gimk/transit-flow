@@ -3,6 +3,11 @@
 [ext_resource type="Script" path="res://view/grid_renderer.gd" id="1_grid"]
 [ext_resource type="Script" path="res://view/map_camera.gd" id="2_camera"]
 [ext_resource type="PackedScene" path="res://ui/hud.tscn" id="3_hud"]
+[ext_resource type="Script" path="res://view/road_renderer.gd" id="4_roads"]
+[ext_resource type="Script" path="res://view/lane_overlay.gd" id="5_lanes"]
+[ext_resource type="Script" path="res://tools/tool_manager.gd" id="6_tools"]
+[ext_resource type="Script" path="res://tools/road_tool.gd" id="7_road_tool"]
+[ext_resource type="Script" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
 
 [node name="Main" type="Node2D"]
 
@@ -10,6 +15,21 @@
 
 [node name="GridRenderer" type="Node2D" parent="World"]
 script = ExtResource("1_grid")
+
+[node name="RoadRenderer" type="Node2D" parent="World"]
+script = ExtResource("4_roads")
+
+[node name="LaneOverlay" type="Node2D" parent="World"]
+script = ExtResource("5_lanes")
+
+[node name="Tools" type="Node2D" parent="World"]
+script = ExtResource("6_tools")
+
+[node name="RoadTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("7_road_tool")
+
+[node name="BulldozeTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("8_bulldoze_tool")
 
 [node name="MapCamera" type="Camera2D" parent="."]
 script = ExtResource("2_camera")

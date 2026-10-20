@@ -63,6 +63,30 @@ sim_speed_3={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"physical_keycode":51)]
 }
+tool_road={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":82)]
+}
+tool_bulldoze={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":66)]
+}
+tool_cancel={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194305)]
+}
+toggle_lane_overlay={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194334)]
+}
+quick_save={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194336)]
+}
+quick_load={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"physical_keycode":4194340)]
+}
 
 [physics]
 

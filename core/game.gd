@@ -7,6 +7,7 @@ const SPEED_MULTIPLIERS: Array[int] = [0, 1, 2, 4]
 ## Upper bound on catch-up ticks in a single frame. Past this the backlog is dropped,
 ## so a slow frame makes the sim run slower instead of spiralling.
 const MAX_TICKS_PER_FRAME := 16
+const QUICKSAVE_PATH := "user://quicksave.json"
 
 var simulation: Simulation
 var speed_index := 1
@@ -22,13 +23,36 @@ func _ready() -> void:
 	new_simulation()
 
 
-func new_simulation() -> void:
-	simulation = Simulation.new()
+## Replaces the running simulation (a fresh one if `sim` is null) and tells everyone to resync.
+func new_simulation(sim: Simulation = null) -> void:
+	simulation = sim if sim != null else Simulation.new()
 	_accumulator = 0.0
 	interpolation_alpha = 0.0
 	simulation.clock.hour_changed.connect(Events.hour_changed.emit)
 	simulation.clock.day_started.connect(Events.day_started.emit)
+	simulation.roads.changed.connect(Events.road_network_changed.emit)
 	Events.simulation_reset.emit()
+
+
+func save_game(path := QUICKSAVE_PATH) -> Error:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_string(JSON.stringify(simulation.to_dict(), "\t", true, true))
+	return OK
+
+
+func load_game(path := QUICKSAVE_PATH) -> Error:
+	if not FileAccess.file_exists(path):
+		return ERR_FILE_NOT_FOUND
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not data is Dictionary:
+		return ERR_PARSE_ERROR
+	var sim := Simulation.from_dict(data)
+	if sim == null:
+		return ERR_INVALID_DATA
+	new_simulation(sim)
+	return OK
 
 
 func _process(delta: float) -> void:
@@ -67,6 +91,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		set_speed(2)
 	elif event.is_action_pressed("sim_speed_3"):
 		set_speed(3)
+	elif event.is_action_pressed("quick_save"):
+		var error := save_game()
+		Events.notification_posted.emit("Game saved" if error == OK else "Save failed (%s)" % error_string(error))
+	elif event.is_action_pressed("quick_load"):
+		var error := load_game()
+		Events.notification_posted.emit("Game loaded" if error == OK else "Load failed (%s)" % error_string(error))
 	else:
 		return
 	get_viewport().set_input_as_handled()

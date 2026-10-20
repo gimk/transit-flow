@@ -19,9 +19,16 @@ Godot is not on PATH. Console build:
 
 ```bash
 "$GODOT" --headless --import                         # re-scan project; required after adding/renaming a class_name
-"$GODOT" --headless -s addons/gut/gut_cmdln.gd       # run all unit tests (config: .gutconfig.json)
+"$GODOT" --headless -s addons/gut/gut_cmdln.gd       # run all tests (config: .gutconfig.json)
 "$GODOT" --path . --write-movie <scratch>/f.png --fixed-fps 60 --quit-after 120   # run the game 2 s and dump frames to inspect visually
 ```
+
+For a visual check of a specific setup, pass `--script <scratch>/x.gd` (a `SceneTree` subclass that instantiates `res://scenes/main.tscn`, builds state via `root.get_node("Game").simulation`, and toggles overlays) together with `--write-movie`.
+
+Testing gotchas:
+- **GUT reports "All tests passed" even when a test script fails to parse.** Always grep the output for `SCRIPT ERROR` / `Parse Error`, not just the summary.
+- Integration tests (`tests/integration/`) run `main.tscn` inside a `SubViewport` and `push_input()` events into it. Don't send mouse input through the root window: GUT's on-screen output panel swallows clicks, and the headless window is tiny (64 px), so coordinates get stretched.
+- GUT's `InputSender.key_down` sets only `keycode`, but our actions bind `physical_keycode`, so send `InputEventAction`s instead.
 
 Python is not installed; use bash/PowerShell or the edit tools for file manipulation.
 
@@ -34,17 +41,21 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Cross-system notifications go through the `Events` autoload signal bus.
 - **Everything is a lane**: roads and intersection turns are `Lane`s holding a `Curve2D`; never move vehicles tile-by-tile, never use `TileMapLayer` for roads (zones only).
 - Grid snapping is a UI aid only (`Grid.snap_to_point`); the sim works in world pixels.
+- Road edits go through `RoadNetwork` commands, which emit `changed(node_ids, segment_ids)`; views update incrementally from those ids (ids may refer to removed things). Lanes are derived data: never saved, rebuilt from centerlines.
+- Build tools extend `BuildTool`, live under the `ToolManager` node (node name = tool id), and read the pointer with `get_pointer_position()` / `get_snapped_pointer_position()`, never `get_global_mouse_position()` (which ignores synthetic test input).
+- Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly.
 
 ## Layout
 
 ```
 core/    autoloads (Game, Events) + Grid helpers
-sim/     simulation state & systems (SimClock, Simulation, later roads/routing/traffic/city)
+sim/     simulation state & systems (SimClock, Simulation, roads/; later routing/traffic/city)
 view/    renderers, camera, overlays
-tools/   player build tools (from Phase 1a)
+tools/   player build tools (ToolManager, RoadTool, BulldozeTool)
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
-tests/unit/  GUT tests, files named test_*.gd extending GutTest
+tests/   GUT tests: unit/ (pure sim) and integration/ (main scene + synthetic input); files test_*.gd extending GutTest
+data/    Resources (.tres), e.g. data/road_types/
 addons/gut/  third-party, don't edit
 ```
 
