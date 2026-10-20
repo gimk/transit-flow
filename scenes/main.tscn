@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://tools/zone_tool.gd" id="12_zone_tool"]
 [ext_resource type="Script" path="res://view/zone_renderer.gd" id="16_zones"]
 [ext_resource type="Script" path="res://view/external_renderer.gd" id="17_externals"]
+[ext_resource type="Script" path="res://view/day_night.gd" id="18_day_night"]
 [ext_resource type="Script" uid="uid://dceukk0ff5qlu" path="res://view/intersection_renderer.gd" id="13_intersections"]
 [ext_resource type="Script" uid="uid://blpje5h1ldfb1" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
 [ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
@@ -83,6 +84,9 @@ hint = "Drag to remove zoning (and the buildings on it)"
 
 [node name="SignalTool" type="Node2D" parent="World/Tools" unique_id=653219520]
 script = ExtResource("15_signal_tool")
+
+[node name="DayNight" type="CanvasModulate" parent="World"]
+script = ExtResource("18_day_night")
 
 [node name="MapCamera" type="Camera2D" parent="." unique_id=1405124855]
 script = ExtResource("2_camera")

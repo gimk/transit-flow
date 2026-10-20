@@ -19,6 +19,7 @@ var citizens: CitizenSystem
 var freight: FreightSystem
 var stress: StressTraffic
 var congestion: CongestionMonitor
+var flow: FlowMetric
 var tick_count := 0
 
 
@@ -34,6 +35,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
+	flow = FlowMetric.new(vehicles)
 
 
 func step() -> void:

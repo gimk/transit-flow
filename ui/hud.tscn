@@ -34,6 +34,22 @@ layout_mode = 2
 modulate = Color(1, 1, 1, 0.7)
 text = "Morning Rush"
 
+[node name="FlowLabel" type="Label" parent="TopBar/Margin/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Flow: how close trips over the last game day came to free-flow time (failed or abandoned trips count as 0)"
+mouse_filter = 1
+theme_override_font_sizes/font_size = 18
+text = "Flow —"
+
+[node name="CityLabel" type="Label" parent="TopBar/Margin/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+modulate = Color(1, 1, 1, 0.7)
+tooltip_text = "Population · jobs"
+mouse_filter = 1
+text = "Pop 0"
+
 [node name="StatsLabel" type="Label" parent="TopBar/Margin/Row"]
 unique_name_in_owner = true
 layout_mode = 2

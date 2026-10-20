@@ -31,6 +31,7 @@ func _ready() -> void:
 	_add_section("Views")
 	_add_overlay_toggle(LaneOverlay.OVERLAY_ID, "Lane overlay", "F3")
 	_add_overlay_toggle(HeatmapOverlay.OVERLAY_ID, "Congestion heatmap", "F4")
+	_add_overlay_toggle(DayNight.OVERLAY_ID, "Day / night lighting", "")
 	_add_section("Game")
 	_add_button("Quicksave", "F5", Game.quick_save)
 	_add_button("Quickload", "F9", Game.quick_load)
@@ -42,6 +43,8 @@ func _ready() -> void:
 	_add_button("Bottleneck", "F7", Game.load_bottleneck_scenario)
 
 	Events.debug_overlay_changed.connect(_on_overlay_changed)
+	# Lighting starts on.
+	_overlay_buttons[DayNight.OVERLAY_ID].set_pressed_no_signal(true)
 	_refresh_stress_label()
 
 

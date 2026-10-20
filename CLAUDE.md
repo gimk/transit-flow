@@ -24,7 +24,7 @@ Godot is not on PATH. Console build:
 "$GODOT" --headless --script res://benchmarks/traffic_benchmark.gd   # traffic perf at 500/1k/2k/5k vehicles (~40 s)
 ```
 
-In game: debug panel on the right (`ui/debug_menu.gd`, F1 folds it) has a button for every debug function below; add new ones there too. F3 lane overlay, F4 congestion heatmap, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles), F7 loads the Bottleneck scenario (`Scenarios`); the HUD top bar shows vehicles, stuck count and tick cost. Tool keys: R road, B bulldoze, H homes, I industry, L junction control, T route inspector.
+In game: debug panel on the right (`ui/debug_menu.gd`, F1 folds it) has a button for every debug function below; add new ones there too. F3 lane overlay, F4 congestion heatmap, F5/F9 quicksave/quickload, F6 cycles stress traffic (0–2000 random-trip vehicles), F7 loads the Bottleneck scenario (`Scenarios`); the HUD top bar shows vehicles, stuck count and tick cost. Tool keys: R road, B bulldoze, H/C/I zone residential/commercial/industrial, X dezone, L junction control, T route inspector.
 
 For a visual check of a specific setup, pass `--script <scratch>/x.gd` (a `SceneTree` subclass that instantiates `res://scenes/main.tscn`, builds state via `root.get_node("Game").simulation`, and toggles overlays) together with `--write-movie`.
 
@@ -48,20 +48,21 @@ Python is not installed; use bash/PowerShell or the edit tools for file manipula
 - Road edits go through `RoadNetwork` commands (`add_road` / `add_road_pieces`, `remove_segment`), which emit `changed(node_ids, segment_ids)`. Adding a road splits existing segments where it meets them, so segment ids are not stable across edits; views update incrementally from those ids (ids may refer to removed things). Lanes are derived data: never saved, rebuilt from centerlines. Road lanes keep their ids for the segment's lifetime; connector lanes (junction turns, `segment_id == -1`) are regenerated with new ids whenever their node changes.
 - Routing: `Simulation.router.find_route(from_lane, from_distance, to_lane, to_distance)` returns a `Route` (lane ids + start/end distances) or null. Trip endpoints are positions along road lanes, never nodes.
 - Build tools extend `BuildTool`, live under the `ToolManager` node (node name = tool id), and read the pointer with `get_pointer_position()` / `get_snapped_pointer_position()`, never `get_global_mouse_position()` (which ignores synthetic test input).
-- Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly. Roads and lots are saved; citizens and vehicles are not yet (recreated from homes on load).
+- Saves: `Simulation.to_dict()` / `from_dict()`. Bump `Simulation.SAVE_VERSION` when the format changes incompatibly. Roads, lots, zones and external connections are saved; citizens, vehicles, light states and Flow history are not (people restart at home on load).
 - **`dispose()` discarded simulations and road networks** (`Simulation.dispose()`, `RoadNetwork.dispose()`): lanes link to each other (`Lane.outgoing_lanes`) and to the vehicles in their queues, so without it they are never freed. `Game` does it when replacing or exiting; tests do it in `after_each`. A "resources still in use at exit" error means something wasn't disposed.
 - Vehicles: only `VehicleSystem` creates, moves or removes them. Per-lane queues live on `Lane.queue` (front-most first). Junction entry is granted per connector using conflict zones (`Lane.conflicting_lane_ids` / `Lane.conflict_zones`) and timing; see the `VehicleSystem` class doc. Safety invariant (checked by the stress tests): never two vehicles inside the zone two conflicting connectors share. Hot paths hold `Lane` objects (`Lane.outgoing_lanes`, `Vehicle.next_lanes`) rather than ids.
+- City: lots are buildings; `ZoneSystem` creates them on zoned cells (hand-placed lots via `LotSystem.add_lot` are for scenarios/tests). Citizens and freight decide trips; `VehicleSystem` drives them and reports `vehicle_arrived` / `vehicle_failed` (incl. patience give-ups), which `FlowMetric` scores. New maps get a highway via `Scenarios.add_highway`; `Game.new_simulation()` alone gives an empty map (used by tests).
 - Junction control lives on `RoadNode.control` (set via `RoadNetwork.set_node_control`); traffic lights are vehicle-actuated by `Simulation.signals` (`TrafficLights`, state not saved). Congestion costs come from `CongestionMonitor` every 5 s and are shared with `router.graph.congestion`.
 - **Never connect a lambda that captures `self` to a signal of another sim object** (e.g. `roads.changed.connect(func(): _dirty = true)`): the lambda keeps `self` alive through the signal, forming a reference cycle that leaks the whole `Simulation` ("resources still in use at exit"). Connect a bound method instead.
-- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → signals → vehicles → citizens → stress → congestion); `step()` runs citizens and stress traffic (departures), traffic lights, vehicles (movement, arrivals), then the congestion monitor (every 5 s).
+- Sim systems are wired in `Simulation._init` in dependency order (roads → router → lots → zones → externals → signals → vehicles → citizens → freight → stress → congestion → flow); `step()` runs zones (development), citizens, freight and stress traffic (departures), traffic lights, vehicles (movement, arrivals), then the congestion monitor (every 5 s).
 
 ## Layout
 
 ```
 core/    autoloads (Game, Events) + Grid helpers
-sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, citizens), traffic/ (vehicles, signals, congestion, stress), debug/ (scenarios)
+sim/     simulation state & systems: SimClock, Simulation, roads/, routing/, city/ (lots, zones, citizens, external connections, flow metric), traffic/ (vehicles, freight, lights, congestion, stress), debug/ (scenarios)
 view/    renderers, camera, overlays
-tools/   player tools (ToolManager + RoadTool, BulldozeTool, LotTool x2, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
+tools/   player tools (ToolManager + RoadTool, BulldozeTool, ZoneTool x4, SignalTool, RouteTool debug inspector); shortcuts in ToolManager.TOOL_SHORTCUTS
 ui/      HUD and menus
 scenes/  main.tscn (+ sandbox scenes)
 benchmarks/  headless perf scripts (run with --script)

@@ -49,6 +49,14 @@ const RESNAP_DISTANCE := 2.0
 const STOPPED_SPEED := 1.0
 ## Below this fraction of the lane's limit a vehicle counts as held up (for re-routing).
 const SLOW_FRACTION := 0.3
+## Patience. A trip's yardstick is its free-flow time plus a little for starting and
+## stopping; past IMPATIENT_FACTOR x that + IMPATIENT_GRACE the driver is impatient (red),
+## past GIVE_UP_FACTOR x that + GIVE_UP_GRACE they give up and the trip fails.
+const START_STOP_ALLOWANCE := 2.0  ## Sim seconds.
+const IMPATIENT_FACTOR := 2.0
+const IMPATIENT_GRACE := 15.0
+const GIVE_UP_FACTOR := 4.0
+const GIVE_UP_GRACE := 60.0
 ## A vehicle within this of its stop line counts as standing at it.
 const STOP_LINE_TOLERANCE := 2.0
 ## How long a vehicle must stand at a stop sign before it may go.
@@ -110,6 +118,8 @@ func spawn(route: Route, destination_lot_id: int, owner_id: int, kind := Vehicle
 	vehicle.distance = route.start_distance
 	vehicle.next_lanes = _to_lanes(route.lane_ids.slice(1))
 	vehicle.end_distance = route.end_distance
+	vehicle.trip_start_time = _time
+	vehicle.ideal_trip_time = route.get_free_flow_time(_roads) + START_STOP_ALLOWANCE
 	_update_pose(vehicle)
 	vehicle.previous_position = vehicle.position
 	vehicle.previous_rotation = vehicle.rotation
@@ -183,6 +193,7 @@ func step(dt: float) -> void:
 		_reroute_all()
 	_prepare(dt)
 	var arrived: Array[Vehicle] = []
+	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
 		vehicle.previous_position = vehicle.position
 		vehicle.previous_rotation = vehicle.rotation
@@ -193,10 +204,20 @@ func step(dt: float) -> void:
 		vehicle.stopped_time = vehicle.stopped_time + dt if vehicle.speed < STOPPED_SPEED else 0.0
 		var slow := vehicle.speed < SLOW_FRACTION * vehicle.lane.speed_limit
 		vehicle.slow_time = vehicle.slow_time + dt if slow else 0.0
+		var elapsed := _time - vehicle.trip_start_time
+		if elapsed > vehicle.ideal_trip_time * IMPATIENT_FACTOR + IMPATIENT_GRACE:
+			vehicle.impatient = true
+			if elapsed > vehicle.ideal_trip_time * GIVE_UP_FACTOR + GIVE_UP_GRACE:
+				gave_up.append(vehicle)
 	for vehicle in arrived:
 		_detach(vehicle)
 		vehicles.erase(vehicle.id)
+		vehicle.trip_end_time = _time
 		vehicle_arrived.emit(vehicle)
+	for vehicle in gave_up:
+		if vehicles.has(vehicle.id):
+			vehicle.gave_up = true
+			_fail(vehicle)
 
 
 # --- Pass 1: what is ahead, junction requests ----------------------------------
@@ -619,9 +640,15 @@ func _reroute_vehicle(vehicle: Vehicle) -> void:
 			or vehicle.next_lanes[0] != granted or _roads.lanes.get(granted.id) != granted):
 		_release_grant(vehicle)
 	if not ok:
-		_detach(vehicle)
-		vehicles.erase(vehicle.id)
-		vehicle_failed.emit(vehicle)
+		_fail(vehicle)
+
+
+## Ends a vehicle's trip unsuccessfully.
+func _fail(vehicle: Vehicle) -> void:
+	_detach(vehicle)
+	vehicles.erase(vehicle.id)
+	vehicle.trip_end_time = _time
+	vehicle_failed.emit(vehicle)
 
 
 ## Finds a fresh route to the destination from where the vehicle is now.

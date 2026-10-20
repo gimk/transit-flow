@@ -42,6 +42,15 @@ var waiting_since := INF
 ## When it was let into its current or next junction (VehicleSystem's grant counter).
 var entry_order := 0
 
+## Trip timing (sim seconds): when it set off, how long it would take with empty roads,
+## and when it ended. Drives patience and the Flow score.
+var trip_start_time := 0.0
+var ideal_trip_time := 0.0
+var trip_end_time := 0.0
+## Running late (shown in red); `gave_up` once patience ran out and the trip was abandoned.
+var impatient := false
+var gave_up := false
+
 ## Per-tick scratch filled by VehicleSystem before vehicles move: bumper-to-bumper gap to
 ## the vehicle ahead and its speed, and the distance to a stop line it may not cross.
 var leader_gap := INF

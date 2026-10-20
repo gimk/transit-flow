@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 2 done (2a–2c). Next: playtest checkpoint (see Phase 2c), then Phase 3.
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c). Next: playtest the living city, then Phase 4.
 
 ---
 
@@ -239,14 +239,18 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - Held-up vehicles are re-routed 3 per tick (50 per 5 s), so the route searches don't spike one frame.
 - Perf after this round (benchmark): 500 → 4.6 ms/tick, 1k → 10 ms, 2k → 21 ms, 5k → 47 ms (more arrivals per second also means more route searches for new trips).
 
-### Phase 3 — The living city
-- `ZoneTool` + `TileMapLayer` zone painting for R/C/I; lots, access points.
-- External connection on the map edge (highway entry).
-- Citizens (home/work), `TripScheduler` with time-of-day curves, trucks External → Industrial → Commercial.
-- Patience, failed trips, `FlowMetric`, HUD showing clock + Flow %.
-- Day/night tint (`CanvasModulate`).
+### Phase 3 — The living city ✅
+- **3a Zoning.** `ZoneSystem`: paint R/C/I cells (`ZoneTool`: drag a rectangle; H/C/I, X dezone). A zoned cell next to a road develops into a building (`Lot`) after 2–10 s; cells out of road reach wait (dashed red outline) and re-check when roads change. Rezoning / dezoning / bulldozing removes the building. Zones are drawn with `_draw` rather than a `TileMapLayer` (simpler; revisit if large maps get slow). Vehicles got kinds (car 11×6, truck 17×7) with real lengths used everywhere.
+- **3b City life.** `ExternalConnections`: highway points on the map edge (new maps start with one entering from the west, HWY sign). `CitizenSystem`: 2 residents per home, jobs at the nearest shop (2 jobs) or factory (3 jobs) with room, personal schedules (leave home 06:30–09:00, leave work 16:00–19:00, 35% shop 30–60 min on the way home). `FreightSystem`: trucks for raw materials and imports from the highway, goods factory → shop, exports, at a rate peaking 10:00–16:00. (The planned separate `TripScheduler` lives inside these two systems.)
+- **3c Score.** Patience: trips are timed against their free-flow time (+2 s); past 2× + 15 s the driver turns red, past 4× + 60 s they give up (failed trip). `FlowMetric`: per trip `ideal / actual` capped at 1, failures 0, averaged over the last game day; HUD shows Flow % (green ≥ 80, amber ≥ 60, red), population and jobs. `DayNight` `CanvasModulate` tint (debug toggle).
+- Measured: one day in a small zoned city gives cars/trucks started per period: morning 80/22, midday 0/84, evening 88/24, night 8/20 (flow 88%). Bottleneck morning flow: 62% with its stop sign vs 90% uncontrolled.
 
 **Done when:** one in-game day plays through all four pulse periods with visibly different traffic patterns, and Flow % reacts to network changes.
+
+*Notes carried forward:*
+- Buildings need a road on their cell edge, so blocks deeper than 2 cells leave unbuildable middles. Fine for now; Phase 5 density/lot sizes may change it.
+- Citizens, vehicles, light states and the Flow history aren't saved; a loaded game restarts them (people at home).
+- Only one highway; no new residents arrive from outside yet, and goods have no economy (trucks are traffic only). Demand quotas and growth are Phase 5.
 
 ### Phase 4 — Curves & buses
 - Curved road drawing (control-point drag, minimum radius); everything else should "just work" thanks to the lane model — this phase validates the core architectural bet.

@@ -6,6 +6,8 @@ extends MultiMeshInstance2D
 
 const MIN_CAPACITY := 64
 const TRUCK_COLOR := Color("b08d6a")
+## Drivers running far behind their ideal trip time.
+const IMPATIENT_COLOR := Color("ff5a4f")
 
 
 func _ready() -> void:
@@ -36,6 +38,8 @@ func _process(_delta: float) -> void:
 
 
 static func color_for_vehicle(vehicle: Vehicle) -> Color:
+	if vehicle.impatient:
+		return IMPATIENT_COLOR
 	if vehicle.kind == Vehicle.Kind.TRUCK:
 		return TRUCK_COLOR
 	return color_for(vehicle.owner_id if vehicle.owner_id >= 0 else vehicle.id)
