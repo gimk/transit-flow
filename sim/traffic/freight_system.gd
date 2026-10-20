@@ -49,30 +49,37 @@ func step(dt: float) -> void:
 	var level := activity(_clock.get_time_of_day_hours()) * game_hours
 	var gates := _externals.get_active_points()
 	for factory in _factories:
-		var factory_access := _lots.get_access(factory.id)
+		var factory_access := _lots.get_access_points(factory.id)
 		if factory_access.is_empty():
 			continue
 		if not gates.is_empty() and _rng.randf() < RAW_MATERIALS_PER_FACTORY * level:
-			_send(_externals.get_inbound(_pick(gates)), factory_access, factory.id)
+			_send(_gate(_externals.get_inbound(_pick(gates))), factory_access, factory.id)
 		if not _shops.is_empty() and _rng.randf() < GOODS_PER_FACTORY * level:
 			var shop: Lot = _shops[_rng.randi() % _shops.size()]
-			_send(factory_access, _lots.get_access(shop.id), shop.id)
+			_send(factory_access, _lots.get_access_points(shop.id), shop.id)
 		if not gates.is_empty() and _rng.randf() < EXPORTS_PER_FACTORY * level:
-			_send(factory_access, _externals.get_outbound(_pick(gates)), -1)
+			_send(factory_access, _gate(_externals.get_outbound(_pick(gates))), -1)
 	if gates.is_empty():
 		return
 	for shop in _shops:
 		if _rng.randf() < IMPORTS_PER_SHOP * level:
-			_send(_externals.get_inbound(_pick(gates)), _lots.get_access(shop.id), shop.id)
+			_send(_gate(_externals.get_inbound(_pick(gates))), _lots.get_access_points(shop.id), shop.id)
 
 
-## Sends a truck between two lane positions; quietly skipped if there's no way or no room.
-func _send(from: Dictionary, to: Dictionary, destination_lot_id: int) -> void:
-	if from.is_empty() or to.is_empty():
-		return
-	var route := _router.find_route(from.lane_id, from.distance, to.lane_id, to.distance)
+## Sends a truck from any of `from` to any of `to` (lane positions) by the quickest way;
+## quietly skipped if there's no way or no room.
+func _send(from: Array[Dictionary], to: Array[Dictionary], destination_lot_id: int) -> void:
+	var route := _router.find_best_route(from, to)
 	if route != null:
 		_vehicles.spawn(route, destination_lot_id, OWNER_ID, Vehicle.Kind.TRUCK)
+
+
+## A highway's lane position as a list of access points (empty if it has no road).
+func _gate(position: Dictionary) -> Array[Dictionary]:
+	var points: Array[Dictionary] = []
+	if not position.is_empty():
+		points.append(position)
+	return points
 
 
 func _pick(points: Array[Vector2]) -> Vector2:

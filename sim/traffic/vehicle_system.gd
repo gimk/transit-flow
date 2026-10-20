@@ -652,7 +652,7 @@ func _reroute(vehicle: Vehicle) -> bool:
 	if vehicle.lane.is_connector():
 		var exit_lane_id: int = vehicle.lane.outgoing_lane_ids[0]
 		if _roads.lanes.has(exit_lane_id):
-			var route := _router.find_route(exit_lane_id, 0.0, destination.lane_id, destination.distance)
+			var route := _router.find_best_route([{ "lane_id": exit_lane_id, "distance": 0.0 }], destination)
 			if route != null:
 				vehicle.next_lanes = _to_lanes(route.lane_ids)
 				vehicle.end_distance = route.end_distance
@@ -663,16 +663,19 @@ func _reroute(vehicle: Vehicle) -> bool:
 	return false
 
 
-func _get_destination(vehicle: Vehicle) -> Dictionary:
+## Lane positions the vehicle may end its trip at: in front of its destination lot (either
+## side of the road), else where its route was headed.
+func _get_destination(vehicle: Vehicle) -> Array[Dictionary]:
 	if vehicle.destination_lot_id != -1:
-		return _lots.get_access(vehicle.destination_lot_id)
+		return _lots.get_access_points(vehicle.destination_lot_id)
+	var points: Array[Dictionary] = []
 	if _roads.lanes.has(vehicle.destination_lane_id):
-		return { "lane_id": vehicle.destination_lane_id, "distance": vehicle.destination_distance }
-	return {}
+		points.append({ "lane_id": vehicle.destination_lane_id, "distance": vehicle.destination_distance })
+	return points
 
 
-func _route_from_current_lane(vehicle: Vehicle, destination: Dictionary) -> bool:
-	var route := _router.find_route(vehicle.lane.id, vehicle.distance, destination.lane_id, destination.distance)
+func _route_from_current_lane(vehicle: Vehicle, destination: Array[Dictionary]) -> bool:
+	var route := _router.find_best_route([{ "lane_id": vehicle.lane.id, "distance": vehicle.distance }], destination)
 	if route == null:
 		return false
 	vehicle.next_lanes = _to_lanes(route.lane_ids.slice(1))

@@ -5,11 +5,12 @@ extends RefCounted
 
 ## "Bottleneck": a suburb of 28 homes (56 commuters) in the west commutes along one main
 ## road to 24 factories in the east, through a T-junction with traffic lights that also
-## serve a side street of commuters. Everyone leaves within ~30 s, so a queue builds at
-## the lights.
+## serve a side street of commuters. Everyone leaves within ~15 s, so a long queue builds
+## at the lights.
 ## Returns positions (world px) tests need:
 ## - "junction": the light-controlled junction,
-## - "bypass": [from, to] pairs for three roads that route around it (not built).
+## - "bypass": [from, to] pairs for three roads that skip the lights and reach the
+##   factories from the far end (not built).
 static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 	var road_type := RoadType.load_by_id(&"local_2lane")
 	var at := func(x: int, y: int) -> Vector2: return Vector2(origin + Vector2i(x, y)) * Grid.CELL_SIZE
@@ -26,16 +27,16 @@ static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 	for x in range(3, 15):
 		sim.lots.add_lot(origin + Vector2i(x, -1), Lot.Type.INDUSTRIAL)
 		sim.lots.add_lot(origin + Vector2i(x, 0), Lot.Type.INDUSTRIAL)
-	# Everyone leaves within ~30 s (2.5 game hours), so the queue builds fast but drivers
+	# Everyone leaves within ~15 s (1.25 game hours), so the queue builds fast but drivers
 	# setting off later can see the jam and choose another way.
-	sim.citizens.depart_everyone_now(30.0)
+	sim.citizens.depart_everyone_now(15.0)
 
 	return {
 		"junction": at.call(0, 0),
 		"bypass": [
 			[at.call(-3, 0), at.call(-3, -4)],
-			[at.call(-3, -4), at.call(3, -4)],
-			[at.call(3, -4), at.call(3, 0)],
+			[at.call(-3, -4), at.call(15, -4)],
+			[at.call(15, -4), at.call(15, 0)],
 		],
 	}
 

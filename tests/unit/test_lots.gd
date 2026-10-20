@@ -57,6 +57,33 @@ func test_access_is_the_lane_on_the_lots_side_of_the_road() -> void:
 	assert_almost_eq(lane.curve.sample_baked(access.distance).x, 3.5 * G, 1.0, "door faces the lot's center")
 
 
+func test_access_points_cover_both_directions() -> void:
+	_road(Vector2(0, 4), Vector2(8, 4))
+	var id := lots.add_lot(Vector2i(3, 3), Lot.Type.RESIDENTIAL)
+	var points := lots.get_access_points(id)
+	assert_eq(points.size(), 2)
+	assert_eq(points[0], lots.get_access(id), "near lane first")
+	var far := roads.lanes[points[1].lane_id]
+	assert_gt(LaneBuilder.end_direction(far.curve).x, 0.0, "then the eastbound lane across the road")
+	assert_almost_eq(far.curve.sample_baked(points[1].distance).x, 3.5 * G, 1.0)
+
+
+## A driver may turn out of a driveway either way: heading west from a lot on the north
+## side of the road, then east to a lot further along, they pick the eastbound lane
+## instead of driving to the end of the road and turning around.
+func test_trips_leave_and_arrive_by_the_quicker_side() -> void:
+	_road(Vector2(0, 4), Vector2(12, 4))
+	var router := Router.new(roads)
+	var home := lots.add_lot(Vector2i(2, 3), Lot.Type.RESIDENTIAL)
+	var work := lots.add_lot(Vector2i(9, 3), Lot.Type.INDUSTRIAL)
+	var near_only := router.find_route(lots.get_access(home).lane_id, lots.get_access(home).distance,
+			lots.get_access(work).lane_id, lots.get_access(work).distance)
+	var best := router.find_best_route(lots.get_access_points(home), lots.get_access_points(work))
+	assert_eq(best.lane_ids.size(), 1, "straight along one lane")
+	assert_eq(best.lane_ids[0], lots.get_access_points(home)[1].lane_id)
+	assert_lt(best.travel_time * 2.0, near_only.travel_time, "much quicker than the U-turn trip")
+
+
 func test_access_follows_road_changes() -> void:
 	var id := lots.add_lot(Vector2i(3, 3), Lot.Type.RESIDENTIAL)
 	var segment := _road(Vector2(0, 4), Vector2(8, 4))

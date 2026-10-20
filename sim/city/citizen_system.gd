@@ -103,11 +103,7 @@ func get_employed_count() -> int:
 
 
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
-	var from := _lots.get_access(from_lot)
-	var to := _lots.get_access(to_lot)
-	var route: Route = null
-	if not from.is_empty() and not to.is_empty():
-		route = _router.find_route(from.lane_id, from.distance, to.lane_id, to.distance)
+	var route := _router.find_best_route(_lots.get_access_points(from_lot), _lots.get_access_points(to_lot))
 	if route == null:
 		citizen.retry_at = _time + RETRY_DELAY
 		return

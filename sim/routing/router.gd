@@ -32,6 +32,18 @@ func find_route(from_lane_id: int, from_distance: float, to_lane_id: int, to_dis
 	return Route.new(path, from_distance, to_distance, _travel_time(path, from_distance, to_distance))
 
 
+## Quickest route from any of `starts` to any of `ends` (each a { "lane_id", "distance" }
+## position, e.g. both lanes in front of a building), or null if none connects.
+func find_best_route(starts: Array[Dictionary], ends: Array[Dictionary]) -> Route:
+	var best: Route = null
+	for start in starts:
+		for end in ends:
+			var route := find_route(start.lane_id, start.distance, end.lane_id, end.distance)
+			if route != null and (best == null or route.travel_time < best.travel_time):
+				best = route
+	return best
+
+
 ## Drops cached paths, e.g. after congestion costs change.
 func invalidate_cache() -> void:
 	_path_cache.clear()

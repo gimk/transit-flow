@@ -226,7 +226,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 - `CongestionMonitor`: every 5 s, per road lane, `speed_limit / average speed − 1` (smoothed, capped at 10) becomes the lane's routing penalty; the path cache is cleared and up to 50 vehicles that have been held up (below 30% of the limit for 3 s+) re-route from where they are.
 - `HeatmapOverlay` (F4): congested lanes from yellow to red, under the vehicles. `IntersectionRenderer`: stop bars / live light colours at each stop line.
 - `Scenarios.build_bottleneck` (F7 in game, also used by tests): 28 commuters through one stop-sign T-junction; `build_bypass` adds a 3-road detour. (Since Phase 3: 56 commuters through a light-controlled T-junction.)
-- Measured (tests): queue of 17 on the approach, approach congestion 4.0; with the bypass the morning finishes in 43.4 s instead of 65.7 s (−34%), 12 of 28 commuters re-route onto it.
+- Measured (tests): queue of 17 on the approach, approach congestion 4.0; with the bypass the morning finishes in 43.4 s instead of 65.7 s (−34%), 12 of 28 commuters re-route onto it. After two-sided lot access (Phase 3) the jam mostly vanished, since half the suburb no longer drove to the dead end and back; departures were compressed to 15 s (queue 27, congestion 5.8) and the bypass now skips the lights and reaches the factories from the east end. It draws a few held-up drivers and breaks even, because every factory sits on the one main road.
 
 **Done when:** a single bottleneck intersection visibly jams, adding a parallel road visibly relieves it, and rerouting is observable. ⭐ **First "is this fun?" checkpoint** — play it before going further.
 
@@ -234,7 +234,7 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 
 *Notes carried forward:*
 - Only vehicles that are held up re-route, at most 50 per 5 s; free-flowing vehicles keep their routes until the network changes.
-- North-side homes on a road drive away from their destination to turn around (lane-side access, see Phase 1c notes). In the bottleneck scenario this sends half the commuters to the west dead end first; it reads oddly and is worth revisiting with Phase 3's zoning.
+- ~~North-side homes drive away from their destination to turn around~~: fixed in Phase 3 by two-sided lot access (see the Town scenario notes).
 - Lights only know two axis phases; protected left-turn phases and per-junction tuning are later polish.
 - Held-up vehicles are re-routed 3 per tick (50 per 5 s), so the route searches don't spike one frame.
 - Perf after this round (benchmark): 500 → 4.6 ms/tick, 1k → 10 ms, 2k → 21 ms, 5k → 47 ms (more arrivals per second also means more route searches for new trips).
@@ -249,8 +249,8 @@ Roughly 7 µs per vehicle per tick, almost all of it GDScript overhead in the pe
 
 **Town scenario** (`Scenarios.build_town`, F8 / debug menu, `tests/unit/test_town.gd`): the end-to-end test bed. A 24 × 16-cell town near the north-west corner: ring road, Main Street in from the west highway, the Avenue, two cross streets, two side streets (one fed by a north highway), a cul-de-sac; lights on the five Main Street / Avenue crossings, other junctions uncontrolled; zoned and developed at once (`ZoneSystem.develop_all_now`): 88 homes (176 citizens) in three districts, 38 shops downtown, 37 factories. The test runs a whole day checking safety on every tick.
 - Measured: peak 173 vehicles, ~307 truck trips, 0 failed trips, Flow 78%; the morning rush roughly doubles commute times (median 1.5× ideal) and everyone is at work by 13:30, home by ~02:00. Queues form at the Main Street lights (morning) and on the Avenue / east side street southbound (evening).
-- Same town with no junction control: everyone at work 12:55, Flow 83%; with lights on every junction: 15:35, Flow 67%. On single-lane roads, uncontrolled junctions with conflict-zone timing out-perform the actuated lights; worth revisiting when multi-lane roads arrive.
-- Lane-side access (notes above) is very visible here: homes on the "wrong" side of their street roughly double some ideal trip times (e.g. 30 s for a 15-cell trip).
+- Same town with no junction control: everyone at work 12:55, Flow 83%; with lights on every junction: 15:35, Flow 67%. On single-lane roads, uncontrolled junctions with conflict-zone timing out-perform the actuated lights: drivers there behave like a perfect zipper (0.5 s margins, no gap acceptance), which is unrealistically efficient.
+- Two-sided lot access (2026-10-20): a building now offers both lanes of its street (`LotSystem.get_access_points`) and trips take the quickest pair (`Router.find_best_route`), as if drivers turned out of the driveway either way. Before it, homes on the "wrong" side drove to the next junction or dead end and back, roughly doubling some trips. Town after the fix: median ideal commute 13.7 s → 8.7 s, actual 27 s → 19.5 s, everyone home by 23:10 instead of ~02:00, Flow 80%; no control 86%, lights everywhere 73%. (Crossing the near lane to reach the far one is not modelled.)
 
 *Notes carried forward:*
 - Buildings need a road on their cell edge, so blocks deeper than 2 cells leave unbuildable middles. Fine for now; Phase 5 density/lot sizes may change it.

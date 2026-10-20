@@ -54,7 +54,9 @@ func test_vehicle_drives_around_a_corner_and_arrives() -> void:
 	watch_signals(vehicles)
 	assert_ne(_run_until_gone(vehicle), -1, "arrived within the time limit")
 	assert_signal_emitted_with_parameters(vehicles, "vehicle_arrived", [vehicle])
-	var destination := lots.get_access(vehicle.destination_lot_id)
+	# The lot is on the far side of the southbound street: the driver stops across the
+	# road from it rather than driving to the dead end and back.
+	var destination: Dictionary = lots.get_access_points(vehicle.destination_lot_id)[1]
 	assert_eq(vehicle.lane.id, destination.lane_id)
 	assert_almost_eq(vehicle.distance, destination.distance, 0.001)
 
