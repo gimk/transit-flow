@@ -50,6 +50,8 @@ class LightState:
 	var phase_count := 0
 	## When people were last seen on a crosswalk that walks with the current phase.
 	var walkers_seen_at := -INF
+	## The phase that was green before this one (-1: none yet).
+	var last_phase := -1
 
 
 ## Pedestrians at crosswalks (set by Simulation), whose waiting calls walk phases.
@@ -81,6 +83,16 @@ func get_light(node: RoadNode, phase: int) -> Light:
 		return Light.AMBER if phase == state.phase else Light.RED
 	return Light.GREEN if phase == state.phase else Light.RED
 
+
+
+## Did `phase` turn red at `node` less than `within` sim seconds ago (amber included)?
+func recently_ended(node: RoadNode, phase: int, within: float) -> bool:
+	var state: LightState = _states.get(node.id)
+	if state == null:
+		return false
+	if state.clearing:
+		return state.phase == phase
+	return state.last_phase == phase and state.elapsed < within
 
 ## Walk light for the crosswalk across road `segment_id` at `node`: pedestrians cross
 ## alongside the traffic of the other road axis, during the first WALK_INTERVAL of its
@@ -118,6 +130,7 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 	if state.clearing:
 		if state.elapsed >= CLEARANCE_TIME:
 			state.clearing = false
+			state.last_phase = state.phase
 			state.phase = state.next_phase
 			state.elapsed = 0.0
 			state.walkers_seen_at = -INF

@@ -29,7 +29,7 @@ func _count_citizens(state: Citizen.State) -> int:
 func test_town_is_built_and_developed() -> void:
 	assert_eq(_count_lots(Lot.Type.RESIDENTIAL), 88)
 	assert_eq(_count_lots(Lot.Type.COMMERCIAL), 38)
-	assert_eq(_count_lots(Lot.Type.INDUSTRIAL), 37)
+	assert_eq(_count_lots(Lot.Type.INDUSTRIAL), 36)
 	for cell in sim.zones.zones:
 		assert_true(sim.zones.is_developed(cell), "zoned cell %s developed at once" % cell)
 	assert_eq(sim.externals.get_active_points().size(), 2, "both highways connected")
@@ -47,6 +47,7 @@ func test_town_uses_every_feature() -> void:
 		road_types[segment.road_type.id] = true
 	for type_id in [&"local_2lane", &"avenue_4lane", &"avenue_4lane_bus", &"one_way_2lane"]:
 		assert_true(road_types.has(type_id), "a road of type %s" % type_id)
+	assert_true(sim.roads.segments.values().any(func(s: RoadSegment) -> bool: return s.centerline.point_count > 2), "curved roads")
 	var controls := {}
 	for node: RoadNode in sim.roads.nodes.values():
 		controls[node.control] = true

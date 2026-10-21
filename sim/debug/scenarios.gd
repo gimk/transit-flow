@@ -74,7 +74,8 @@ const TOWN_CENTER := Vector2i(20, 18)
 ## simulation end to end, using every feature built so far (keep it that way: update it
 ## at the end of each phase). Cells below are relative to TOWN_CENTER; the town spans
 ## x -12..12, y -8..8.
-## - Roads: a ring road around the town; Main Street (east-west, y 0), an avenue, runs in
+## - Roads: a ring road around the town (two of its corners curved); Main Street
+##   (east-west, y 0), an avenue, runs in
 ##   from the west highway; the Avenue (north-south, x 0) has bus lanes; the two cross
 ##   streets (y -4, y 4) are a one-way pair (eastbound north, westbound south); two side
 ##   streets (x -6, x 6), the latter fed by the north highway; a cul-de-sac in the
@@ -98,23 +99,30 @@ const TOWN_CENTER := Vector2i(20, 18)
 ## - "bus_lines": the bus line ids.
 static func build_town(sim: Simulation) -> Dictionary:
 	var at := func(x: int, y: int) -> Vector2: return Vector2(TOWN_CENTER + Vector2i(x, y)) * Grid.CELL_SIZE
-	# [from x, from y, to x, to y, road type]; one-way roads run from -> to.
+	# [from x, from y, to x, to y, road type], or [from x, from y, bend x, bend y, to x,
+	# to y, road type] for a curve; one-way roads run from -> to.
 	var roads: Array[Array] = [
 		[-20, 0, -12, 0, &"local_2lane"],         # West highway,
 		[-12, 0, 12, 0, &"avenue_4lane"],         # into Main Street, an avenue.
 		[6, -18, 6, 4, &"local_2lane"],           # North highway, down through the industrial park.
 		[0, -8, 0, 8, &"avenue_4lane_bus"],       # The Avenue, with bus lanes.
-		[-12, -8, 12, -8, &"local_2lane"],        # Ring road.
-		[-12, 8, 12, 8, &"local_2lane"],
-		[-12, -8, -12, 8, &"local_2lane"],
-		[12, -8, 12, 8, &"local_2lane"],
+		[-12, -8, 10, -8, &"local_2lane"],        # Ring road, its south-west and north-east
+		[10, -8, 12, -8, 12, -6, &"local_2lane"], # corners curved.
+		[-10, 8, 12, 8, &"local_2lane"],
+		[-12, 6, -12, 8, -10, 8, &"local_2lane"],
+		[-12, -8, -12, 6, &"local_2lane"],
+		[12, -6, 12, 8, &"local_2lane"],
 		[-12, -4, 12, -4, &"one_way_2lane"],      # Cross streets: a one-way pair, eastbound
 		[12, 4, -12, 4, &"one_way_2lane"],        # in the north, westbound in the south.
 		[-6, -8, -6, 8, &"local_2lane"],          # West side street.
 		[-3, 4, -3, 7, &"local_2lane"],           # Cul-de-sac.
 	]
 	for road in roads:
-		sim.roads.add_road(at.call(road[0], road[1]), at.call(road[2], road[3]), RoadType.load_by_id(road[4]))
+		if road.size() == 7:
+			sim.roads.add_curved_road(at.call(road[0], road[1]), at.call(road[2], road[3]), at.call(road[4], road[5]),
+				RoadType.load_by_id(road[6]))
+		else:
+			sim.roads.add_road(at.call(road[0], road[1]), at.call(road[2], road[3]), RoadType.load_by_id(road[4]))
 	var lights: Array[Vector2] = [at.call(0, -4), at.call(0, 0), at.call(0, 4), at.call(-6, 0), at.call(6, 0)]
 	for point in lights:
 		sim.roads.set_node_control(sim.roads.find_node_at(point), RoadNode.JunctionControl.TRAFFIC_LIGHT)
@@ -141,7 +149,7 @@ static func build_town(sim: Simulation) -> Dictionary:
 	zone.call(-5, -1, 11, 0, Lot.Type.COMMERCIAL)     # Downtown, along Main Street,
 	zone.call(-1, 1, 0, 2, Lot.Type.COMMERCIAL)       # and down the Avenue.
 	zone.call(1, -5, 11, -4, Lot.Type.INDUSTRIAL)     # Industrial park.
-	zone.call(1, -8, 11, -8, Lot.Type.INDUSTRIAL)
+	zone.call(1, -8, 10, -8, Lot.Type.INDUSTRIAL)  # (Not under the curved corner.)
 	zone.call(5, -3, 6, -2, Lot.Type.INDUSTRIAL)
 	sim.zones.develop_all_now()
 

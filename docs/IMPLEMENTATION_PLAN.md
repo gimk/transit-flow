@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Next: Phase 9 (curves).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Next: Phase 10+ (toward the full game).
 
 ---
 
@@ -398,6 +398,10 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 - Curved road drawing (control-point drag, minimum radius). Everything else should "just work" thanks to the lane model, so this phase still validates the core architectural bet. It comes after the simulation phases because simulation comes before mechanics; it can move earlier at any time, since nothing above depends on it.
 
 **Done when:** a curved bypass changes Flow like a straight one would, with smooth driving through the curves.
+
+*Phase 9 done (2026-10-21).* Curved roads are dense polylines (a quadratic Bézier sampled every 8 px, `RoadNetwork.curve_path`), so everything built on polylines works unchanged: lanes, junctions and connectors, splitting where other roads cross (both ways), sidewalks and crosswalks, saves. Road planning works on paths (`plan_path`, `add_path_pieces`, `add_curved_road`; straight roads are two-point paths). Curves tighter than a 56 px radius are refused (a quarter turn within one grid square is too tight, within two fine), and each lane's speed limit drops round a bend so sideways acceleration stays under 80 px/s² (v = sqrt(a r): a 2-square quarter turn is taken at ~80-88 px/s). Lot plots keep clear of diagonal and curved roads. Road tool: V toggles curved mode (drag from the start to the bend point, release, click the end). The Town's ring road has two curved corners.
+- Measured: Bottleneck Flow with no bypass 50%, a straight bypass 50%, the same bypass with curved corners 51% ("done when" met); traffic round a loop of curves never exceeds a lane's limit, no overlaps or conflicts.
+- Found along the way: at a permissive light on a busy avenue, a left-turning truck could wait 32 s for a gap. Turners who have waited 5 s may now go up to 2 s after their light turns red, if the junction is clear (a 2 s amber for everyone did it too, but cost every light capacity). Dashed lines now stay dashed round curves.
 
 ### Phase 10+ — Toward the full game (order to be revisited)
 - More road types (6-lane, bus lanes, truck-only roads), lane-turn rules UI.

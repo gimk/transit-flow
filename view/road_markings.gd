@@ -94,9 +94,16 @@ func _line_at(offset: float) -> PackedVector2Array:
 	return LaneBuilder.trim_polyline(LaneBuilder.offset_polyline(_points, offset), _start_trim, _end_trim)
 
 
+## A dashed line along `points`, the dash pattern running on across its corners (so a
+## curve, sampled into short pieces, stays dashed).
 func _dashed(points: PackedVector2Array, color: Color) -> void:
-	for i in points.size() - 1:
-		draw_dashed_line(points[i], points[i + 1], color, LINE_WIDTH, DASH)
+	var length := LaneBuilder.polyline_length(points)
+	var at := 0.0
+	while at < length:
+		var dash := LaneBuilder.sub_polyline(points, at, minf(at + DASH, length))
+		if dash.size() >= 2:
+			draw_polyline(dash, color, LINE_WIDTH)
+		at += DASH * 2.0
 
 
 ## Chevrons pointing along `points`, every ARROW_SPACING (also used by the road tool's

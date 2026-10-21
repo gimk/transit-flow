@@ -125,6 +125,7 @@ const MID_BLOCK_HALF_WIDTH := 5.0
 const CROSSWALK_PATIENCE := 4.0
 ## At lights, a turning driver who has waited this long may go on amber (_control_allows).
 const SNEAK_WAIT := 5.0
+const SNEAK_GRACE := 2.0
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -1181,17 +1182,19 @@ static func _time_to_cover(distance: float, speed: float, top_speed: float) -> f
 
 ## What the junction's control says: at traffic lights, green for that turn. A driver
 ## turning (not going straight) who has waited SNEAK_WAIT at the stop line may also go on
-## amber: the end of the green is when the crosswalk and oncoming traffic clear, so real
-## turners "sneak" through then rather than wait for ever behind a busy crossing.
+## amber, or in the first SNEAK_GRACE after the light turned red: the end of the green is
+## when the crosswalk and oncoming traffic clear, so real turners "sneak" through then
+## rather than wait for ever behind a busy crossing (the other traffic, just let go,
+## waits for them: _conflicts_clear).
 func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
 	if node == null or not node.has_lights():
 		return true
-	var light := _signals.get_light(node, connector.signal_phase)
-	if light == TrafficLights.Light.GREEN:
+	if _signals.get_light(node, connector.signal_phase) == TrafficLights.Light.GREEN:
 		return true
-	return light == TrafficLights.Light.AMBER and connector.turn != Lane.Turn.STRAIGHT \
-			and vehicle.requested_connector == connector and _time - vehicle.waiting_since >= SNEAK_WAIT
+	return connector.turn != Lane.Turn.STRAIGHT and vehicle.requested_connector == connector \
+			and _time - vehicle.waiting_since >= SNEAK_WAIT \
+			and _signals.recently_ended(node, connector.signal_phase, SNEAK_GRACE)
 
 
 ## Is there room for `vehicle` (plus `extra` px) at the start of the lane this connector

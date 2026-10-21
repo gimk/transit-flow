@@ -19,6 +19,13 @@ signal changed(node_ids: Array, segment_ids: Array)
 const EPSILON := 0.5
 ## No segment may be shorter than this (it would leave no room between junctions).
 const MIN_SEGMENT_LENGTH := 16.0
+## Curved roads: sampled every CURVE_STEP px, and no tighter than MIN_CURVE_RADIUS (a
+## quarter turn within one grid square is too tight; within two, fine).
+const CURVE_STEP := 8.0
+const MIN_CURVE_RADIUS := 56.0
+## Sideways acceleration drivers accept in a curve (px/s²): a curve of radius 64 px is
+## taken at ~72 px/s, one of 128 px at a local street's full 90 px/s.
+const CURVE_LATERAL_ACCELERATION := 80.0
 ## Lanes between junctions must at least fit the longest vehicle (a truck) and a gap.
 const MIN_LANE_LENGTH := 21.0
 const TOO_CLOSE_ERROR := "Junctions too close together for these roads (wider roads need more room)"
@@ -58,7 +65,18 @@ func add_road(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer :
 ## to `road_type` in place (an upgrade), and along a one-way road pointing the other
 ## way, reversed; pieces already of that type and direction are left alone.
 func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_layer := 0) -> Array[int]:
-	var plan := plan_road(from, to, elevation_layer, road_type)
+	return add_path_pieces(PackedVector2Array([from, to]), road_type, elevation_layer)
+
+
+## Adds a curved road from `from` to `to`, bending toward `control` (see curve_path).
+## Returns the id of every segment built or rebuilt, as add_road_pieces.
+func add_curved_road(from: Vector2, control: Vector2, to: Vector2, road_type: RoadType, elevation_layer := 0) -> Array[int]:
+	return add_path_pieces(curve_path(from, control, to), road_type, elevation_layer)
+
+
+## Builds a road along `path` (see plan_path), splitting it where it meets other roads.
+func add_path_pieces(path: PackedVector2Array, road_type: RoadType, elevation_layer := 0) -> Array[int]:
+	var plan := plan_path(path, elevation_layer, road_type)
 	var new_ids: Array[int] = []
 	if plan.error != "":
 		return new_ids
@@ -89,7 +107,7 @@ func add_road_pieces(from: Vector2, to: Vector2, road_type: RoadType, elevation_
 				touched_segments.append(existing.id)
 				new_ids.append(existing.id)
 			continue
-		var centerline := straight_curve(nodes[start_id].position, nodes[end_id].position)
+		var centerline := _piece_curve(path, plan.distances[i], plan.distances[i + 1], nodes[start_id].position, nodes[end_id].position)
 		var segment := _insert_segment(_next_segment_id, start_id, end_id, road_type, elevation_layer, centerline)
 		_next_segment_id += 1
 		new_ids.append(segment.id)
@@ -163,61 +181,78 @@ func validate_road(from: Vector2, to: Vector2, elevation_layer := 0) -> String:
 
 
 ## Works out, without changing anything, how a straight road from `from` to `to` would
-## be built. Returns:
+## be built: see plan_path.
+func plan_road(from: Vector2, to: Vector2, elevation_layer := 0, road_type: RoadType = null) -> Dictionary:
+	return plan_path(PackedVector2Array([from, to]), elevation_layer, road_type)
+
+
+## Works out, without changing anything, how a road along `path` (a polyline: two points
+## for a straight road, many for a curve, see curve_path) would be built. Returns:
 ## - "error": "" or a player-facing reason it can't be built,
 ## - "points": where the road will have nodes, in order (its ends plus every point
 ##   where it meets an existing road or node on the same layer),
+## - "distances": how far along `path` each of those points is,
 ## - "overlaps": per consecutive pair of points, true if that piece runs along an
 ##   existing road and won't be built again,
 ## - "upgrades": per piece, true if it runs along an existing road that will be
 ##   converted to `road_type` (another type, or a one-way road to reverse); only when a
 ##   `road_type` is given,
-## - "node_ids": empty; filled in by add_road_pieces.
-func plan_road(from: Vector2, to: Vector2, elevation_layer := 0, road_type: RoadType = null) -> Dictionary:
-	var plan := { "error": "", "points": [], "overlaps": [], "upgrades": [], "node_ids": [] }
-	if from.distance_to(to) < MIN_SEGMENT_LENGTH:
+## - "path": `path`,
+## - "node_ids": empty; filled in by add_path_pieces.
+func plan_path(path: PackedVector2Array, elevation_layer := 0, road_type: RoadType = null) -> Dictionary:
+	var plan := { "error": "", "points": [], "distances": [], "overlaps": [], "upgrades": [], "path": path, "node_ids": [] }
+	var length := LaneBuilder.polyline_length(path)
+	if length < MIN_SEGMENT_LENGTH:
 		plan.error = "Road is too short"
 		return plan
+	if path.size() > 2 and min_radius(path) < MIN_CURVE_RADIUS:
+		plan.error = "Curve too tight (drivers need a wider turn)"
+		return plan
 
-	var points: Array[Vector2] = [from, to]
+	# [distance along the path, point]
+	var found: Array = [[0.0, path[0]], [length, path[-1]]]
 	for node: RoadNode in nodes.values():
-		if node.elevation_layer == elevation_layer and _distance_to_line(node.position, from, to) <= EPSILON:
-			points.append(node.position)
+		if node.elevation_layer == elevation_layer and LaneBuilder.distance_to_polyline(node.position, path) <= EPSILON:
+			found.append([LaneBuilder.distance_along_polyline(path, node.position), node.position])
 	for segment: RoadSegment in segments.values():
 		if segment.elevation_layer != elevation_layer:
 			continue
 		var polyline := LaneBuilder.get_polyline(segment.centerline)
 		var meets := false
-		for endpoint in [from, to]:
+		for endpoint in [path[0], path[-1]]:
 			if _is_on_interior(endpoint, polyline):
 				meets = true
-		for i in polyline.size() - 1:
-			var hit: Variant = Geometry2D.segment_intersects_segment(from, to, polyline[i], polyline[i + 1])
-			if hit != null:
-				points.append(hit)
-				if _is_on_interior(hit, polyline):
-					meets = true
+		for i in path.size() - 1:
+			for j in polyline.size() - 1:
+				var hit: Variant = Geometry2D.segment_intersects_segment(path[i], path[i + 1], polyline[j], polyline[j + 1])
+				if hit != null:
+					found.append([LaneBuilder.distance_along_polyline(path, hit), hit])
+					if _is_on_interior(hit, polyline):
+						meets = true
 		if meets and _is_curved(segment):
 			plan.error = "Can't join a curved road in the middle yet"
 			return plan
 
-	points.sort_custom(func(a: Vector2, b: Vector2) -> bool: return from.distance_squared_to(a) < from.distance_squared_to(b))
-	for point in points:
-		if plan.points.is_empty() or plan.points[-1].distance_to(point) > EPSILON:
-			plan.points.append(point)
+	found.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	for entry: Array in found:
+		if plan.points.is_empty() or plan.points[-1].distance_to(entry[1]) > EPSILON:
+			plan.points.append(entry[1])
+			plan.distances.append(entry[0])
 
 	var builds_something := false
 	for i in plan.points.size() - 1:
-		var a: Vector2 = plan.points[i]
-		var b: Vector2 = plan.points[i + 1]
-		if a.distance_to(b) < MIN_SEGMENT_LENGTH:
+		var from_distance: float = plan.distances[i]
+		var to_distance: float = plan.distances[i + 1]
+		if to_distance - from_distance < MIN_SEGMENT_LENGTH:
 			plan.error = "Too close to an existing junction"
 			return plan
 		# Pieces only meet other roads at their ends, so a piece whose middle lies on a
 		# road runs along that road.
-		var existing_id := find_segment_at((a + b) * 0.5, EPSILON, elevation_layer)
+		var middle := _point_along(path, (from_distance + to_distance) * 0.5)
+		var existing_id := find_segment_at(middle, EPSILON, elevation_layer)
 		var overlaps := existing_id != -1
-		var upgrade := overlaps and road_type != null and _needs_retype(segments[existing_id], road_type, b - a)
+		var direction: Vector2 = plan.points[i + 1] - plan.points[i]
+		var upgrade := overlaps and road_type != null and _needs_retype(segments[existing_id], road_type, direction)
 		plan.overlaps.append(overlaps)
 		plan.upgrades.append(upgrade)
 		builds_something = builds_something or not overlaps or upgrade
@@ -262,7 +297,7 @@ func _check_lane_room(plan: Dictionary, road_type: RoadType, elevation_layer: in
 	for i in count - 1:
 		if plan.overlaps[i] and not plan.upgrades[i]:
 			continue
-		if points[i].distance_to(points[i + 1]) - trims[i] - trims[i + 1] < MIN_LANE_LENGTH:
+		if plan.distances[i + 1] - plan.distances[i] - trims[i] - trims[i + 1] < MIN_LANE_LENGTH:
 			return TOO_CLOSE_ERROR
 	# Existing roads it meets or splits: their stretches between (old and new) junctions.
 	for segment: RoadSegment in segments.values():
@@ -356,6 +391,50 @@ static func straight_curve(from: Vector2, to: Vector2) -> Curve2D:
 	curve.add_point(from)
 	curve.add_point(to)
 	return curve
+
+
+## The centerline of the piece of `path` between two distances along it, ending exactly
+## on its nodes: a straight curve (two points) where the path is straight there.
+static func _piece_curve(path: PackedVector2Array, from_distance: float, to_distance: float, start: Vector2, end: Vector2) -> Curve2D:
+	if path.size() == 2:
+		return straight_curve(start, end)
+	var points := LaneBuilder.sub_polyline(path, from_distance, to_distance)
+	points[0] = start
+	points[points.size() - 1] = end
+	return LaneBuilder.polyline_to_curve(points)
+
+
+## A curved road's path: a quadratic Bézier from `from` to `to` pulled toward `control`
+## (the road leaves `from` heading for `control` and arrives at `to` coming from it, so a
+## control point on the corner of a grid square gives a smooth quarter turn), sampled
+## into a polyline every CURVE_STEP px.
+static func curve_path(from: Vector2, control: Vector2, to: Vector2) -> PackedVector2Array:
+	var estimate := from.distance_to(control) + control.distance_to(to)
+	var steps := maxi(2, ceili(estimate / CURVE_STEP))
+	var points := PackedVector2Array()
+	for i in steps + 1:
+		var t := float(i) / steps
+		points.append(from.lerp(control, t).lerp(control.lerp(to, t), t))
+	return points
+
+
+## The tightest radius of a polyline's turns: the circle through each three consecutive
+## points (INF where it runs straight).
+static func min_radius(points: PackedVector2Array) -> float:
+	var tightest := INF
+	for i in range(1, points.size() - 1):
+		var a := points[i - 1]
+		var b := points[i]
+		var c := points[i + 1]
+		var area := absf((b - a).cross(c - a))
+		if area < 0.0001:
+			continue
+		tightest = minf(tightest, a.distance_to(b) * b.distance_to(c) * c.distance_to(a) / (2.0 * area))
+	return tightest
+
+
+static func _point_along(points: PackedVector2Array, distance: float) -> Vector2:
+	return LaneBuilder.sub_polyline(points, distance, distance)[0]
 
 
 # --- Serialization ----------------------------------------------------------
@@ -546,6 +625,7 @@ func _create_lanes(segment: RoadSegment) -> void:
 			spec.curve,
 			segment.road_type.speed_limit)
 		lane.bus_only = segment.road_type.is_bus_lane(spec.index)
+		lane.speed_limit = _lane_speed(segment.road_type, spec.curve)
 		_next_lane_id += 1
 		lanes[lane.id] = lane
 		segment.lane_ids.append(lane.id)
@@ -557,6 +637,14 @@ func _update_lane_geometry(segment: RoadSegment) -> void:
 		get_junction_radius(segment.start_node_id), get_junction_radius(segment.end_node_id))
 	for i in specs.size():
 		lanes[segment.lane_ids[i]].set_curve(specs[i].curve)
+		lanes[segment.lane_ids[i]].speed_limit = _lane_speed(segment.road_type, specs[i].curve)
+
+
+## A lane's speed limit: its road's, or lower round a tight curve, where drivers keep
+## their sideways acceleration under CURVE_LATERAL_ACCELERATION (v = sqrt(a r)).
+static func _lane_speed(road_type: RoadType, curve: Curve2D) -> float:
+	var radius := min_radius(LaneBuilder.get_polyline(curve))
+	return minf(road_type.speed_limit, sqrt(CURVE_LATERAL_ACCELERATION * radius))
 
 
 func _erase_connectors(node: RoadNode) -> void:

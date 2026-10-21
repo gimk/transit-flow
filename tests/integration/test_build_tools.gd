@@ -228,6 +228,27 @@ func test_bus_line_tool_places_stops_and_opens_a_line() -> void:
 	assert_eq(transit.lines.values()[0].stop_ids.size(), 3)
 
 
+func test_road_tool_builds_a_curve() -> void:
+	await _press_action(&"tool_road")
+	await _press_action(&"road_curve_mode")
+	var tool := _main.get_node("World/Tools/RoadTool") as RoadTool
+	assert_true(tool.curved)
+	# Drag from the start to the bend point, then click the end: a quarter turn.
+	await _mouse_left(_grid_point(-2, -2), true)
+	await _mouse_motion(_grid_point(1, -2))
+	await _mouse_left(_grid_point(1, -2), false)
+	await _click(_grid_point(1, 1))
+	var roads := Game.simulation.roads
+	assert_eq(roads.segments.size(), 1)
+	var segment: RoadSegment = roads.segments.values()[0]
+	assert_gt(segment.centerline.point_count, 2, "curved")
+	assert_ne(roads.find_node_at(_grid_point(-2, -2)), -1)
+	assert_ne(roads.find_node_at(_grid_point(1, 1)), -1)
+	assert_eq(roads.find_node_at(_grid_point(1, -2)), -1, "the bend point is no node")
+	await _press_action(&"road_curve_mode")
+	assert_false(tool.curved, "V again: straight roads")
+
+
 func test_bottleneck_scenario_loads() -> void:
 	Game.load_bottleneck_scenario()
 	await wait_process_frames(2)

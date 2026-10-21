@@ -52,8 +52,8 @@ func add_lot(cell: Vector2i, type: Lot.Type) -> int:
 
 ## The part of `cell` that roads leave free for a building (world px), or an empty
 ## Rect2 if too little is left (MIN_PLOT). Each road along or through the cell takes its
-## half width plus ROAD_CLEARANCE from the side it runs on. Roads are straight along the
-## grid lines for now; other pieces are ignored.
+## half width plus ROAD_CLEARANCE from the side it runs on (diagonal and curved pieces,
+## roughly, from the side facing them).
 static func compute_plot(roads: RoadNetwork, cell: Vector2i) -> Rect2:
 	var cell_rect := Rect2(Vector2(cell) * Grid.CELL_SIZE, Vector2.ONE * Grid.CELL_SIZE)
 	var top_left := cell_rect.position
@@ -81,6 +81,25 @@ static func compute_plot(roads: RoadNetwork, cell: Vector2i) -> Rect2:
 						top_left.x = maxf(top_left.x, a.x + half)
 					else:
 						bottom_right.x = minf(bottom_right.x, a.x - half)
+			elif absf(a.x - b.x) >= 0.5 and absf(a.y - b.y) >= 0.5:
+				# A diagonal or curved piece: the plot keeps clear of it on the side facing
+				# it (roughly: by the room left between the cell's center and the road).
+				var closest := Geometry2D.get_closest_point_to_segment(center, a, b)
+				var room := closest.distance_to(center) - half
+				if room >= Grid.CELL_SIZE * 0.71:
+					continue  # Clear of the whole cell.
+				if room < MIN_PLOT * 0.5:
+					return Rect2()
+				var toward := closest - center
+				if absf(toward.x) >= absf(toward.y):
+					if toward.x > 0.0:
+						bottom_right.x = minf(bottom_right.x, center.x + room)
+					else:
+						top_left.x = maxf(top_left.x, center.x - room)
+				elif toward.y > 0.0:
+					bottom_right.y = minf(bottom_right.y, center.y + room)
+				else:
+					top_left.y = maxf(top_left.y, center.y - room)
 	var size := bottom_right - top_left
 	if size.x < MIN_PLOT or size.y < MIN_PLOT:
 		return Rect2()
