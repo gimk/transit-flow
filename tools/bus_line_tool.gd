@@ -4,13 +4,18 @@ extends BuildTool
 ## existing stop there) in the order buses call at them; click the first stop again, or
 ## right-click, to close the loop and open the line. Right-clicking a stop while no line
 ## is being drawn removes it (lines through it skip it). Buses start running at once.
+## Variants: curbside stops (buses stop in the lane) or bus bays (they pull out of it);
+## clicking an existing stop makes it the current kind.
+
+const VARIANTS: Array[StringName] = [&"curbside", &"bay"]
 
 const STOP_COLOR := Color(1, 1, 1, 0.9)
 const PREVIEW_COLOR := Color(1, 1, 1, 0.5)
 const LINE_COLOR := Color(1, 1, 1, 0.6)
 const STOP_RADIUS := 6.0
-const IDLE_HINT := "Click roads to place stops in order (each side of a street is its own stop) · right-click a stop to remove it"
-const DRAWING_HINT := "Line: %d stops · click the first stop again or right-click to open the line · Esc cancels"
+const IDLE_HINT := "%s: click roads to place stops in order (each side of a street is its own stop) · right-click a stop to remove it"
+const DRAWING_HINT := "%s · line: %d stops · click the first stop again or right-click to open the line · Esc cancels"
+const VARIANT_NAMES := { &"curbside": "Curbside stops", &"bay": "Bus bays" }
 
 ## Stops of the line being drawn: ids, and their positions (for drawing without waiting
 ## for the simulation).
@@ -18,11 +23,29 @@ var _stop_ids: Array[int] = []
 var _stop_positions := PackedVector2Array()
 ## Where a click would put a stop now ({} if not on a road).
 var _hover := {}
+var _variant: StringName = VARIANTS[0]
 
 
 func activate() -> void:
 	super()
 	_update_hint()
+
+
+func get_variants() -> Array[StringName]:
+	return VARIANTS
+
+
+func get_variant() -> StringName:
+	return _variant
+
+
+func set_variant(variant: StringName) -> void:
+	if variant == _variant or not VARIANTS.has(variant):
+		return
+	_variant = variant
+	Events.tool_variant_changed.emit(name, variant)
+	if is_active:
+		_update_hint()
 
 
 func cancel() -> bool:
@@ -57,13 +80,16 @@ func handle_input(event: InputEvent) -> bool:
 		return true
 	if mouse_button.button_index != MOUSE_BUTTON_LEFT:
 		return false
-	var stop_id := transit.add_stop(point)
+	var bay := _variant == &"bay"
+	var stop_id := transit.add_stop(point, bay)
 	if stop_id == -1:
 		Events.notification_posted.emit("Bus stops go on a road, with room for a bus")
 		return true
 	if not _stop_ids.is_empty() and stop_id == _stop_ids[0]:
 		_open_line()
-	elif not _stop_ids.has(stop_id):
+		return true
+	transit.set_stop_bay(stop_id, bay)
+	if not _stop_ids.has(stop_id):
 		_stop_ids.append(stop_id)
 		_stop_positions.append(transit.stops[stop_id].position)
 	_update_hint()
@@ -84,7 +110,8 @@ func _open_line() -> void:
 
 
 func _update_hint() -> void:
-	Events.tool_hint_changed.emit(IDLE_HINT if _stop_ids.is_empty() else DRAWING_HINT % _stop_ids.size())
+	var kind: String = VARIANT_NAMES[_variant]
+	Events.tool_hint_changed.emit(IDLE_HINT % kind if _stop_ids.is_empty() else DRAWING_HINT % [kind, _stop_ids.size()])
 
 
 func _draw() -> void:

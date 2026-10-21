@@ -276,3 +276,43 @@ func test_buses_keep_to_their_line() -> void:
 				off_line += 1
 	assert_eq(sim.transit.buses.size(), line.bus_count)
 	assert_eq(off_line, 0, "never off the line's lanes")
+
+
+## At a bus bay the bus pulls out of the lane to dwell: the car behind drives past, the
+## bus gets back into the lane (drivers let it in), and nobody overlaps on the way.
+func test_traffic_passes_a_bus_in_a_bay() -> void:
+	_road(Vector2(0, 4), Vector2(24, 4))
+	var stops: Array[int] = []
+	for x in [6, 18]:
+		stops.append(sim.transit.add_stop(Vector2(x, 4) * G + Vector2(0, 10), true))
+	for x in [18, 6]:
+		stops.append(sim.transit.add_stop(Vector2(x, 4) * G + Vector2(0, -10), true))
+	var line_id := sim.transit.add_line(stops)
+	assert_true(sim.transit.stops[stops[1]].bay)
+	# Riders keep the buses stopping.
+	for i in 30:
+		sim.transit.wait_for_bus(1000 + i, line_id, stops[1], stops[2])
+	sim.stress.target_count = 40
+	var Checks := preload("res://tests/traffic_checks.gd")
+	var worst_gap := INF
+	var passed := false
+	var left_bay := false
+	var behind := {}
+	for tick in Simulation.TICK_RATE * 60:
+		sim.step()
+		worst_gap = minf(worst_gap, Checks.min_queue_gap(sim))
+		for bus: TransitSystem.Bus in sim.transit.buses.values():
+			var vehicle := bus.vehicle
+			if vehicle.in_bay:
+				assert_false(vehicle.lane.queue.has(vehicle), "out of the lane")
+				for other: Vehicle in vehicle.lane.queue:
+					if other.distance < vehicle.distance:
+						behind[other.id] = vehicle.distance
+					elif behind.has(other.id):
+						passed = true
+			elif behind.size() > 0 and not vehicle.dwelling:
+				left_bay = true
+	assert_true(passed, "a car drove past the bus in the bay")
+	assert_true(left_bay, "and the bus pulled out again")
+	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01, "no overlaps")
+	assert_eq(sim.vehicles.get_stuck_count(30.0), 0)

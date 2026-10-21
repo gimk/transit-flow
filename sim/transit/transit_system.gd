@@ -6,8 +6,9 @@ extends RefCounted
 ## - Each line runs enough buses for about TARGET_HEADWAY between them, spawned one by
 ##   one at its stops. Buses are vehicles driven by VehicleSystem (Vehicle.in_service):
 ##   from stop to stop. Stops are request stops: where someone gets off or waits for its
-##   line, the bus dwells in its lane, holding up the traffic behind, while riders get
-##   off and on (DWELL_BASE, plus BOARD_TIME per rider); elsewhere it drives past.
+##   line, the bus dwells (in its lane, holding up the traffic behind, or in the stop's bay
+##   off it) while riders get off and on (DWELL_BASE, plus BOARD_TIME per rider);
+##   elsewhere it drives past.
 ## - Riders (citizens on a bus leg, wait_for_bus) wait at their stop for a bus of their
 ##   line, ride to their stop and get off (rider_arrived). If their stop or line goes, or
 ##   no bus comes for too long, they give up (rider_stranded).
@@ -116,8 +117,9 @@ func _init(roads: RoadNetwork, router: Router, vehicles: VehicleSystem, pedestri
 
 ## Adds a stop at the curb of the road nearest `point`, on the side `point` is on, or
 ## returns the stop already there (same side, within MERGE_DISTANCE). -1 if there's no
-## road near, or it's too short.
-func add_stop(point: Vector2) -> int:
+## road near, or it's too short. A new stop is a bus bay if `bay` (an existing one is
+## left as it is: see set_stop_bay).
+func add_stop(point: Vector2, bay := false) -> int:
 	var spot := find_curb_spot(_roads, point)
 	if spot.is_empty():
 		return -1
@@ -125,12 +127,20 @@ func add_stop(point: Vector2) -> int:
 		if stop.position.distance_to(spot.position) <= MERGE_DISTANCE and stop.direction.dot(spot.direction) > 0.9:
 			return stop.id
 	var stop := BusStop.new(_next_stop_id, spot.position, spot.direction)
+	stop.bay = bay
 	_next_stop_id += 1
 	stop.lane_id = spot.lane_id
 	stop.distance = spot.distance
 	stops[stop.id] = stop
 	_nearby_stops.clear()
 	return stop.id
+
+
+## Makes a stop a bus bay, or a curbside stop.
+func set_stop_bay(stop_id: int, bay: bool) -> void:
+	var stop: BusStop = stops.get(stop_id)
+	if stop != null:
+		stop.bay = bay
 
 
 ## The stop nearest `point` within `radius`, or -1.
@@ -386,7 +396,7 @@ func to_dict() -> Dictionary:
 	var stop_list: Array = []
 	for stop: BusStop in stops.values():
 		stop_list.append({ "id": stop.id, "position": [stop.position.x, stop.position.y],
-			"direction": [stop.direction.x, stop.direction.y] })
+			"direction": [stop.direction.x, stop.direction.y], "bay": stop.bay })
 	var line_list: Array = []
 	for line: BusLine in lines.values():
 		line_list.append({ "id": line.id, "stops": line.stop_ids.duplicate(), "buses": line.bus_count })
@@ -397,6 +407,7 @@ func restore(data: Dictionary) -> void:
 	for entry: Dictionary in data.get("stops", []):
 		var stop := BusStop.new(int(entry.id), Vector2(entry.position[0], entry.position[1]),
 			Vector2(entry.direction[0], entry.direction[1]))
+		stop.bay = bool(entry.get("bay", false))
 		stops[stop.id] = stop
 		_nearby_stops.clear()
 		_resolve(stop)
@@ -548,6 +559,8 @@ func _on_vehicle_arrived(vehicle: Vehicle) -> void:
 	for rider in alighting:
 		_detach_rider(rider)
 		rider_arrived.emit(rider.citizen_id)
+	if stops[stop_id].bay:
+		_vehicles.pull_into_bay(vehicle)
 	_board(bus)
 
 

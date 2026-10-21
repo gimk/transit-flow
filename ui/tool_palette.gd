@@ -7,8 +7,8 @@ extends VBoxContainer
 ## with a keyboard shortcut.
 
 ## Tool families, left to right. A family has either one "tool", "variants_of" a tool
-## (its variants come from data, e.g. RoadType.list_all()), or a list of "entries" that
-## are separate tools.
+## (its variants come from data, e.g. RoadType.list_all()), or a list of "entries" (each a
+## tool, or one of a tool's variants).
 const FAMILIES: Array[Dictionary] = [
 	{ "label": "Roads", "variants_of": &"RoadTool", "tooltip": "Build roads (R; R again: next road type)" },
 	{ "label": "Zones", "tooltip": "Zone land for buildings", "entries": [
@@ -17,7 +17,10 @@ const FAMILIES: Array[Dictionary] = [
 		{ "tool": &"IndustrialZoneTool", "label": "Industrial", "tooltip": "Zone Industrial (I)" },
 		{ "tool": &"DezoneTool", "label": "Dezone", "tooltip": "Remove zoning (X)" },
 	] },
-	{ "label": "Transit", "tool": &"BusLineTool", "tooltip": "Bus lines (U): click stops in order, then the first one again to open the line" },
+	{ "label": "Transit", "tooltip": "Bus lines (U; U again: other stop type): click stops in order, then the first one again", "entries": [
+		{ "tool": &"BusLineTool", "variant": &"curbside", "label": "Curbside stops", "tooltip": "Bus line with curbside stops: buses stop in the lane" },
+		{ "tool": &"BusLineTool", "variant": &"bay", "label": "Bus bays", "tooltip": "Bus line with bus bays: buses pull out of the lane to stop" },
+	] },
 	{ "label": "Signals", "tool": &"SignalTool", "tooltip": "Traffic lights (L): click a junction to toggle its lights" },
 	{ "label": "Bulldoze", "tool": &"BulldozeTool", "tooltip": "Bulldoze (B)" },
 	{ "label": "Route", "tool": &"RouteTool", "tooltip": "Route inspector (T): click two roads to see the quickest route" },
@@ -100,7 +103,7 @@ static func _family_entries(family: Dictionary) -> Array[Dictionary]:
 				"tooltip": "%s: %s" % [road_type.display_name, layout % [lanes, "" if lanes == 1 else "s"]] })
 	else:
 		for entry: Dictionary in family.entries:
-			entries.append({ "tool": entry.tool, "variant": &"", "label": entry.label, "tooltip": entry.tooltip })
+			entries.append({ "tool": entry.tool, "variant": entry.get("variant", &""), "label": entry.label, "tooltip": entry.tooltip })
 	return entries
 
 

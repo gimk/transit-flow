@@ -29,6 +29,10 @@ var scored_by_owner := false
 ## It never runs out of patience.
 var in_service := false
 var dwelling := false
+## At a bus bay: dwelling off the lane (not in its queue, so traffic passes), and since
+## when it has been waiting for a gap to pull back out (INF: not yet sent on).
+var in_bay := false
+var leaving_bay_since := INF
 ## Where the trip ends. If `destination_lot_id` is set, re-routing follows that lot's
 ## (possibly moved) access point; otherwise the fixed lane position below is used.
 var destination_lot_id := -1

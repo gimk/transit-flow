@@ -111,6 +111,10 @@ const GAP_SHRINK_TIME := 10.0  ## Sim seconds.
 ## At a junction without lights, drivers slow to this fraction of the speed limit by the
 ## stop line to look both ways, even when the junction is empty.
 const LOOK_SPEED_FRACTION := 0.4
+## Bus bays: how far beside its lane a bus in a bay is (drawn), and how long it waits to
+## pull out before the traffic lets it.
+const BAY_OFFSET := 14.0
+const BAY_COURTESY_WAIT := 1.0
 ## Without lights, a driver who has waited this long at a busy crosswalk gets to go once
 ## it is empty (_crosswalks_clear).
 const CROSSWALK_PATIENCE := 4.0
@@ -211,7 +215,22 @@ func set_route(vehicle: Vehicle, route: Route) -> void:
 	vehicle.destination_distance = route.end_distance
 	vehicle.trip_start_time = _time
 	vehicle.ideal_trip_time = route.get_free_flow_time(_roads) + START_STOP_ALLOWANCE
-	vehicle.dwelling = false
+	if vehicle.in_bay:
+		# It waits in the bay for a gap to pull out (_leave_bays).
+		vehicle.leaving_bay_since = _time
+	else:
+		vehicle.dwelling = false
+
+
+## A bus that has just stopped (dwelling) at a bus bay pulls into it: off its lane, so
+## the traffic behind drives past while it dwells.
+func pull_into_bay(vehicle: Vehicle) -> void:
+	if vehicle.in_bay or not vehicle.dwelling:
+		return
+	_dequeue(vehicle)
+	vehicle.in_bay = true
+	vehicle.lateral_offset = BAY_OFFSET
+	_update_pose(vehicle)
 
 
 func _new_vehicle(owner_id: int, kind: Vehicle.Kind, destination_lot_id: int, route: Route) -> Vehicle:
@@ -319,10 +338,12 @@ func step(dt: float) -> void:
 		_reroute_pending = false
 		_reroute_all()
 	_pull_out()
+	_leave_bays()
 	_change_lanes()
 	_prepare()
 	_make_room_for_mergers()
 	_keep_crossings_clear()
+	_let_buses_out()
 	var arrived: Array[Vehicle] = []
 	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
@@ -330,8 +351,11 @@ func step(dt: float) -> void:
 		vehicle.previous_rotation = vehicle.rotation
 		vehicle.lateral_offset = move_toward(vehicle.lateral_offset, 0.0, LANE_CHANGE_SLIDE_SPEED * dt)
 		if vehicle.dwelling:
-			# A bus at its stop, holding up the lane until it is sent on.
+			# A bus at its stop, holding up the lane until it is sent on (or off it, in a
+			# bay, drawn beside the lane).
 			vehicle.speed = 0.0
+			if vehicle.in_bay:
+				vehicle.lateral_offset = BAY_OFFSET
 			continue
 		_update_speed(vehicle, dt)
 		if _advance(vehicle, dt):
@@ -610,6 +634,32 @@ func _hold_back(lane: Lane, stop_at: float) -> void:
 		break
 
 
+# --- Bus bays ---------------------------------------------------------------------
+
+## A bus sent on from a bay pulls back into its lane when there is a gap, like a car
+## from a driveway (_clear_to_join), the gap it insists on shrinking as it waits.
+func _leave_bays() -> void:
+	for vehicle: Vehicle in vehicles.values():
+		if vehicle.leaving_bay_since == INF:
+			continue
+		var gap := _waited_gap(CRITICAL_GAP[Lane.Turn.RIGHT], vehicle.leaving_bay_since)
+		if _clear_to_join(vehicle.lane, vehicle.distance, vehicle.length, gap):
+			vehicle.in_bay = false
+			vehicle.dwelling = false
+			vehicle.leaving_bay_since = INF
+			_enqueue(vehicle)
+
+
+## Drivers let a bus waiting to pull out of a bay go after BAY_COURTESY_WAIT (yield to
+## the bus): the next vehicle coming up stops short of it, if it comfortably can.
+func _let_buses_out() -> void:
+	for vehicle: Vehicle in vehicles.values():
+		if vehicle.leaving_bay_since == INF or _time - vehicle.leaving_bay_since < BAY_COURTESY_WAIT:
+			continue
+		if _space_opening(vehicle.lane, vehicle.distance, vehicle.length):
+			_hold_back(vehicle.lane, vehicle.distance - vehicle.length * 0.5 - MIN_GAP)
+
+
 # --- Lane changes -----------------------------------------------------------------
 
 ## Vehicles whose route continues on the lane beside theirs (Lane.is_beside) move across
@@ -620,6 +670,8 @@ func _hold_back(lane: Lane, stop_at: float) -> void:
 func _change_lanes() -> void:
 	for vehicle: Vehicle in vehicles.values():
 		vehicle.merging = false
+		if vehicle.dwelling:
+			continue  # A bus at its stop changes lanes once it drives on.
 		if vehicle.next_lanes.is_empty() or not vehicle.next_lanes[0].is_beside(vehicle.lane):
 			continue
 		var target := vehicle.next_lanes[0]
@@ -1347,7 +1399,8 @@ func _reroute_vehicle(vehicle: Vehicle) -> void:
 		# Still waiting for the same turn: keep its place (and patience) in the line.
 		_start_waiting(vehicle, waited_for)
 		vehicle.waiting_since = waiting_since
-	if vehicle.lane != old_lane:
+	# (A bus in a bay isn't in any queue: it just takes the rebuilt lane.)
+	if vehicle.lane != old_lane and not vehicle.in_bay:
 		# Re-snapped onto a rebuilt lane: move it to that lane's queue.
 		var current := vehicle.lane
 		vehicle.lane = old_lane
