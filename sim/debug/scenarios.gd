@@ -52,6 +52,19 @@ static func add_bottleneck_bus_line(sim: Simulation, origin: Vector2i) -> int:
 	return sim.transit.add_line(stops)
 
 
+## The Bottleneck with transit priority: its main road made an avenue with bus lanes
+## (still one lane each way for cars) and a bus line along it.
+static func add_bottleneck_bus_lanes(sim: Simulation, origin: Vector2i) -> int:
+	var bus_avenue := RoadType.load_by_id(&"avenue_4lane_bus")
+	var y := float(origin.y * Grid.CELL_SIZE)
+	for segment: RoadSegment in sim.roads.segments.values().duplicate():
+		var a := sim.roads.nodes[segment.start_node_id].position
+		var b := sim.roads.nodes[segment.end_node_id].position
+		if absf(a.y - y) < 1.0 and absf(b.y - y) < 1.0:
+			sim.roads.set_segment_type(segment.id, bus_avenue)
+	return add_bottleneck_bus_line(sim, origin)
+
+
 ## Where the Town scenario sits: its center cell (the Main Street / Avenue crossing),
 ## placed so its two highways reach the west and north map edges after a short drive.
 const TOWN_CENTER := Vector2i(20, 18)

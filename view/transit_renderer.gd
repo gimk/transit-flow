@@ -15,7 +15,9 @@ const RIDER_COLOR := Color("f2efe6")
 const RIDER_SPACING := 3.5
 const MAX_DRAWN_RIDERS := 12
 ## A bus bay: a pull-in the length of two buses beside the lane.
-const BAY_SIZE := Vector2(2.0 * Vehicle.BUS_LENGTH + 6.0, 12.0)
+const BAY_SIZE := Vector2(2.0 * Vehicle.BUS_LENGTH + 6.0, 10.0)
+## How much further out the sign and riders stand at a bay.
+const BAY_SIGN_SHIFT := 8.0
 const BAY_COLOR := Color(0.27, 0.29, 0.32)
 const BAY_EDGE_COLOR := Color(1, 1, 1, 0.3)
 ## Redraw every this many frames (riders come and go a few times a second at most).
@@ -45,7 +47,7 @@ func _draw() -> void:
 			draw_rect(Rect2(-BAY_SIZE * 0.5, BAY_SIZE), BAY_COLOR)
 			draw_rect(Rect2(-BAY_SIZE * 0.5, BAY_SIZE), BAY_EDGE_COLOR, false, 1.0)
 			draw_set_transform(Vector2.ZERO)
-		var beyond := VehicleSystem.BAY_OFFSET if bay else 0.0
+		var beyond := BAY_SIGN_SHIFT if bay else 0.0
 		var sign_at := view.stop_positions[i] + out * (SIGN_OFFSET + beyond)
 		draw_set_transform(sign_at, along.angle())
 		draw_rect(Rect2(-SIGN_SIZE * 0.5, SIGN_SIZE), SIGN_COLOR)

@@ -6,7 +6,7 @@
 script = ExtResource("1_roadtype")
 id = &"one_way_3lane"
 display_name = "One-way, 3 lanes"
-palette_order = 4
+palette_order = 5
 lanes_per_direction = 3
 one_way = true
 priority = 1

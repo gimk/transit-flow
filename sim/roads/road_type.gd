@@ -17,6 +17,9 @@ const DIRECTORY := "res://data/road_types/"
 ## At junctions without lights, drivers coming from a road of higher priority go first
 ## and don't slow down to look; between equal roads, other rules decide.
 @export var priority := 0
+## The curb lane each way is a bus lane: only buses drive along it (cars may cross it
+## to reach the curb). Needs two lanes or more each way.
+@export var bus_lanes := false
 @export var lane_width := 14.0  ## World pixels.
 @export var speed_limit := 90.0  ## World pixels per sim second.
 @export var surface_color := Color("4a5562")
@@ -50,3 +53,13 @@ static func load_by_id(type_id: StringName) -> RoadType:
 	if not ResourceLoader.exists(path):
 		return null
 	return load(path) as RoadType
+
+
+## Is the lane `index` lanes out from the center (Lane.index_from_center) a bus lane?
+func is_bus_lane(index: int) -> bool:
+	return bus_lanes and index == lanes_per_direction - 1
+
+
+## Lanes each way that all traffic may drive along.
+func get_general_lane_count() -> int:
+	return lanes_per_direction - (1 if bus_lanes else 0)

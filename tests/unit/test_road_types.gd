@@ -34,7 +34,7 @@ func _lanes_of(segment_id: int) -> Array[Lane]:
 
 func test_palette_order_starts_with_the_local_street() -> void:
 	var ids := RoadType.list_all().map(func(t: RoadType) -> StringName: return t.id)
-	assert_eq(ids, [&"local_2lane", &"avenue_4lane", &"one_way_1lane", &"one_way_2lane", &"one_way_3lane"])
+	assert_eq(ids, [&"local_2lane", &"avenue_4lane", &"avenue_4lane_bus", &"one_way_1lane", &"one_way_2lane", &"one_way_3lane"])
 
 
 func test_avenue_has_two_lanes_each_way() -> void:

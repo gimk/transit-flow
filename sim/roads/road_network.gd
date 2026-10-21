@@ -545,6 +545,7 @@ func _create_lanes(segment: RoadSegment) -> void:
 			spec.index,
 			spec.curve,
 			segment.road_type.speed_limit)
+		lane.bus_only = segment.road_type.is_bus_lane(spec.index)
 		_next_lane_id += 1
 		lanes[lane.id] = lane
 		segment.lane_ids.append(lane.id)
@@ -600,6 +601,7 @@ func _rebuild_connectors(node: RoadNode) -> void:
 			connector.outgoing_lane_ids.append(out_lane.id)
 			connector.outgoing_lanes.append(out_lane)
 			connector.feeder_lane_id = in_lane.id
+			connector.bus_only = in_lane.bus_only or out_lane.bus_only
 			in_lane.outgoing_lane_ids.append(connector.id)
 			in_lane.outgoing_lanes.append(connector)
 			lanes[connector.id] = connector
@@ -688,10 +690,16 @@ static func _with_end_zone(zone: Vector2, length: float) -> Vector2:
 
 ## Which movement (if any) is allowed from `in_lane` into `out_lane` through `node`.
 ## Multi-lane roads: straight keeps its lane, right turns use the curb lanes,
-## left turns the center lanes. U-turns only at dead ends.
+## left turns the center lanes. U-turns only at dead ends. Bus lanes (RoadType.bus_lanes)
+## are left out of the lanes everyone uses: the curb lane for cars is then the one next
+## to the bus lane (buses may also turn right from it into a bus lane); a bus lane goes on
+## straight into the next road's curb lane (its bus lane, if it has one) or turns right
+## into it.
 func _classify_movement(node: RoadNode, in_lane: Lane, out_lane: Lane) -> Lane.Turn:
-	var in_lane_count := segments[in_lane.segment_id].road_type.lanes_per_direction
-	var out_lane_count := segments[out_lane.segment_id].road_type.lanes_per_direction
+	var out_type := segments[out_lane.segment_id].road_type
+	var in_general := segments[in_lane.segment_id].road_type.get_general_lane_count()
+	var out_count := out_type.lanes_per_direction
+	var out_general := out_type.get_general_lane_count()
 	if in_lane.segment_id == out_lane.segment_id:
 		var is_dead_end := node.get_degree() == 1
 		if is_dead_end and in_lane.index_from_center == 0 and out_lane.index_from_center == 0:
@@ -701,13 +709,19 @@ func _classify_movement(node: RoadNode, in_lane: Lane, out_lane: Lane) -> Lane.T
 	var d0 := LaneBuilder.end_direction(in_lane.curve)
 	var d1 := LaneBuilder.start_direction(out_lane.curve)
 	if absf(d0.angle_to(d1)) < STRAIGHT_MAX_ANGLE:
-		var target := mini(in_lane.index_from_center, out_lane_count - 1)
+		var target := out_count - 1 if in_lane.bus_only else mini(in_lane.index_from_center, out_general - 1)
 		return Lane.Turn.STRAIGHT if out_lane.index_from_center == target else Lane.Turn.NONE
 	# y-down screen space: a positive cross product means turning clockwise, i.e. right.
 	if d0.cross(d1) > 0.0:
-		var from_curb := in_lane.index_from_center == in_lane_count - 1
-		var to_curb := out_lane.index_from_center == out_lane_count - 1
+		if in_lane.bus_only:
+			return Lane.Turn.RIGHT if out_lane.index_from_center == out_count - 1 else Lane.Turn.NONE
+		var from_curb := in_lane.index_from_center == in_general - 1
+		var to_curb := out_lane.index_from_center == out_general - 1
+		# Buses may also turn right straight into a bus lane (a bus-only turn: see bus_only).
+		to_curb = to_curb or out_lane.bus_only
 		return Lane.Turn.RIGHT if from_curb and to_curb else Lane.Turn.NONE
+	if in_lane.bus_only:
+		return Lane.Turn.NONE
 	var from_center := in_lane.index_from_center == 0
 	var to_center := out_lane.index_from_center == 0
 	return Lane.Turn.LEFT if from_center and to_center else Lane.Turn.NONE

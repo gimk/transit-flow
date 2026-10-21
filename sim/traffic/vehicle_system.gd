@@ -113,7 +113,7 @@ const GAP_SHRINK_TIME := 10.0  ## Sim seconds.
 const LOOK_SPEED_FRACTION := 0.4
 ## Bus bays: how far beside its lane a bus in a bay is (drawn), and how long it waits to
 ## pull out before the traffic lets it.
-const BAY_OFFSET := 14.0
+const BAY_OFFSET := 12.0
 const BAY_COURTESY_WAIT := 1.0
 ## Without lights, a driver who has waited this long at a busy crosswalk gets to go once
 ## it is empty (_crosswalks_clear).
@@ -710,7 +710,7 @@ func _swap_partner(vehicle: Vehicle, target: Lane, at: float) -> Vehicle:
 ## A driver who couldn't get into the lane they needed before the end of the road goes
 ## on through the junction from the lane they're in and finds a new way from there.
 func _carry_on_without_changing(vehicle: Vehicle) -> void:
-	var route := _router.find_route_onward(vehicle.lane.id, _get_destination(vehicle))
+	var route := _router.find_route_onward(vehicle.lane.id, _get_destination(vehicle), _is_bus(vehicle))
 	if route == null:
 		return
 	vehicle.next_lanes = _to_lanes(route.lane_ids)
@@ -1355,7 +1355,7 @@ func _reroute_all() -> void:
 	# Waiting in driveways: plan again from the lot (or fail if there is no way now).
 	for vehicle: Vehicle in _departures.duplicate():
 		var points := _lots.get_access_points(vehicle.origin_lot_id) if vehicle.origin_lot_id != -1 else vehicle.origin_points
-		var route := _router.find_best_route(points, _get_destination(vehicle))
+		var route := _router.find_best_route(points, _get_destination(vehicle), _is_bus(vehicle))
 		if route == null:
 			_departures.erase(vehicle)
 			vehicle.trip_end_time = _time
@@ -1442,7 +1442,7 @@ func _reroute(vehicle: Vehicle) -> bool:
 	if vehicle.lane.is_connector():
 		var exit_lane_id: int = vehicle.lane.outgoing_lane_ids[0]
 		if _roads.lanes.has(exit_lane_id):
-			var route := _router.find_best_route([{ "lane_id": exit_lane_id, "distance": 0.0 }], destination)
+			var route := _router.find_best_route([{ "lane_id": exit_lane_id, "distance": 0.0 }], destination, _is_bus(vehicle))
 			if route != null:
 				vehicle.next_lanes = _to_lanes(route.lane_ids)
 				vehicle.end_distance = route.end_distance
@@ -1465,13 +1465,13 @@ func _get_destination(vehicle: Vehicle) -> Array[Dictionary]:
 
 
 func _route_from_current_lane(vehicle: Vehicle, destination: Array[Dictionary]) -> bool:
-	var route := _router.find_best_route([{ "lane_id": vehicle.lane.id, "distance": vehicle.distance }], destination)
+	var route := _router.find_best_route([{ "lane_id": vehicle.lane.id, "distance": vehicle.distance }], destination, _is_bus(vehicle))
 	if route == null:
 		return false
 	var starts_with_lane_change := route.lane_ids.size() > 1 and vehicle.lane.is_beside(_roads.lanes[route.lane_ids[1]])
 	if starts_with_lane_change and vehicle.get_remaining_on_lane() < MERGE_DISTANCE:
 		# Too late to change lanes here: go on from this lane instead, if possible.
-		var onward := _router.find_route_onward(vehicle.lane.id, destination)
+		var onward := _router.find_route_onward(vehicle.lane.id, destination, _is_bus(vehicle))
 		if onward != null:
 			vehicle.next_lanes = _to_lanes(onward.lane_ids)
 			vehicle.end_distance = onward.end_distance
@@ -1500,3 +1500,8 @@ func _to_lanes(ids: PackedInt64Array) -> Array[Lane]:
 	for lane_id in ids:
 		result.append(_roads.lanes[lane_id])
 	return result
+
+
+## Buses route with bus lanes (Router `bus` arguments).
+static func _is_bus(vehicle: Vehicle) -> bool:
+	return vehicle.kind == Vehicle.Kind.BUS

@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8a (trips as legs, car availability, parking, walk-or-drive choice) and 8b (buses, bus in mode choice) done. Next: 8c (bus bays and bus lanes, so buses beat the jam).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Next: Phase 9 (curves), or more UI / transit work (bus count per line, line editing).
 
 ---
 
@@ -368,6 +368,21 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 - Lots stand on plots: the cell less what the roads around it take (half the road + sidewalk + 2 px). The building sits at the back, with a marked parking strip at the front facing its road, and the parked cars are drawn in the stalls (homes: one stall per resident's car; shops 3, factories 4). Lots no longer overlap avenues. A road that leaves under 16 px removes the lot, and the zone waits for room: an avenue one cell from another road does that, while two local streets one cell apart still leave room. Kept the 64 px grid: halving it would make lots too small for a building and its parking, and would touch every road rule.
 - Vehicle colours by kind: cars green, trucks brown and bus-sized, buses in their line's colour (blue, pink, purple, yellow). Red for late drivers is now a debug toggle (F2, "Lateness colours"): every vehicle shades green → yellow → red as it falls behind its ideal time, red at the point its driver turns impatient.
 - Fixed along the way: sim events relayed to the views (lots, zones, hours) were only flushed when the worker happened to be idle after the next batch had started, i.e. hardly ever while the game ran; views missed lot and zone changes until something else redrew them.
+
+*8c done (2026-10-21): buses keep to their line, bus bays, bus lanes. Phase 8 done.*
+- Buses keep to their line: each stop-to-stop route is fixed when the line is laid out (or the roads change, `BusLine.routes`) and buses drive exactly that; congestion rerouting leaves them alone. Before, they asked the router again at every stop and often went other ways round, mostly to turn back at the ends.
+- Bus bays (Transit tool: "Curbside stops" / "Bus bays"; clicking an existing stop makes it the current kind, `TransitSystem.set_stop_bay`): a bus dwelling at a bay leaves its lane's queue (`VehicleSystem.pull_into_bay`), so the traffic behind drives past; sent on, it waits for a gap to pull back in (`_leave_bays`, like a car from a driveway), and after a second the next driver lets it in (`_let_buses_out`).
+- Bus lanes: road type "Avenue with Bus Lanes" (`RoadType.bus_lanes`: the curb lane each way, `Lane.bus_only`). Junction turns leave bus lanes out of the general lanes: cars turn right from the lane next to the bus lane; a bus lane goes straight on into the next road's curb lane (its bus lane if it has one) or turns right; buses may also turn right straight into a bus lane; turns into or out of a bus lane are bus-only. Cars route on a graph with no way along bus lanes, only across them to reach the curb (driveways); buses route on the full graph (`Router` `bus` arguments, a second LaneGraph built only when bus lanes exist, sharing congestion costs). Drawn as a reddish tint behind a solid line.
+- Measured on the Bottleneck (2 game hours of morning rush; carless commuters otherwise walk ~70 s):
+
+  | Setup | Flow | Car commute | Bus commute |
+  |---|---|---|---|
+  | No bus | 51% | 22 s | – |
+  | Curbside stops | 50% | 25 s | 48 s |
+  | Bus bays | 49% | 25 s | 52 s |
+  | Bus lanes (one lane each way left for cars) | 55% | 20 s | 43 s |
+
+  Bus lanes meet the "done when": Flow +4, and even drivers get there sooner (buses no longer stop in, or merge into, the jammed lane). Bays don't help on a jammed corridor (what a bus saves at the stop it loses waiting to pull out); they're for buses on free-flowing roads. Drivers still don't switch to the bus (door to door it takes about twice as long, mostly walking and waiting), which is realistic for a suburb; denser cities, scarce parking or faster service (a later bus-count setting per line) would change that. "Bottleneck + bus lanes" is in the debug menu.
 
 ### Phase 9 — Curves (was Phase 4)
 - Curved road drawing (control-point drag, minimum radius). Everything else should "just work" thanks to the lane model, so this phase still validates the core architectural bet. It comes after the simulation phases because simulation comes before mechanics; it can move earlier at any time, since nothing above depends on it.

@@ -2,8 +2,8 @@ class_name RoadMarkings
 extends Node2D
 ## Paint on one road segment: the center line between directions (dashed on local
 ## streets, solid on wider roads), dashed lines between lanes going the same way,
-## arrows along one-way roads and zebra crossings at junctions. Stops short of
-## junctions, where the connectors are.
+## arrows along one-way roads, bus lanes tinted behind a solid line, and zebra crossings
+## at junctions. Stops short of junctions, where the connectors are.
 
 const LINE_COLOR := Color(1, 1, 1, 0.45)
 const CENTER_COLOR := Color(1.0, 0.85, 0.35, 0.6)
@@ -12,6 +12,7 @@ const LINE_WIDTH := 1.5
 const DASH := 6.0
 const ARROW_SPACING := 96.0
 const ARROW_SIZE := 4.0
+const BUS_LANE_COLOR := Color(0.72, 0.28, 0.22, 0.45)
 const ZEBRA_COLOR := Color(1, 1, 1, 0.35)
 const ZEBRA_LENGTH := 6.0
 const ZEBRA_WIDTH := 2.5
@@ -57,9 +58,21 @@ func _draw() -> void:
 		_dashed(center, CENTER_COLOR)
 	elif center.size() >= 2:
 		draw_polyline(center, CENTER_COLOR, LINE_WIDTH)
+	if _road_type.bus_lanes:
+		# The curb lane each way: tinted, behind a solid line.
+		var curb := (_road_type.lanes_per_direction - 0.5) * lane_width
+		for side in [-1.0, 1.0]:
+			var lane := _line_at(side * curb)
+			if lane.size() >= 2:
+				draw_polyline(lane, BUS_LANE_COLOR, lane_width - 2.0)
 	for k in range(1, _road_type.lanes_per_direction):
-		_dashed(_line_at(k * lane_width), LINE_COLOR)
-		_dashed(_line_at(-k * lane_width), LINE_COLOR)
+		var solid: bool = _road_type.bus_lanes and k == _road_type.lanes_per_direction - 1
+		for side in [-1.0, 1.0]:
+			var line := _line_at(side * k * lane_width)
+			if solid and line.size() >= 2:
+				draw_polyline(line, LINE_COLOR, LINE_WIDTH)
+			elif not solid:
+				_dashed(line, LINE_COLOR)
 
 
 ## Zebra stripes across the road, `at` along `points` from its first point (where

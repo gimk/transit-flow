@@ -146,6 +146,16 @@ func load_bottleneck_scenario() -> void:
 	Events.notification_posted.emit("Scenario: Bottleneck. Relieve the jammed main road (F4 shows congestion)")
 
 
+## The Bottleneck with its main road given bus lanes and a bus line along it (debug menu).
+func load_bottleneck_bus_lanes_scenario() -> void:
+	new_simulation()
+	var origin := Grid.world_to_cell(Grid.map_rect().get_center())
+	var info := Scenarios.build_bottleneck(simulation, origin)
+	Scenarios.add_bottleneck_bus_lanes(simulation, origin)
+	Events.camera_focus_requested.emit(info.junction)
+	Events.notification_posted.emit("Scenario: Bottleneck with bus lanes. Compare Flow with plain F7")
+
+
 ## Replaces the game with the "Town" scenario (F8): a complete small city that lives
 ## through a whole day, starting just before the morning rush.
 func load_town_scenario() -> void:

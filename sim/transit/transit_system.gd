@@ -482,7 +482,7 @@ func _next_reachable(line: BusLine, index: int, lane_id: int, distance: float) -
 		var stop := stops[line.stop_ids[next]]
 		if not stop.is_active():
 			continue
-		var route := _router.find_route(lane_id, distance, stop.lane_id, stop.distance)
+		var route := _router.find_route(lane_id, distance, stop.lane_id, stop.distance, true)
 		if route != null:
 			return { "index": next, "route": route }
 	return {}
@@ -713,7 +713,7 @@ func _update_line(line: BusLine) -> void:
 		var route: Route = null
 		line.routes[i] = null
 		if a.is_active() and b.is_active():
-			route = _router.find_route(a.lane_id, a.distance, b.lane_id, b.distance)
+			route = _router.find_route(a.lane_id, a.distance, b.lane_id, b.distance, true)
 		if route == null:
 			line.free_flow_times[i] = INF
 			line.segment_times[i] = INF
