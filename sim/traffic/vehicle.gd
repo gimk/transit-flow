@@ -18,6 +18,8 @@ var length := CAR_LENGTH
 var width := CAR_WIDTH
 ## Who the trip belongs to (a citizen id, or a debug/traffic owner code).
 var owner_id := -1
+## One leg of an owner's longer trip, which Flow scores as a whole (citizens' cars).
+var scored_by_owner := false
 ## Where the trip ends. If `destination_lot_id` is set, re-routing follows that lot's
 ## (possibly moved) access point; otherwise the fixed lane position below is used.
 var destination_lot_id := -1

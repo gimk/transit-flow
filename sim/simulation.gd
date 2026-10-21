@@ -40,7 +40,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
-	flow = FlowMetric.new(vehicles, pedestrians)
+	flow = FlowMetric.new(vehicles, citizens)
 
 
 func step() -> void:

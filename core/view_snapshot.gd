@@ -35,6 +35,8 @@ var population := 0
 var employed := 0
 var jobs := 0
 var flow_percent := -1.0
+## Citizen.Mode -> share of citizens' trips over the last day (FlowMetric.get_mode_shares).
+var mode_shares := {}
 
 const STUCK_SECONDS := 30.0
 
@@ -88,6 +90,7 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	snapshot.employed = sim.citizens.get_employed_count()
 	snapshot.jobs = sim.citizens.get_job_count()
 	snapshot.flow_percent = sim.flow.get_flow_percent(snapshot.time)
+	snapshot.mode_shares = sim.flow.get_mode_shares(snapshot.time)
 	return snapshot
 
 

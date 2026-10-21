@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Next: Phase 8 (buses, mode choice, parking and car availability).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8a (trips as legs, car availability, parking, walk-or-drive choice) done. Next: 8b (buses).
 
 ---
 
@@ -349,6 +349,9 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
   - adding a bus line moves commuters off a jammed road and Flow rises.
 
 **Done when:** a bus line on a congested corridor measurably raises Flow, and the share of each mode is visible (HUD / debug panel).
+
+*8a done (2026-10-21): trips as legs, car availability, parking, walk-or-drive choice.* A citizen's trip is a list of legs (`Citizen.legs`, walk or car) run one after the other by `CitizenSystem`. Each citizen owns a car (`has_car`; ownership below 100% waits for buses, so carless people have something better than a long walk), parked where they left it (`car_lot_id`): they can drive only from there, walking to it first if it's within `MAX_CHOSEN_WALK` (4 cells). `Parking`: homes hold their residents' cars; shops have 3 spaces and factories 4, shared by workers and visitors, taken when the trip is planned. A driver whose destination is full parks at the nearest lot with a free space within walking reach and walks on (else on the street, over capacity). Mode choice (`plan_trip`), by generalized cost in sim seconds: walking time × 1.5, driving = expected time with congestion + 9 s overhead (getting the car out, parking: big next to drives this short, since distances are compressed), × a personal taste for driving (0.85–1.2). Chosen walks are at most 4 cells; with no other way people walk however far; someone going home whose car isn't there drives it home. Flow now scores citizens' trips door to door (`CitizenSystem.trip_ended`; their car legs are flagged `Vehicle.scored_by_owner`), against the sum of the legs' free-flow times; it also keeps the mode share of the last day (`FlowMetric.get_mode_shares`, shown in the HUD).
+- Measured: on the same side of a street, the average citizen walks up to ~4 cells (cost 14.3 vs 14.8 by car); across a road with no crosswalk nearby, they drive. Town: 5% of trips walked, Flow 58% (60% before; random draws changed, and 4 drivers gave up in the morning jam instead of 2).
 
 ### Phase 9 — Curves (was Phase 4)
 - Curved road drawing (control-point drag, minimum radius). Everything else should "just work" thanks to the lane model, so this phase still validates the core architectural bet. It comes after the simulation phases because simulation comes before mechanics; it can move earlier at any time, since nothing above depends on it.

@@ -36,8 +36,17 @@ func _process(_delta: float) -> void:
 		_stats_label.text = "%d vehicles (+%d in driveways) · %d stuck · tick %.1f ms%s" % [
 			view.vehicle_count, view.waiting_count, view.stuck_count, Game.average_tick_ms,
 			" · sim at %.1f× (can't keep up)" % Game.effective_speed if Game.sim_lagging else ""]
-		_city_label.text = "Pop %d · %d/%d jobs filled" % [view.population, view.employed, view.jobs]
+		_city_label.text = "Pop %d · %d/%d jobs filled%s" % [view.population, view.employed, view.jobs, _mode_text(view.mode_shares)]
 		_update_flow(view.flow_percent)
+
+
+## How citizens travelled over the last day, e.g. " · Car 82% Walk 18%".
+func _mode_text(shares: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	for mode: int in Citizen.MODE_NAMES:
+		if shares.has(mode):
+			parts.append("%s %d%%" % [Citizen.MODE_NAMES[mode], roundi(shares[mode] * 100.0)])
+	return " · " + " ".join(parts) if not parts.is_empty() else ""
 
 
 ## Flow %, coloured: green when traffic flows, amber when it struggles, red when jammed.

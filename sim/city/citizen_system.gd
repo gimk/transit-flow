@@ -6,9 +6,23 @@ extends RefCounted
 ## - morning rush: leave home between ~06:30 and 09:00 for work,
 ## - evening rush: leave work between ~16:00 and 19:00, on some evenings via a shop
 ##   (stay 30-60 game minutes), then go home.
-## Trips that can't start (no road, no route, driveway blocked) are retried shortly.
-## A trip that fails on the way (road gone, gave up) still ends at its destination if
-## that still exists, so the daily rhythm carries on; the Flow metric counts the failure.
+##
+## Trips (_plan_trip). A trip is a list of legs, walked or driven. Citizens own a car,
+## parked where they last left it (Citizen.car_lot_id): they can only drive from there,
+## walking to it first if it's nearby. A driver parks at their destination if it has a
+## free space, else nearby and walks the rest (Parking). Each trip goes the cheapest way
+## by generalized cost: time on foot counts WALK_WEIGHT times, driving costs its expected
+## time (current congestion included) plus CAR_OVERHEAD for getting the car out and
+## parking it, scaled by the citizen's taste for driving. People choose to walk only up
+## to MAX_CHOSEN_WALK (a whole trip, or to and from the car); with no other way, they
+## walk however far. Someone heading home whose car isn't there drives it home.
+##
+## Trips that can't start (no road, no route) are retried shortly. A trip that fails on
+## the way (road gone, driver gave up) still ends at its destination if that still
+## exists, so the daily rhythm carries on; the Flow metric counts the failure.
+
+## A trip ended (or failed): the citizen's trip_* fields describe it.
+signal trip_ended(citizen: Citizen, completed: bool)
 
 const RESIDENTS_PER_HOME := 2
 const JOBS := { Lot.Type.COMMERCIAL: 2, Lot.Type.INDUSTRIAL: 3 }
@@ -24,8 +38,17 @@ const MORNING_END_HOUR := 12.0
 const LATE_NIGHT_END_HOUR := 5.0
 ## Job seekers matched to a workplace per tick (keeps big zoning sprees cheap).
 const JOB_MATCHES_PER_TICK := 10
+## Mode choice (see the class doc). Costs are in sim seconds. Distances here are
+## compressed (a car crosses a cell in under a second), so the overhead of using a car is
+## large next to the drive itself: with it, the average citizen walks up to ~3 cells.
+const WALK_WEIGHT := 1.5
+const CAR_OVERHEAD := 9.0
+const MAX_CHOSEN_WALK := PedestrianSystem.MAX_WALK_DISTANCE
+## Spread of Citizen.car_preference.
+const CAR_PREFERENCE_RANGE := Vector2(0.85, 1.2)
 
 var citizens: Dictionary[int, Citizen] = {}
+var parking: Parking
 
 var _lots: LotSystem
 var _router: Router
@@ -50,6 +73,7 @@ func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, pedestrians
 	_vehicles = vehicles
 	_pedestrians = pedestrians
 	_clock = clock
+	parking = Parking.new(lots, pedestrians)
 	_rng.seed = 11
 	_lots.changed.connect(_sync_with_lots)
 	_vehicles.vehicle_arrived.connect(_on_vehicle_arrived)
@@ -107,27 +131,86 @@ func get_employed_count() -> int:
 	return citizens.size() - _job_seekers.size()
 
 
+## The way `citizen` would go from one lot to another now: { "mode": Citizen.Mode,
+## "legs": Array[Dictionary] (see Citizen.legs), "cost": generalized cost }, or {} if
+## there's none.
+func plan_trip(citizen: Citizen, from_lot: int, to_lot: int, going_home := false) -> Dictionary:
+	var walk := {}
+	var walk_length := _pedestrians.get_walking_distance(from_lot, to_lot)
+	if walk_length < INF:
+		walk = { "mode": Citizen.Mode.WALK, "legs": [_leg(Citizen.Mode.WALK, from_lot, to_lot)],
+			"cost": _walk_cost(walk_length) }
+	var car := _plan_drive(citizen, from_lot, to_lot)
+	if car.is_empty():
+		return walk  # However far.
+	# The car goes back home with them.
+	if going_home and citizen.car_lot_id != citizen.home_lot_id:
+		return car
+	if walk.is_empty() or walk_length > MAX_CHOSEN_WALK:
+		return car
+	return walk if walk.cost <= car.cost else car
+
+
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
 	if from_lot == to_lot:
-		# Already there (no car needed).
+		# Already there.
 		_set_off(citizen, to_lot, travelling)
 		_arrive(citizen)
 		return
-	# Short trips are walked.
-	var pedestrian := _pedestrians.walk(from_lot, to_lot, citizen.id, PedestrianSystem.MAX_WALK_DISTANCE)
-	if pedestrian != null:
-		citizen.pedestrian_id = pedestrian.id
-		_set_off(citizen, to_lot, travelling)
-		return
-	# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
-	var none: Array[Dictionary] = []
-	var vehicle := _vehicles.depart(from_lot, none, to_lot, none, citizen.id)
-	if vehicle == null:
+	var plan := plan_trip(citizen, from_lot, to_lot, travelling == Citizen.State.TO_HOME)
+	if plan.is_empty():
 		# No way there (yet): try again shortly.
 		citizen.retry_at = _time + RETRY_DELAY
 		return
-	citizen.vehicle_id = vehicle.id
+	citizen.legs.assign(plan.legs)
+	citizen.trip_mode = plan.mode
+	citizen.trip_start_time = _time
+	citizen.trip_ideal_time = 0.0
+	for leg in citizen.legs:
+		if leg.mode == Citizen.Mode.CAR:
+			# The space at the other end is theirs from now on.
+			parking.release(citizen.car_lot_id)
+			parking.take(leg.to)
+			citizen.car_lot_id = leg.to
 	_set_off(citizen, to_lot, travelling)
+	_next_leg(citizen)
+
+
+## A drive from wherever the car is (walking there first) to a parking space at or near
+## `to_lot` (walking on from it), as a plan (see plan_trip), or {} if the car isn't
+## within reach or can't get there.
+func _plan_drive(citizen: Citizen, from_lot: int, to_lot: int) -> Dictionary:
+	if not citizen.has_car or not _lots.lots.has(citizen.car_lot_id):
+		return {}
+	var car_at := citizen.car_lot_id
+	var park_at := to_lot if to_lot == citizen.home_lot_id else parking.find_space(to_lot, MAX_CHOSEN_WALK)
+	if park_at == car_at:
+		return {}  # Nothing to drive.
+	var legs: Array[Dictionary] = []
+	var cost := 0.0
+	if car_at != from_lot:
+		var to_car := _pedestrians.get_walking_distance(from_lot, car_at)
+		if to_car > MAX_CHOSEN_WALK:
+			return {}
+		legs.append(_leg(Citizen.Mode.WALK, from_lot, car_at))
+		cost += _walk_cost(to_car)
+	var route := _router.find_best_route(_lots.get_access_points(car_at), _lots.get_access_points(park_at))
+	if route == null:
+		return {}
+	legs.append(_leg(Citizen.Mode.CAR, car_at, park_at))
+	cost += (route.travel_time + CAR_OVERHEAD) * citizen.car_preference
+	if park_at != to_lot:
+		legs.append(_leg(Citizen.Mode.WALK, park_at, to_lot))
+		cost += _walk_cost(_pedestrians.get_walking_distance(park_at, to_lot))
+	return { "mode": Citizen.Mode.CAR, "legs": legs, "cost": cost }
+
+
+static func _leg(mode: Citizen.Mode, from_lot: int, to_lot: int) -> Dictionary:
+	return { "mode": mode, "from": from_lot, "to": to_lot }
+
+
+static func _walk_cost(length: float) -> float:
+	return (length / PedestrianSystem.WALK_SPEED + PedestrianSystem.START_STOP_ALLOWANCE) * WALK_WEIGHT
 
 
 func _set_off(citizen: Citizen, to_lot: int, travelling: Citizen.State) -> void:
@@ -138,28 +221,66 @@ func _set_off(citizen: Citizen, to_lot: int, travelling: Citizen.State) -> void:
 		citizen.last_commute_day = _clock.get_day()
 
 
+## Starts the trip's next leg, or ends the trip if there's none left.
+func _next_leg(citizen: Citizen) -> void:
+	citizen.vehicle_id = -1
+	citizen.pedestrian_id = -1
+	if citizen.legs.is_empty():
+		_finish_trip(citizen, true)
+		return
+	var leg: Dictionary = citizen.legs.pop_front()
+	if leg.mode == Citizen.Mode.WALK:
+		var pedestrian := _pedestrians.walk(leg.from, leg.to, citizen.id)
+		if pedestrian != null:
+			citizen.pedestrian_id = pedestrian.id
+			citizen.trip_ideal_time += pedestrian.ideal_trip_time
+			return
+	else:
+		# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
+		var none: Array[Dictionary] = []
+		var vehicle := _vehicles.depart(leg.from, none, leg.to, none, citizen.id)
+		if vehicle != null:
+			vehicle.scored_by_owner = true
+			citizen.vehicle_id = vehicle.id
+			citizen.trip_ideal_time += vehicle.ideal_trip_time
+			return
+	# The way vanished since the trip was planned (a road or lot changed).
+	_finish_trip(citizen, false)
+
+
+## Reports the trip and puts the citizen at its destination (also after a failed trip,
+## if the destination still exists, so the day carries on).
+func _finish_trip(citizen: Citizen, completed: bool) -> void:
+	citizen.legs.clear()
+	citizen.trip_end_time = _time
+	trip_ended.emit(citizen, completed)
+	if completed or _lots.lots.has(citizen.trip_lot_id):
+		_arrive(citizen)
+	else:
+		citizen.vehicle_id = -1
+		citizen.pedestrian_id = -1
+		citizen.state = Citizen.State.AT_HOME
+		citizen.retry_at = _time + RETRY_DELAY
+
+
 func _on_vehicle_arrived(vehicle: Vehicle) -> void:
 	var citizen: Citizen = citizens.get(vehicle.owner_id)
-	if citizen != null:
-		_arrive(citizen)
+	if citizen != null and citizen.vehicle_id == vehicle.id:
+		_next_leg(citizen)
 
 
 func _on_pedestrian_arrived(pedestrian: Pedestrian) -> void:
 	var citizen: Citizen = citizens.get(pedestrian.owner_id)
-	if citizen != null:
-		_arrive(citizen)
+	if citizen != null and citizen.pedestrian_id == pedestrian.id:
+		_next_leg(citizen)
 
 
+## The car ends up where it was going to park anyway (Citizen.car_lot_id).
 func _on_vehicle_failed(vehicle: Vehicle) -> void:
 	var citizen: Citizen = citizens.get(vehicle.owner_id)
-	if citizen == null:
-		return
-	if _lots.lots.has(citizen.trip_lot_id):
-		_arrive(citizen)
-	else:
+	if citizen != null and citizen.vehicle_id == vehicle.id:
 		citizen.vehicle_id = -1
-		citizen.state = Citizen.State.AT_HOME
-		citizen.retry_at = _time + RETRY_DELAY
+		_finish_trip(citizen, false)
 
 
 func _arrive(citizen: Citizen) -> void:
@@ -185,6 +306,7 @@ func _sync_with_lots() -> void:
 			_workplaces.append(lot)
 		if lot.type == Lot.Type.COMMERCIAL:
 			_shops.append(lot)
+	parking.sync()
 
 	var residents := {}
 	for citizen: Citizen in citizens.values():
@@ -193,11 +315,15 @@ func _sync_with_lots() -> void:
 				_vehicles.remove(citizen.vehicle_id)
 			if citizen.pedestrian_id != -1:
 				_pedestrians.remove(citizen.pedestrian_id)
+			parking.release(citizen.car_lot_id)
 			_leave_job(citizen)
 			_job_seekers.erase(citizen.id)
 			citizens.erase(citizen.id)
 			continue
 		residents[citizen.home_lot_id] = residents.get(citizen.home_lot_id, 0) + 1
+		if not _lots.lots.has(citizen.car_lot_id):
+			# Its car park is gone: the car is towed home.
+			citizen.car_lot_id = citizen.home_lot_id
 		if citizen.state == Citizen.State.AT_SHOP and not _lots.lots.has(citizen.trip_lot_id):
 			citizen.state = Citizen.State.AT_HOME
 		if citizen.work_lot_id != -1 and not _lots.lots.has(citizen.work_lot_id):
@@ -217,6 +343,7 @@ func _add_citizen(home_lot_id: int) -> void:
 	# A bell-ish spread (average of two uniform draws) around the rush-hour peaks.
 	citizen.leave_home_hour = 6.5 + (_rng.randf() + _rng.randf()) * 0.5 * 2.5
 	citizen.leave_work_hour = 16.0 + (_rng.randf() + _rng.randf()) * 0.5 * 3.0
+	citizen.car_preference = _rng.randf_range(CAR_PREFERENCE_RANGE.x, CAR_PREFERENCE_RANGE.y)
 	citizens[citizen.id] = citizen
 	_job_seekers[citizen.id] = true
 
