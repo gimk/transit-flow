@@ -251,3 +251,28 @@ func test_a_bus_line_speeds_up_trips_without_a_car() -> void:
 	assert_gt(results[true].modes.get(Citizen.Mode.BUS, 0.0), 0.1, "people ride")
 	assert_eq(results[true]["carless trips"], results[false]["carless trips"], "the same commuters")
 	assert_lt(results[true]["carless commute"], results[false]["carless commute"] * 0.85, "and get there sooner")
+
+
+## On a grid with many ways round, and traffic to tempt them off it, buses keep to the
+## lanes their line was laid out on (BusLine.routes), turnarounds included.
+func test_buses_keep_to_their_line() -> void:
+	for y in [2, 4, 6]:
+		_road(Vector2(2, y), Vector2(22, y))
+	for x in [2, 8, 16, 22]:
+		_road(Vector2(x, 2), Vector2(x, 6))
+	var stops: Array[int] = [_stop(5, 4, true), _stop(12, 4, true), _stop(19, 4, true),
+		_stop(19, 4, false), _stop(12, 4, false), _stop(5, 4, false)]
+	var line := sim.transit.lines[sim.transit.add_line(stops)]
+	var line_lanes := {}
+	for route: Route in line.routes:
+		for lane_id in route.lane_ids:
+			line_lanes[lane_id] = true
+	sim.stress.target_count = 80
+	var off_line := 0
+	for i in Simulation.TICK_RATE * 60:
+		sim.step()
+		for bus: TransitSystem.Bus in sim.transit.buses.values():
+			if not line_lanes.has(bus.vehicle.lane.id):
+				off_line += 1
+	assert_eq(sim.transit.buses.size(), line.bus_count)
+	assert_eq(off_line, 0, "never off the line's lanes")

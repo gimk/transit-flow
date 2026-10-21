@@ -1314,13 +1314,13 @@ func _reroute_all() -> void:
 
 
 ## Vehicles that have been held up (crawling) for at least `min_slow_time`, up to
-## `max_count` of them.
+## `max_count` of them (not buses: they keep to their line).
 func find_delayed(max_count: int, min_slow_time := 3.0) -> Array[Vehicle]:
 	var found: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
 		if found.size() >= max_count:
 			break
-		if vehicle.slow_time >= min_slow_time:
+		if vehicle.slow_time >= min_slow_time and not vehicle.in_service:
 			found.append(vehicle)
 	return found
 

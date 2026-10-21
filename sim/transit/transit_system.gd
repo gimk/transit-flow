@@ -457,9 +457,15 @@ func _spawn_bus(line: BusLine) -> void:
 
 
 ## The next stop after index `index` that a bus at (`lane_id`, `distance`) can reach:
-## { "index", "route" }, or {} if none.
+## { "index", "route" }, or {} if none. Buses keep to their line's way (BusLine.routes)
+## from the stop they are at; they only look for another way round a stop that's gone
+## or after a road edit moved them off it.
 func _next_reachable(line: BusLine, index: int, lane_id: int, distance: float) -> Dictionary:
-	var next := index
+	var next := line.next_index(index)
+	var own: Route = line.routes[index] if index < line.routes.size() else null
+	if own != null and own.lane_ids[0] == lane_id and stops[line.stop_ids[next]].is_active():
+		return { "index": next, "route": Route.new(own.lane_ids, distance, own.end_distance, own.travel_time) }
+	next = index
 	for i in line.stop_ids.size() - 1:
 		next = line.next_index(next)
 		var stop := stops[line.stop_ids[next]]
@@ -684,6 +690,7 @@ static func _spot_on(lane: Lane, distance: float) -> Dictionary:
 func _update_line(line: BusLine) -> void:
 	var n := line.stop_ids.size()
 	line.free_flow_times.resize(n)
+	line.routes.resize(n)
 	var previous := line.segment_times.duplicate()
 	line.segment_times.resize(n)
 	var path := PackedVector2Array()
@@ -691,12 +698,14 @@ func _update_line(line: BusLine) -> void:
 		var a := stops[line.stop_ids[i]]
 		var b := stops[line.stop_ids[line.next_index(i)]]
 		var route: Route = null
+		line.routes[i] = null
 		if a.is_active() and b.is_active():
 			route = _router.find_route(a.lane_id, a.distance, b.lane_id, b.distance)
 		if route == null:
 			line.free_flow_times[i] = INF
 			line.segment_times[i] = INF
 			continue
+		line.routes[i] = route
 		line.free_flow_times[i] = route.get_free_flow_time(_roads)
 		var estimate := line.free_flow_times[i] + DWELL_BASE
 		var measured: float = previous[i] if i < previous.size() else INF

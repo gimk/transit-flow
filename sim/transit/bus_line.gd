@@ -14,6 +14,9 @@ var bus_count := 1
 ## included). INF while the next stop can't be reached.
 var free_flow_times := PackedFloat32Array()
 var segment_times := PackedFloat32Array()
+## Per stop i: the way buses take from it to the next stop (null while there is none):
+## fixed when the line is laid out or the roads change, so buses keep to their line.
+var routes: Array[Route] = []
 ## The buses' way round, for drawing.
 var path := PackedVector2Array()
 
