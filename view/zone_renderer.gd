@@ -1,8 +1,8 @@
 class_name ZoneRenderer
 extends Node2D
 ## Draws zoned cells as a light tint of their zone colour (under roads and buildings).
-## Cells still waiting for a road get a dashed red outline so the player sees why
-## nothing grows there.
+## Cells still waiting for a road, or for room (a road built too close leaves none), get
+## a dashed red outline so the player sees why nothing grows there.
 
 const FILL_ALPHA := 0.16
 const NO_ROAD_COLOR := Color(1.0, 0.35, 0.3, 0.6)

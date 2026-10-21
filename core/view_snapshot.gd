@@ -14,6 +14,11 @@ var rotations := PackedFloat32Array()
 ## Length x width per vehicle.
 var sizes := PackedVector2Array()
 var colors := PackedColorArray()
+## How late each vehicle is, from 0 (within its ideal trip time) to 1 (late enough for its
+## driver to turn impatient, VehicleSystem.IMPATIENT_FACTOR), for the lateness view.
+var lateness := PackedFloat32Array()
+## Lot id -> citizens' cars parked there (not driving, not waiting in the driveway).
+var parked: Dictionary[int, int] = {}
 ## Pedestrian id -> index into pedestrian_positions.
 var pedestrian_index: Dictionary[int, int] = {}
 var pedestrian_positions := PackedVector2Array()
@@ -59,6 +64,7 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	snapshot.rotations.resize(count)
 	snapshot.sizes.resize(count)
 	snapshot.colors.resize(count)
+	snapshot.lateness.resize(count)
 	var i := 0
 	var stuck := 0
 	var drawn: Array = vehicles.values()
@@ -70,6 +76,9 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 		snapshot.sizes[i] = Vector2(vehicle.length, vehicle.width)
 		snapshot.colors[i] = sim.transit.get_bus_color(vehicle.id) if vehicle.kind == Vehicle.Kind.BUS \
 				else VehicleRenderer.color_for_vehicle(vehicle)
+		var late_after := vehicle.ideal_trip_time * (VehicleSystem.IMPATIENT_FACTOR - 1.0) + VehicleSystem.IMPATIENT_GRACE
+		var late_by := snapshot.time - vehicle.trip_start_time - vehicle.ideal_trip_time
+		snapshot.lateness[i] = clampf(late_by / late_after, 0.0, 1.0)
 		if vehicle.stopped_time >= STUCK_SECONDS:
 			stuck += 1
 		i += 1
@@ -102,6 +111,9 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	snapshot.waiting_count = waiting.size()
 	snapshot.stuck_count = stuck
 	snapshot.population = sim.citizens.citizens.size()
+	for citizen: Citizen in sim.citizens.citizens.values():
+		if citizen.has_car and citizen.vehicle_id == -1:
+			snapshot.parked[citizen.car_lot_id] = snapshot.parked.get(citizen.car_lot_id, 0) + 1
 	snapshot.employed = sim.citizens.get_employed_count()
 	snapshot.jobs = sim.citizens.get_job_count()
 	snapshot.flow_percent = sim.flow.get_flow_percent(snapshot.time)

@@ -2,7 +2,8 @@ class_name ZoneSystem
 extends RefCounted
 ## Zoned land. The player paints cells Residential, Commercial or Industrial; a zoned
 ## cell with road access develops into a building (a Lot of the same type) after a short,
-## random delay, and loses it again when unzoned or rezoned. Cells without road access
+## random delay, and loses it again when unzoned or rezoned. Cells without road access,
+## or where the roads leave no room for a building (LotSystem.compute_plot),
 ## wait and are re-checked. Lots placed directly (scenarios, tests) are left alone.
 
 signal changed
@@ -82,7 +83,9 @@ func step(time: float) -> void:
 			break
 		if _pending[cell] > time:
 			continue
-		if _roads.find_lane_position(Grid.cell_center(cell), LotSystem.ACCESS_DISTANCE).is_empty():
+		if _roads.find_lane_position(Grid.cell_center(cell), LotSystem.ACCESS_DISTANCE).is_empty() \
+				or not LotSystem.compute_plot(_roads, cell).has_area():
+			# No road to reach it, or the roads leave no room for a building.
 			_without_access[cell] = true
 			_pending[cell] = time + ACCESS_RETRY
 			continue
@@ -145,3 +148,9 @@ func _clear_cell(cell: Vector2i) -> void:
 func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
 	for cell in _without_access:
 		_pending[cell] = _time
+	# A road built too close takes a building's land (LotSystem): the cell waits again.
+	for cell: Vector2i in _zoned_lots.keys():
+		if not _lots.lots.has(_zoned_lots[cell]):
+			_zoned_lots.erase(cell)
+			_without_access[cell] = true
+			_pending[cell] = _time + ACCESS_RETRY

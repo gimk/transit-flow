@@ -4,6 +4,9 @@ extends RefCounted
 ## within reach of the lot's center (the lane on the lot's side of the road), plus the
 ## matching positions on the road's lanes in the other direction.
 ## Access is cached and recomputed lazily after any road change.
+## Lots stand on what the roads around their cell leave free (compute_plot): a road
+## built so close that too little is left (e.g. an avenue one cell from another road)
+## removes the lot, and no lot is placed there.
 
 signal changed
 
@@ -13,6 +16,10 @@ const ACCESS_DISTANCE := 48.0
 ## Expected extra time (sim seconds) to turn across the road into or out of a driveway,
 ## counted when choosing between the two sides (Router.find_best_route).
 const FAR_SIDE_PENALTY := 4.0
+## Room a road takes beyond its half width: the sidewalk, and a little verge.
+const ROAD_CLEARANCE := WalkNetwork.SIDEWALK_OFFSET + 2.0
+## A plot narrower than this (px) holds no building.
+const MIN_PLOT := 16.0
 
 var lots: Dictionary[int, Lot] = {}
 
@@ -27,15 +34,57 @@ func _init(roads: RoadNetwork) -> void:
 	_roads.changed.connect(_on_roads_changed)
 
 
-## Returns the new lot id, or -1 if the cell is taken or outside the map.
+## Returns the new lot id, or -1 if the cell is taken, outside the map, or the roads
+## leave no room for a building there.
 func add_lot(cell: Vector2i, type: Lot.Type) -> int:
 	if not can_place(cell):
 		return -1
+	var plot := compute_plot(_roads, cell)
+	if not plot.has_area():
+		return -1
 	var lot := Lot.new(_next_id, cell, type)
+	lot.plot = plot
 	_next_id += 1
 	_insert(lot)
 	changed.emit()
 	return lot.id
+
+
+## The part of `cell` that roads leave free for a building (world px), or an empty
+## Rect2 if too little is left (MIN_PLOT). Each road along or through the cell takes its
+## half width plus ROAD_CLEARANCE from the side it runs on. Roads are straight along the
+## grid lines for now; other pieces are ignored.
+static func compute_plot(roads: RoadNetwork, cell: Vector2i) -> Rect2:
+	var cell_rect := Rect2(Vector2(cell) * Grid.CELL_SIZE, Vector2.ONE * Grid.CELL_SIZE)
+	var top_left := cell_rect.position
+	var bottom_right := cell_rect.end
+	var center := cell_rect.get_center()
+	var reach := Grid.CELL_SIZE
+	for segment: RoadSegment in roads.segments.values():
+		if segment.elevation_layer != 0:
+			continue
+		var half := segment.road_type.get_total_width() * 0.5 + ROAD_CLEARANCE
+		var points := LaneBuilder.get_polyline(segment.centerline)
+		for i in points.size() - 1:
+			var a := points[i]
+			var b := points[i + 1]
+			if absf(a.y - b.y) < 0.5 and absf(a.y - center.y) < reach:
+				# Along the cell's top or bottom (or through it).
+				if minf(a.x, b.x) < cell_rect.end.x - 1.0 and maxf(a.x, b.x) > cell_rect.position.x + 1.0:
+					if a.y <= center.y:
+						top_left.y = maxf(top_left.y, a.y + half)
+					else:
+						bottom_right.y = minf(bottom_right.y, a.y - half)
+			elif absf(a.x - b.x) < 0.5 and absf(a.x - center.x) < reach:
+				if minf(a.y, b.y) < cell_rect.end.y - 1.0 and maxf(a.y, b.y) > cell_rect.position.y + 1.0:
+					if a.x <= center.x:
+						top_left.x = maxf(top_left.x, a.x + half)
+					else:
+						bottom_right.x = minf(bottom_right.x, a.x - half)
+	var size := bottom_right - top_left
+	if size.x < MIN_PLOT or size.y < MIN_PLOT:
+		return Rect2()
+	return Rect2(top_left, size)
 
 
 func remove_lot(lot_id: int) -> bool:
@@ -97,7 +146,9 @@ func restore(data: Dictionary) -> void:
 	_lot_by_cell.clear()
 	_access_cache.clear()
 	for entry: Dictionary in data.get("lots", []):
-		_insert(Lot.new(int(entry.id), Vector2i(int(entry.cell[0]), int(entry.cell[1])), int(entry.type) as Lot.Type))
+		var lot := Lot.new(int(entry.id), Vector2i(int(entry.cell[0]), int(entry.cell[1])), int(entry.type) as Lot.Type)
+		lot.plot = compute_plot(_roads, lot.cell)
+		_insert(lot)
 	_next_id = int(data.get("next_id", 1))
 	changed.emit()
 
@@ -127,3 +178,13 @@ func _find_access_points(center: Vector2) -> Array[Dictionary]:
 
 func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
 	_access_cache.clear()
+	# Roads may have taken land: re-fit every plot, and drop lots left without room.
+	var removed := false
+	for lot: Lot in lots.values():
+		lot.plot = compute_plot(_roads, lot.cell)
+		if not lot.plot.has_area():
+			lots.erase(lot.id)
+			_lot_by_cell.erase(lot.cell)
+			removed = true
+	if removed:
+		changed.emit()

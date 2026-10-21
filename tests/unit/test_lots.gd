@@ -102,3 +102,38 @@ func test_save_round_trip() -> void:
 	loaded.restore(JSON.parse_string(JSON.stringify(saved)))
 	assert_eq_deep(loaded.to_dict(), saved)
 	assert_eq(loaded.lots[loaded.get_lot_at_cell(Vector2i(7, 1))].type, Lot.Type.INDUSTRIAL)
+
+
+func test_plots_leave_room_for_the_road_and_sidewalk() -> void:
+	_road(Vector2(0, 4), Vector2(12, 4))
+	var lot := lots.lots[lots.add_lot(Vector2i(3, 3), Lot.Type.COMMERCIAL)]
+	var cell := Rect2(Vector2(3, 3) * G, Vector2.ONE * G)
+	var taken := RoadType.load_by_id(&"local_2lane").get_total_width() * 0.5 + LotSystem.ROAD_CLEARANCE
+	assert_eq(lot.plot.position, cell.position, "untouched on the sides away from the road")
+	assert_almost_eq(lot.plot.end.y, cell.end.y - taken, 0.01, "the road's side gives way")
+	assert_eq(lot.plot.end.x, cell.end.x)
+
+
+## Lots between two roads one cell apart fit beside local streets, but not beside an
+## avenue: upgrading one removes them (zoned land waits for room instead).
+func test_an_avenue_too_close_removes_the_lots_between() -> void:
+	var sim := Simulation.new()
+	var local := RoadType.load_by_id(&"local_2lane")
+	sim.roads.add_road(Vector2(0, 4) * G, Vector2(12, 4) * G, local)
+	sim.roads.add_road(Vector2(0, 5) * G, Vector2(12, 5) * G, local)
+	var cells: Array[Vector2i] = [Vector2i(3, 4), Vector2i(4, 4)]
+	sim.zones.paint(cells, Lot.Type.RESIDENTIAL)
+	sim.zones.develop_all_now()
+	assert_ne(sim.lots.get_lot_at_cell(Vector2i(3, 4)), -1, "room between two local streets")
+	assert_gt(sim.lots.lots[sim.lots.get_lot_at_cell(Vector2i(3, 4))].plot.size.y, LotSystem.MIN_PLOT)
+	sim.roads.add_road(Vector2(0, 5) * G, Vector2(12, 5) * G, RoadType.load_by_id(&"avenue_4lane"))
+	assert_eq(sim.lots.get_lot_at_cell(Vector2i(3, 4)), -1, "the avenue took the land")
+	assert_eq(sim.lots.get_lot_at_cell(Vector2i(4, 4)), -1)
+	assert_eq(sim.citizens.citizens.size(), 0, "and its residents moved out")
+	assert_true(sim.zones.zones.has(Vector2i(3, 4)), "the zone stays")
+	for i in 100:
+		sim.step()
+	assert_true(sim.zones.is_waiting_for_road(Vector2i(3, 4)), "waiting for room")
+	assert_eq(sim.lots.get_lot_at_cell(Vector2i(3, 4)), -1)
+	assert_eq(sim.lots.add_lot(Vector2i(5, 4), Lot.Type.COMMERCIAL), -1, "nor can one be placed there")
+	sim.dispose()

@@ -191,10 +191,12 @@ func _process(delta: float) -> void:
 		sim_lagging = effective_speed < multiplier * LAG_THRESHOLD
 	else:
 		sim_lagging = false
-	if multiplier > 0:
-		_start_batch()
+	# Relay the signals of the ticks just collected while the worker is idle (once the
+	# next batch starts, the worker may be adding to them).
 	if not _busy:
 		_flush_relays()
+	if multiplier > 0:
+		_start_batch()
 	_update_view()
 
 

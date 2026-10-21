@@ -8,8 +8,8 @@ enum Kind { CAR, TRUCK, BUS }
 const CAR_LENGTH := 11.0
 const CAR_WIDTH := 6.0
 const TRUCK_LENGTH := 17.0
-const TRUCK_WIDTH := 7.0
-## A short city bus (kept no longer than a truck, which junction spacing allows for).
+const TRUCK_WIDTH := 8.0
+## A short city bus, the size of a truck (no longer: junction spacing allows for trucks).
 const BUS_LENGTH := 17.0
 const BUS_WIDTH := 8.0
 ## The longest vehicle there is: assumed wherever a vehicle's length isn't known yet.

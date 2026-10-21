@@ -48,9 +48,10 @@ const MAX_TRANSFERS := 2
 const SNAP_DISTANCE := 24.0
 const MERGE_DISTANCE := 20.0
 const RESOLVE_DISTANCE := 24.0
-## Line colours (never red: that is how impatient drivers are drawn).
+## Line colours, in turn: blue, pink, purple, yellow (none green or brown like cars and
+## trucks).
 const LINE_COLORS: Array[Color] = [
-	Color("1e88e5"), Color("43a047"), Color("fb8c00"), Color("8e24aa"), Color("00acc1"), Color("fdd835"),
+	Color("1e88e5"), Color("ec407a"), Color("8e24aa"), Color("fdd835"),
 ]
 
 

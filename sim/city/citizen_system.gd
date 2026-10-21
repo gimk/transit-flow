@@ -189,10 +189,8 @@ func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.S
 	citizen.trip_reference_time = _drive_reference(from_lot, to_lot)
 	for leg in citizen.legs:
 		if leg.mode == Citizen.Mode.CAR:
-			# The space at the other end is theirs from now on.
-			parking.release(citizen.car_lot_id)
+			# The space at the other end is theirs from now on (the car moves when driven).
 			parking.take(leg.to)
-			citizen.car_lot_id = leg.to
 	_set_off(citizen, to_lot, travelling)
 	_next_leg(citizen)
 
@@ -283,6 +281,9 @@ func _next_leg(citizen: Citizen) -> void:
 				vehicle.scored_by_owner = true
 				citizen.vehicle_id = vehicle.id
 				citizen.trip_ideal_time += vehicle.ideal_trip_time
+				# The car leaves its space for the one taken at the other end.
+				parking.release(citizen.car_lot_id)
+				citizen.car_lot_id = leg.to
 				return
 		Citizen.Mode.BUS:
 			if _transit.wait_for_bus(citizen.id, leg.line, leg.from, leg.to):
@@ -290,12 +291,17 @@ func _next_leg(citizen: Citizen) -> void:
 				citizen.trip_ideal_time += _transit.get_ride_ideal(leg.line, leg.from, leg.to)
 				return
 	# The way vanished since the trip was planned (a road, lot or bus line changed).
+	if leg.mode == Citizen.Mode.CAR:
+		parking.release(leg.to)
 	_finish_trip(citizen, false)
 
 
 ## Reports the trip and puts the citizen at its destination (also after a failed trip,
 ## if the destination still exists, so the day carries on).
 func _finish_trip(citizen: Citizen, completed: bool) -> void:
+	for leg in citizen.legs:
+		if leg.mode == Citizen.Mode.CAR:
+			parking.release(leg.to)  # A space taken for a drive that won't happen.
 	citizen.legs.clear()
 	citizen.on_bus = false
 	citizen.trip_end_time = _time

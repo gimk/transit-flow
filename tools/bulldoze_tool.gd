@@ -59,7 +59,7 @@ func _draw() -> void:
 	var sim := Game.simulation
 	var lot: Lot = sim.lots.lots.get(_hovered_lot_id)
 	if lot != null:
-		draw_rect(LotRenderer.get_lot_rect(lot.cell).grow(3.0), HIGHLIGHT_COLOR)
+		draw_rect(lot.plot.grow(3.0), HIGHLIGHT_COLOR)
 	var segment: RoadSegment = sim.roads.segments.get(_hovered_segment_id)
 	if segment == null:
 		return
