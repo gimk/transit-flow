@@ -140,3 +140,12 @@ func test_save_round_trip_keeps_lots_and_recreates_residents() -> void:
 	assert_eq_deep(loaded.to_dict(), saved)
 	assert_eq(loaded.citizens.citizens.size(), 4, "residents are recreated from homes")
 	loaded.dispose()
+
+
+func test_shoppers_never_pick_the_shop_they_work_at() -> void:
+	sim.roads.add_road(Vector2(0, 4) * 64, Vector2(12, 4) * 64, RoadType.load_by_id(&"local_2lane"))
+	var only_shop := sim.lots.add_lot(Vector2i(5, 3), Lot.Type.COMMERCIAL)
+	assert_eq(sim.citizens._pick_shop(only_shop), -1, "the only shop is their own: no shopping")
+	var other := sim.lots.add_lot(Vector2i(8, 3), Lot.Type.COMMERCIAL)
+	for i in 10:
+		assert_eq(sim.citizens._pick_shop(only_shop), other)

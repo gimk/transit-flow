@@ -73,7 +73,7 @@ func step(time: float) -> void:
 					if citizen.shopping_decided_day != day:
 						citizen.shopping_decided_day = day
 						citizen.going_shopping = _rng.randf() < SHOPPING_CHANCE
-					var shop := _pick_shop(_lots.lots[citizen.work_lot_id].get_center()) if citizen.going_shopping else -1
+					var shop := _pick_shop(citizen.work_lot_id) if citizen.going_shopping else -1
 					if citizen.going_shopping and shop != -1:
 						_depart(citizen, citizen.work_lot_id, shop, Citizen.State.TO_SHOP)
 					else:
@@ -104,6 +104,13 @@ func get_employed_count() -> int:
 
 
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
+	if from_lot == to_lot:
+		# Already there (no car needed).
+		citizen.trip_lot_id = to_lot
+		citizen.state = travelling
+		citizen.leave_now = false
+		_arrive(citizen)
+		return
 	# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
 	var none: Array[Dictionary] = []
 	var vehicle := _vehicles.depart(from_lot, none, to_lot, none, citizen.id)
@@ -231,12 +238,13 @@ func _nearest(candidates: Array[Lot], position: Vector2, needs_free_job: bool) -
 	return best_id
 
 
-## A shop to stop at on the way home: one of the SHOP_CHOICES nearest, at random, so the
-## nearest one doesn't get everybody.
-func _pick_shop(position: Vector2) -> int:
-	if _shops.is_empty():
+## A shop to stop at on the way home from `work_lot_id`: one of the SHOP_CHOICES nearest,
+## at random, so the nearest one doesn't get everybody (never the shop they work at).
+func _pick_shop(work_lot_id: int) -> int:
+	var position := _lots.lots[work_lot_id].get_center()
+	var by_distance := _shops.filter(func(shop: Lot) -> bool: return shop.id != work_lot_id)
+	if by_distance.is_empty():
 		return -1
-	var by_distance := _shops.duplicate()
 	by_distance.sort_custom(func(a: Lot, b: Lot) -> bool:
 		return position.distance_squared_to(a.get_center()) < position.distance_squared_to(b.get_center()))
 	return by_distance[_rng.randi() % mini(SHOP_CHOICES, by_distance.size())].id

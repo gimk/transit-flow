@@ -149,3 +149,22 @@ func test_cars_waiting_in_driveways_are_drawn_on_their_lot() -> void:
 	var second_at := snapshot.positions[snapshot.vehicle_index[second.id]]
 	assert_lt(first_at.y, 4 * G - 7.0, "off the road, on the lot side")
 	assert_lt(second_at.distance_to(lot_center), first_at.distance_to(lot_center), "the second one waits behind the first")
+
+
+func test_lot_right_at_an_avenue_junction_can_pull_out() -> void:
+	# A wide avenue's lanes start well back from the junction, so a corner lot's driveway
+	# point lands at the very start of the lane: the car must still get out.
+	roads.add_road(Vector2(8, 0) * G, Vector2(8, 8) * G, RoadType.load_by_id(&"avenue_4lane"))
+	var corner := sim.lots.add_lot(Vector2i(8, 4), Lot.Type.COMMERCIAL)
+	var home := _lot(14)
+	var car := sim.vehicles.depart(corner, NOWHERE, home, NOWHERE, 1)
+	assert_not_null(car)
+	for tick in 200:
+		sim.step()
+	assert_false(sim.vehicles.get_waiting_departures().has(car), "pulled out")
+
+
+func test_a_trip_to_the_same_lot_needs_no_car() -> void:
+	var shop := _lot(8)
+	assert_null(sim.vehicles.depart(shop, NOWHERE, shop, NOWHERE, 1), "already there")
+	assert_true(sim.vehicles.get_waiting_departures().is_empty())

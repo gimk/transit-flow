@@ -175,6 +175,8 @@ func depart(origin_lot_id: int, origin_points: Array[Dictionary], destination_lo
 		destination_points: Array[Dictionary], owner_id: int, kind := Vehicle.Kind.CAR) -> Vehicle:
 	if origin_lot_id != -1:
 		origin_points = _lots.get_access_points(origin_lot_id)
+	if origin_lot_id != -1 and origin_lot_id == destination_lot_id:
+		return null  # Already there.
 	if destination_lot_id != -1:
 		destination_points = _lots.get_access_points(destination_lot_id)
 	var route := _router.find_best_route(origin_points, destination_points)
@@ -368,6 +370,12 @@ func _pull_out() -> void:
 ## Sets the route a waiting vehicle will pull out onto, and the lanes it must cross first
 ## if that starts on the far side of the road.
 func _plan_departure(vehicle: Vehicle, route: Route) -> void:
+	# A driveway right at a junction (e.g. a corner lot by a wide avenue, whose lanes start
+	# well back from the junction) joins just clear of it, where the whole vehicle fits.
+	var first := _roads.lanes[route.lane_ids[0]]
+	var earliest := vehicle.length * 0.5 + MIN_GAP
+	if route.start_distance < earliest and (route.lane_ids.size() > 1 or route.end_distance > earliest):
+		route.start_distance = minf(earliest, first.length)
 	vehicle.route = route
 	vehicle.destination_lane_id = route.lane_ids[-1]
 	vehicle.destination_distance = route.end_distance
