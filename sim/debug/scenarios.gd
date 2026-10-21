@@ -71,47 +71,56 @@ const TOWN_CENTER := Vector2i(20, 18)
 
 
 ## "Town": a complete small city that lives through a whole day on its own, to test the
-## simulation end to end. Cells below are relative to TOWN_CENTER; the town spans
-## x -12..12, y -8..8, small enough that commutes take well under a game hour.
-## - Roads: a ring road around the town; Main Street (east-west, y 0) runs in from the
-##   west highway; the Avenue (north-south, x 0); two cross streets (y -4, y 4) and two
-##   side streets (x -6, x 6), the latter fed by the north highway; a cul-de-sac in
-##   the south-west.
-## - Traffic lights on the Avenue's and Main Street's busiest crossings; every other
-##   junction is uncontrolled.
+## simulation end to end, using every feature built so far (keep it that way: update it
+## at the end of each phase). Cells below are relative to TOWN_CENTER; the town spans
+## x -12..12, y -8..8.
+## - Roads: a ring road around the town; Main Street (east-west, y 0), an avenue, runs in
+##   from the west highway; the Avenue (north-south, x 0) has bus lanes; the two cross
+##   streets (y -4, y 4) are a one-way pair (eastbound north, westbound south); two side
+##   streets (x -6, x 6), the latter fed by the north highway; a cul-de-sac in the
+##   south-west.
+## - Traffic lights on the Avenue's and Main Street's busiest crossings, the Avenue's with
+##   the south cross street with protected left turns; every other junction is
+##   uncontrolled (the avenues and the two-lane one-ways have priority there).
 ## - Zones, developed at once: two residential districts in the west (Oak Hill north of
 ##   Main Street, Riverside south of it) and Southgate in the south-east; shops downtown
-##   along Main Street and the Avenue; an industrial park in the north-east.
-## - Two bus lines crossing downtown, each there and back: along Main Street and up and
-##   down the Avenue.
+##   along Main Street and the Avenue; an industrial park in the north-east. Buildings
+##   stand back from the avenues, with their parking.
+## - Three bus lines: Main Street there and back with bus bays, the Avenue there and back
+##   in its bus lanes, and the Crosstown loop round the one-way pair with curbside stops.
 ## Commuters from the west cross the Avenue to the factories, Riverside's cross Main
-## Street, trucks come in from both highways: every kind of conflict happens somewhere.
+## Street, trucks come in from both highways, a fifth of the people have no car and walk
+## or ride: every kind of conflict happens somewhere.
 ## Returns (positions in world px):
 ## - "center": the downtown crossing,
 ## - "lights": the light-controlled junctions,
 ## - "highways": the two external connection points,
 ## - "bus_lines": the bus line ids.
 static func build_town(sim: Simulation) -> Dictionary:
-	var road_type := RoadType.load_by_id(&"local_2lane")
 	var at := func(x: int, y: int) -> Vector2: return Vector2(TOWN_CENTER + Vector2i(x, y)) * Grid.CELL_SIZE
+	# [from x, from y, to x, to y, road type]; one-way roads run from -> to.
 	var roads: Array[Array] = [
-		[-20, 0, 12, 0],    # West highway + Main Street.
-		[6, -18, 6, 4],     # North highway, down through the industrial park.
-		[0, -8, 0, 8],      # The Avenue.
-		[-12, -8, 12, -8],  # Ring road.
-		[-12, 8, 12, 8],
-		[-12, -8, -12, 8],
-		[12, -8, 12, 8],
-		[-12, -4, 12, -4],  # North cross street.
-		[-12, 4, 12, 4],    # South cross street.
-		[-6, -8, -6, 8],    # West side street.
-		[-3, 4, -3, 7],     # Cul-de-sac.
+		[-20, 0, -12, 0, &"local_2lane"],         # West highway,
+		[-12, 0, 12, 0, &"avenue_4lane"],         # into Main Street, an avenue.
+		[6, -18, 6, 4, &"local_2lane"],           # North highway, down through the industrial park.
+		[0, -8, 0, 8, &"avenue_4lane_bus"],       # The Avenue, with bus lanes.
+		[-12, -8, 12, -8, &"local_2lane"],        # Ring road.
+		[-12, 8, 12, 8, &"local_2lane"],
+		[-12, -8, -12, 8, &"local_2lane"],
+		[12, -8, 12, 8, &"local_2lane"],
+		[-12, -4, 12, -4, &"one_way_2lane"],      # Cross streets: a one-way pair, eastbound
+		[12, 4, -12, 4, &"one_way_2lane"],        # in the north, westbound in the south.
+		[-6, -8, -6, 8, &"local_2lane"],          # West side street.
+		[-3, 4, -3, 7, &"local_2lane"],           # Cul-de-sac.
 	]
 	for road in roads:
-		sim.roads.add_road(at.call(road[0], road[1]), at.call(road[2], road[3]), road_type)
+		sim.roads.add_road(at.call(road[0], road[1]), at.call(road[2], road[3]), RoadType.load_by_id(road[4]))
 	var lights: Array[Vector2] = [at.call(0, -4), at.call(0, 0), at.call(0, 4), at.call(-6, 0), at.call(6, 0)]
 	for point in lights:
 		sim.roads.set_node_control(sim.roads.find_node_at(point), RoadNode.JunctionControl.TRAFFIC_LIGHT)
+	# The Avenue's crossing with the south cross street gives left turns a phase of their
+	# own (tried elsewhere: at busier crossings the four-phase cycle jams the morning).
+	sim.roads.set_node_control(sim.roads.find_node_at(at.call(0, 4)), RoadNode.JunctionControl.TRAFFIC_LIGHT_PROTECTED_LEFT)
 	var highways: Array[Vector2] = [at.call(-20, 0), at.call(6, -18)]
 	for point in highways:
 		sim.externals.add(point)
@@ -136,14 +145,16 @@ static func build_town(sim: Simulation) -> Dictionary:
 	zone.call(5, -3, 6, -2, Lot.Type.INDUSTRIAL)
 	sim.zones.develop_all_now()
 
-	# Two bus lines crossing downtown, each there and back: along Main Street and up and
-	# down the Avenue (riders change between them at the crossing).
+	# Three bus lines: along Main Street and back, stopping in bus bays (so the avenue's
+	# traffic drives past); up and down the Avenue in its bus lanes; and the Crosstown
+	# loop round the one-way pair (east along the north cross street, west along the
+	# south one), with curbside stops. Riders change lines at stops a short walk apart.
 	var bus_lines: Array[int] = []
 	var main_street: Array[int] = []
 	for x in [-9, -2, 2, 9]:
-		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, 10)))
+		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, 10), true))
 	for x in [9, 2, -2, -9]:
-		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, -10)))
+		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, -10), true))
 	bus_lines.append(sim.transit.add_line(main_street))
 	var avenue: Array[int] = []
 	for y in [-6, -2, 2, 6]:
@@ -151,6 +162,12 @@ static func build_town(sim: Simulation) -> Dictionary:
 	for y in [6, 2, -2, -6]:
 		avenue.append(sim.transit.add_stop(at.call(0, y) + Vector2(10, 0)))
 	bus_lines.append(sim.transit.add_line(avenue))
+	var crosstown: Array[int] = []
+	for x in [-9, -3, 3, 9]:
+		crosstown.append(sim.transit.add_stop(at.call(x, -4) + Vector2(0, 10)))
+	for x in [9, 3, -3, -9]:
+		crosstown.append(sim.transit.add_stop(at.call(x, 4) + Vector2(0, -10)))
+	bus_lines.append(sim.transit.add_line(crosstown))
 
 	return { "center": at.call(0, 0), "lights": lights, "highways": highways, "bus_lines": bus_lines }
 

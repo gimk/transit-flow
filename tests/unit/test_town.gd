@@ -34,10 +34,35 @@ func test_town_is_built_and_developed() -> void:
 		assert_true(sim.zones.is_developed(cell), "zoned cell %s developed at once" % cell)
 	assert_eq(sim.externals.get_active_points().size(), 2, "both highways connected")
 	for point: Vector2 in info.lights:
-		assert_eq(sim.roads.nodes[sim.roads.find_node_at(point)].control, RoadNode.JunctionControl.TRAFFIC_LIGHT)
+		assert_true(sim.roads.nodes[sim.roads.find_node_at(point)].has_lights())
 	sim.step()
 	assert_eq(sim.citizens.citizens.size(), 176)
 	assert_lte(sim.citizens.citizens.size(), sim.citizens.get_job_count(), "a job for everyone")
+
+
+## The Town shows off every feature (keep this list growing with each phase).
+func test_town_uses_every_feature() -> void:
+	var road_types := {}
+	for segment: RoadSegment in sim.roads.segments.values():
+		road_types[segment.road_type.id] = true
+	for type_id in [&"local_2lane", &"avenue_4lane", &"avenue_4lane_bus", &"one_way_2lane"]:
+		assert_true(road_types.has(type_id), "a road of type %s" % type_id)
+	var controls := {}
+	for node: RoadNode in sim.roads.nodes.values():
+		controls[node.control] = true
+	assert_true(controls.has(RoadNode.JunctionControl.TRAFFIC_LIGHT), "traffic lights")
+	assert_true(controls.has(RoadNode.JunctionControl.TRAFFIC_LIGHT_PROTECTED_LEFT), "protected left turns")
+	assert_eq(info.bus_lines.size(), 3)
+	var stops: Array = sim.transit.stops.values()
+	assert_true(stops.any(func(s: BusStop) -> bool: return s.bay), "bus bays")
+	assert_true(stops.any(func(s: BusStop) -> bool: return not s.bay), "curbside stops")
+	assert_true(stops.any(func(s: BusStop) -> bool: return sim.roads.lanes[s.lane_id].bus_only), "stops in bus lanes")
+	for line: BusLine in sim.transit.lines.values():
+		assert_lt(line.get_loop_time(), INF, "line %d runs round" % line.id)
+	sim.step()
+	var carless := sim.citizens.citizens.values().filter(func(c: Citizen) -> bool: return not c.has_car)
+	assert_gt(carless.size(), 0, "people without a car")
+
 
 
 func test_town_survives_a_save() -> void:
@@ -46,7 +71,7 @@ func test_town_survives_a_save() -> void:
 	assert_eq(loaded.zones.zones.size(), sim.zones.zones.size())
 	assert_eq(loaded.externals.get_active_points().size(), 2)
 	var lights := loaded.roads.nodes.values().filter(
-		func(n: RoadNode) -> bool: return n.control == RoadNode.JunctionControl.TRAFFIC_LIGHT)
+		func(n: RoadNode) -> bool: return n.has_lights())
 	assert_eq(lights.size(), info.lights.size())
 	loaded.dispose()
 
@@ -91,7 +116,9 @@ func test_town_lives_through_a_whole_day() -> void:
 	assert_gte(commutes.size(), sim.citizens.citizens.size() - 5, "(almost) every commuter reached work (a few give up in the jam)")
 	assert_between(everyone_at_work, 9.0, 16.0, "the morning rush (95% of drivers at work) is over before the evening one")
 	assert_gt(median_ratio, 1.2, "the morning rush is congested (that's the point of the scenario)")
-	assert_eq(_count_citizens(Citizen.State.AT_HOME), sim.citizens.citizens.size(), "everyone home by 06:00")
+	var out_late := sim.citizens.citizens.values().filter(func(c: Citizen) -> bool:
+		return c.state != Citizen.State.AT_HOME and not (c.state == Citizen.State.TO_HOME and c.pedestrian_id != -1))
+	assert_eq(out_late.size(), 0, "everyone home by 06:00 (or walking home: on foot, crossing town takes hours at this clock)")
 	assert_gt(stats.trucks, 150, "freight runs all day")
 	assert_eq(stats.exports.size(), 2, "exports leave by both highways")
 	assert_lt(stats.failed, 10, "almost every trip succeeds")

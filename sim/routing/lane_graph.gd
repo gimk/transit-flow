@@ -5,8 +5,8 @@ extends AStar2D
 ## into the lanes a lane leads to, or sideways into the lane next door (a lane change).
 ## The cost of a step is the travel time of the lane being entered (a fixed penalty for
 ## a lane change), so A* minimises time rather than distance. The graph for cars
-## (rebuild with `for_buses` false) has no way along bus lanes or through turns into or
-## out of them: cars only change into a bus lane, or out of it, to reach the curb.
+## (rebuild with `for_buses` false) never enters a bus-only lane or turn: cars only change
+## into a bus lane, or out of it, to reach the curb, or to turn right out of it.
 
 ## Extra cost per lane as a fraction of its free-flow time (Phase 2c congestion
 ## feedback). Missing entries mean free flow.
@@ -35,8 +35,6 @@ func rebuild(lanes: Dictionary[int, Lane], for_buses := true) -> void:
 			if not groups.has(key):
 				groups[key] = []
 			groups[key].append(lane)
-		if lane.bus_only and not for_buses:
-			continue
 		for next_id in lane.outgoing_lane_ids:
 			if for_buses or not lanes[next_id].bus_only:
 				connect_points(lane.id, next_id, false)

@@ -21,7 +21,8 @@ var speed_limit: float
 var turn := Turn.NONE
 ## Lanes a vehicle may continue onto from this lane's end.
 var outgoing_lane_ids: Array[int] = []
-## Only buses may drive along it (a bus lane, or a turn into or out of one).
+## Only buses may drive along it: a bus lane, or a turn into one or out of one (except
+## right turns out of one, which cars take too).
 var bus_only := false
 ## Connectors only: the road lane feeding this connector.
 var feeder_lane_id := -1

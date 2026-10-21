@@ -115,9 +115,14 @@ const LOOK_SPEED_FRACTION := 0.4
 ## pull out before the traffic lets it.
 const BAY_OFFSET := 12.0
 const BAY_COURTESY_WAIT := 1.0
+## Drivers this close behind a bus stopped at its stop (beyond their own length) pull out
+## round it (_pass_stopped_buses).
+const PASS_DISTANCE := 20.0
 ## Without lights, a driver who has waited this long at a busy crosswalk gets to go once
 ## it is empty (_crosswalks_clear).
 const CROSSWALK_PATIENCE := 4.0
+## At lights, a turning driver who has waited this long may go on amber (_control_allows).
+const SNEAK_WAIT := 5.0
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -339,6 +344,7 @@ func step(dt: float) -> void:
 		_reroute_all()
 	_pull_out()
 	_leave_bays()
+	_pass_stopped_buses()
 	_change_lanes()
 	_prepare()
 	_make_room_for_mergers()
@@ -560,6 +566,10 @@ func _can_turn_in(vehicle: Vehicle) -> bool:
 ## A vehicle that has waited TURN_IN_GIVE_UP to turn across the road into its driveway
 ## drives on and comes back round to it from the near side.
 func _give_up_turning_in(vehicle: Vehicle) -> void:
+	if not vehicle.is_on_last_lane():
+		# Re-routed since it started waiting: it isn't waiting to turn in any more.
+		vehicle.driveway_wait_since = INF
+		return
 	var near := _lots.get_access(vehicle.destination_lot_id)
 	var route := _router.find_route_onward(vehicle.lane.id, [near]) if not near.is_empty() else null
 	if route == null:
@@ -661,6 +671,46 @@ func _let_buses_out() -> void:
 
 
 # --- Lane changes -----------------------------------------------------------------
+
+## Drivers right behind a bus dwelling at its stop pull out round it: they change into
+## the lane beside (going the same way; not a bus lane, for cars), if their way goes on
+## from there. Lane changes do the rest (_change_lanes).
+func _pass_stopped_buses() -> void:
+	for lane: Lane in _occupied_lanes.values():
+		var queue := lane.queue
+		for i in range(1, queue.size()):
+			var bus: Vehicle = queue[i - 1]
+			var vehicle: Vehicle = queue[i]
+			if not bus.dwelling or vehicle.dwelling or bus.distance - vehicle.distance > vehicle.length + PASS_DISTANCE:
+				continue
+			if not vehicle.next_lanes.is_empty() and vehicle.next_lanes[0].is_beside(lane):
+				continue  # Already moving across.
+			if vehicle.is_on_last_lane() and vehicle.end_distance < bus.distance:
+				continue  # Its stop is before the bus.
+			_pull_out_round(vehicle, lane)
+
+
+func _pull_out_round(vehicle: Vehicle, lane: Lane) -> void:
+	for lane_id in _roads.segments[lane.segment_id].lane_ids:
+		var side := _roads.lanes[lane_id]
+		if not side.is_beside(lane) or absi(side.index_from_center - lane.index_from_center) != 1:
+			continue
+		if side.bus_only and not _is_bus(vehicle):
+			continue
+		var at := _distance_beside(vehicle, side)
+		var route := _router.find_best_route([{ "lane_id": side.id, "distance": at }], _get_destination(vehicle), _is_bus(vehicle))
+		if route == null:
+			continue
+		# A new way on: any junction it was let into or waiting for no longer applies.
+		_release_grant(vehicle)
+		_stop_waiting(vehicle)
+		var lanes: Array[Lane] = [side]
+		lanes.append_array(_to_lanes(route.lane_ids.slice(1)))
+		vehicle.next_lanes = lanes
+		vehicle.end_distance = route.end_distance
+		vehicle.arrival_checked = false
+		return
+
 
 ## Vehicles whose route continues on the lane beside theirs (Lane.is_beside) move across
 ## as soon as there is a safe gap there: room for the whole vehicle, and the vehicle that
@@ -1067,12 +1117,19 @@ static func _time_to_cover(distance: float, speed: float, top_speed: float) -> f
 	return accelerating_time + (distance - accelerating_distance) / top_speed
 
 
-## What the junction's control says: at traffic lights, green for that turn.
-func _control_allows(_vehicle: Vehicle, connector: Lane) -> bool:
+## What the junction's control says: at traffic lights, green for that turn. A driver
+## turning (not going straight) who has waited SNEAK_WAIT at the stop line may also go on
+## amber: the end of the green is when the crosswalk and oncoming traffic clear, so real
+## turners "sneak" through then rather than wait for ever behind a busy crossing.
+func _control_allows(vehicle: Vehicle, connector: Lane) -> bool:
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
 	if node == null or not node.has_lights():
 		return true
-	return _signals.get_light(node, connector.signal_phase) == TrafficLights.Light.GREEN
+	var light := _signals.get_light(node, connector.signal_phase)
+	if light == TrafficLights.Light.GREEN:
+		return true
+	return light == TrafficLights.Light.AMBER and connector.turn != Lane.Turn.STRAIGHT \
+			and vehicle.requested_connector == connector and _time - vehicle.waiting_since >= SNEAK_WAIT
 
 
 ## Is there room for `vehicle` (plus `extra` px) at the start of the lane this connector
@@ -1394,6 +1451,11 @@ func _reroute_vehicle(vehicle: Vehicle) -> void:
 	_stop_waiting(vehicle)
 	var old_lane := vehicle.lane
 	var ok := _reroute(vehicle)
+	# The way in at the end may have changed: work out again whether it turns across the
+	# road there, and it is no longer waiting to turn in if it has further to go.
+	vehicle.arrival_checked = false
+	if not vehicle.is_on_last_lane():
+		vehicle.driveway_wait_since = INF
 	if ok and not vehicle.next_lanes.is_empty() and vehicle.next_lanes[0] == waited_for \
 			and _roads.lanes.get(waited_for.id) == waited_for:
 		# Still waiting for the same turn: keep its place (and patience) in the line.

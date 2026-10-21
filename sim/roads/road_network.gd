@@ -601,7 +601,8 @@ func _rebuild_connectors(node: RoadNode) -> void:
 			connector.outgoing_lane_ids.append(out_lane.id)
 			connector.outgoing_lanes.append(out_lane)
 			connector.feeder_lane_id = in_lane.id
-			connector.bus_only = in_lane.bus_only or out_lane.bus_only
+			# Out of a bus lane, anyone may turn right (cars use it to turn right).
+			connector.bus_only = out_lane.bus_only or (in_lane.bus_only and turn != Lane.Turn.RIGHT)
 			in_lane.outgoing_lane_ids.append(connector.id)
 			in_lane.outgoing_lanes.append(connector)
 			lanes[connector.id] = connector

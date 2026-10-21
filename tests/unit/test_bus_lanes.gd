@@ -37,7 +37,8 @@ func test_the_curb_lanes_are_bus_lanes() -> void:
 
 
 ## Crossing a local street: cars turn right from the lane next to the bus lane; the bus
-## lane goes straight on (into the next bus lane) or turns right, for buses only.
+## lane goes straight on (into the next bus lane, buses only) or turns right (anyone:
+## cars may use the bus lane to turn right).
 func test_turns_at_a_junction_keep_cars_out_of_bus_lanes() -> void:
 	_road(Vector2(0, 4), Vector2(12, 4), &"avenue_4lane_bus")
 	_road(Vector2(6, 0), Vector2(6, 8))
@@ -52,13 +53,14 @@ func test_turns_at_a_junction_keep_cars_out_of_bus_lanes() -> void:
 	assert_eq(general_turns, { Lane.Turn.STRAIGHT: false, Lane.Turn.RIGHT: false, Lane.Turn.LEFT: false },
 		"the inner lane does everything (one general lane each way)")
 	for connector: Lane in eastbound_bus.outgoing_lanes:
-		assert_true(connector.bus_only)
+		assert_eq(connector.bus_only, connector.turn != Lane.Turn.RIGHT, "cars may use the bus lane to turn right")
 		assert_true(connector.turn == Lane.Turn.STRAIGHT or connector.turn == Lane.Turn.RIGHT)
 		if connector.turn == Lane.Turn.STRAIGHT:
 			assert_true(connector.outgoing_lanes[0].bus_only, "straight on into the next bus lane")
 	for lane_id in node.connector_lane_ids:
 		var connector := roads.lanes[lane_id]
-		assert_eq(connector.bus_only, roads.lanes[connector.feeder_lane_id].bus_only or connector.outgoing_lanes[0].bus_only)
+		var from_bus_lane := roads.lanes[connector.feeder_lane_id].bus_only and connector.turn != Lane.Turn.RIGHT
+		assert_eq(connector.bus_only, from_bus_lane or connector.outgoing_lanes[0].bus_only)
 
 
 func test_cars_route_beside_the_bus_lane_and_buses_along_it() -> void:

@@ -5,7 +5,9 @@ extends RefCounted
 ##   approach simply keeps its green),
 ## - otherwise holds green at least MIN_GREEN, keeps it while its own vehicles keep
 ##   moving through, and gives way once its approach is empty, blocked (its vehicles
-##   stand still on green, e.g. because the road beyond is full) or after MAX_GREEN,
+##   stand still on green, e.g. because the road beyond is full) or after MAX_GREEN
+##   (shorter at junctions with protected left turns), but not while people who stepped
+##   out on its walk light are still crossing (nor for TURN_WINDOW after),
 ## - then shows amber for CLEARANCE_TIME (no new entries) before the next phase that
 ##   has someone waiting turns green; phases nobody waits for are skipped.
 ## Phases belong to the junction's turns (Lane.signal_phase on connectors): the two road
@@ -18,6 +20,14 @@ enum Light { GREEN, AMBER, RED }
 
 const MIN_GREEN := 3.0  ## Sim seconds.
 const MAX_GREEN := 12.0
+## Protected left-turn phases are short: a few cars each cycle.
+const MAX_LEFT_GREEN := 5.0
+## At junctions with protected left turns (four phases) the through phases are shorter,
+## so a whole cycle stays about as long as at other lights.
+const MAX_THROUGH_GREEN_4_PHASES := 8.0
+## Green kept after the last pedestrian has left its crosswalks, for the turning traffic
+## they held up.
+const TURN_WINDOW := 2.0
 const CLEARANCE_TIME := 1.0
 ## Pedestrians may start crossing only this long into their green (see is_walk_green).
 const WALK_INTERVAL := 4.0
@@ -38,6 +48,8 @@ class LightState:
 	var elapsed := 0.0
 	## The phases it was set up for; a different set (lights changed) starts over.
 	var phase_count := 0
+	## When people were last seen on a crosswalk that walks with the current phase.
+	var walkers_seen_at := -INF
 
 
 ## Pedestrians at crosswalks (set by Simulation), whose waiting calls walk phases.
@@ -108,6 +120,7 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 			state.clearing = false
 			state.phase = state.next_phase
 			state.elapsed = 0.0
+			state.walkers_seen_at = -INF
 		return
 	var count := node.signal_phase_count
 	if count <= 1:
@@ -122,11 +135,18 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 	if waiting_phase == -1 and state.elapsed >= WALK_RECALL and _pedestrian_demand(node)[state.phase]:
 		# People arrived after the walk light went off, and nobody else waits: walk again
 		# (a new green, as far as timing goes).
+		state.walkers_seen_at = -INF
 		state.elapsed = 0.0
 		return
 	if waiting_phase == -1 or state.elapsed < MIN_GREEN:
 		return
-	if _detect_demand(node, true)[state.phase] and state.elapsed < MAX_GREEN:
+	# People who stepped out on the walk light finish crossing on this green, and turning
+	# drivers get TURN_WINDOW after them (up to the phase's longest green).
+	if _walkers_on(node, state.phase):
+		state.walkers_seen_at = state.elapsed
+	if state.elapsed < state.walkers_seen_at + TURN_WINDOW and state.elapsed < _max_green(node, state.phase):
+		return
+	if _detect_demand(node, true)[state.phase] and state.elapsed < _max_green(node, state.phase):
 		return
 	state.next_phase = waiting_phase
 	state.clearing = true
@@ -181,3 +201,21 @@ static func _no_demand(node: RoadNode) -> Array[bool]:
 	demand.resize(node.signal_phase_count)
 	demand.fill(false)
 	return demand
+
+
+## Longest green a phase holds while its traffic keeps coming (shorter for protected
+## left turns: odd phases where lights have them, see RoadNetwork._assign_signal_phases).
+static func _max_green(node: RoadNode, phase: int) -> float:
+	if node.signal_phase_count == 4:
+		return MAX_LEFT_GREEN if phase % 2 == 1 else MAX_THROUGH_GREEN_4_PHASES
+	return MAX_GREEN
+
+
+## Is anyone on a crosswalk at `node` that walks with `phase`?
+func _walkers_on(node: RoadNode, phase: int) -> bool:
+	if crosswalks == null or crosswalks.walkers.is_empty():
+		return false
+	for crosswalk: Vector2i in crosswalks.walkers:
+		if crosswalk.x == node.id and get_walk_phase(node, crosswalk.y) == phase:
+			return true
+	return false
