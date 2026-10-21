@@ -32,6 +32,9 @@ var stop_bays := PackedByteArray()
 ## Bus lines: { "color": Color, "path": PackedVector2Array } each (paths are replaced,
 ## never edited, so sharing them is safe).
 var bus_lines: Array[Dictionary] = []
+## Crosswalks at bus stops (Crosswalks.mid_block: replaced, never edited, so sharing it is
+## safe).
+var stop_crossings: Dictionary[Vector2i, Dictionary] = {}
 ## Lane id -> congestion (CongestionMonitor replaces its dictionary rather than editing
 ## it, so holding on to it is safe).
 var congestion: Dictionary[int, float] = {}
@@ -102,6 +105,7 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 			snapshot.stop_directions.append(stop.direction)
 			snapshot.stop_waiting.append(stop.waiting.size())
 			snapshot.stop_bays.append(1 if stop.bay else 0)
+	snapshot.stop_crossings = sim.crosswalks.mid_block
 	for line: BusLine in sim.transit.lines.values():
 		snapshot.bus_lines.append({ "color": line.color, "path": line.path })
 	snapshot.congestion = sim.congestion.congestion

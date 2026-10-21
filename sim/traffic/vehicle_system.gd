@@ -118,6 +118,8 @@ const BAY_COURTESY_WAIT := 1.0
 ## Drivers this close behind a bus stopped at its stop (beyond their own length) pull out
 ## round it (_pass_stopped_buses).
 const PASS_DISTANCE := 20.0
+## Half the depth of a mid-block crosswalk (drivers stop this far short of its middle).
+const MID_BLOCK_HALF_WIDTH := 5.0
 ## Without lights, a driver who has waited this long at a busy crosswalk gets to go once
 ## it is empty (_crosswalks_clear).
 const CROSSWALK_PATIENCE := 4.0
@@ -350,6 +352,7 @@ func step(dt: float) -> void:
 	_make_room_for_mergers()
 	_keep_crossings_clear()
 	_let_buses_out()
+	_give_way_at_mid_block()
 	var arrived: Array[Vehicle] = []
 	var gave_up: Array[Vehicle] = []
 	for vehicle: Vehicle in vehicles.values():
@@ -669,6 +672,63 @@ func _let_buses_out() -> void:
 		if _space_opening(vehicle.lane, vehicle.distance, vehicle.length):
 			_hold_back(vehicle.lane, vehicle.distance - vehicle.length * 0.5 - MIN_GAP)
 
+
+
+# --- Mid-block crosswalks (at bus stops) -------------------------------------------
+
+## Drivers stop short of a mid-block crosswalk with someone on it or waiting at it, if
+## they comfortably can (those too close drive over first: _mid_block_busy keeps the
+## people at the curb meanwhile). The first driver held up by people waiting, once it has
+## stood there CROSSWALK_PATIENCE, goes when the crosswalk is empty.
+func _give_way_at_mid_block() -> void:
+	if crosswalks == null or crosswalks.mid_block.is_empty() or crosswalks.is_empty():
+		return
+	for key: Vector2i in crosswalks.mid_block:
+		var walkers := crosswalks.has_walkers(key)
+		if not walkers and not crosswalks.has_waiting(key):
+			continue
+		for entry: Array in crosswalks.mid_block[key].lanes:
+			var lane: Lane = _roads.lanes.get(entry[0])
+			if lane == null:
+				continue
+			var line: float = entry[1] - MID_BLOCK_HALF_WIDTH
+			var first := _first_short_of(lane, line)
+			if first == null or (not walkers and first.stopped_time >= CROSSWALK_PATIENCE):
+				continue
+			_hold_back(lane, line)
+
+
+## Must people at the curb of mid-block crosswalk `crosswalk` wait? Yes while a vehicle
+## is on it, or too close to stop for it, or has stood at it CROSSWALK_PATIENCE (it goes).
+func _mid_block_busy(crosswalk: Vector2i) -> bool:
+	var crossing: Dictionary = crosswalks.mid_block.get(crosswalk, {})
+	for entry: Array in crossing.get("lanes", []):
+		var lane: Lane = _roads.lanes.get(entry[0])
+		if lane == null:
+			continue
+		var line: float = entry[1] - MID_BLOCK_HALF_WIDTH
+		var far: float = entry[1] + MID_BLOCK_HALF_WIDTH
+		for vehicle: Vehicle in lane.queue:
+			if vehicle.distance - vehicle.length * 0.5 > far:
+				continue  # Past it.
+			var to_line := line - vehicle.distance - vehicle.length * 0.5
+			if to_line < 0.0:
+				return true  # On it (standing in a queue, maybe).
+			# (Drivers stop for people only when they comfortably can, MIN_GAP short: _hold_back.)
+			if vehicle.speed > STOPPED_SPEED and to_line <= vehicle.speed * vehicle.speed / (2.0 * DECELERATION) + MIN_GAP + 2.0:
+				return true
+			if vehicle.stopped_time >= CROSSWALK_PATIENCE and to_line <= MIN_GAP * 2.0:
+				return true
+			break  # The vehicles behind are further away.
+	return false
+
+
+## The vehicle on `lane` nearest to `line` without having reached it, or null.
+static func _first_short_of(lane: Lane, line: float) -> Vehicle:
+	for vehicle: Vehicle in lane.queue:
+		if vehicle.distance + vehicle.length * 0.5 <= line:
+			return vehicle
+	return null
 
 # --- Lane changes -----------------------------------------------------------------
 
@@ -993,8 +1053,10 @@ func _roads_crossed(connector: Lane) -> Array[int]:
 ## Must pedestrians at the curb of the crosswalk across road `crosswalk.y` at junction
 ## `crosswalk.x` wait for a car? Yes while one is in (or allowed into) a turn over it, and,
 ## without lights, while a driver who has waited CROSSWALK_PATIENCE for such a turn is
-## at the stop line (see _crosswalks_clear).
+## at the stop line (see _crosswalks_clear). Mid-block crosswalks: _mid_block_busy.
 func is_crosswalk_busy(crosswalk: Vector2i) -> bool:
+	if Crosswalks.is_mid_block(crosswalk):
+		return _mid_block_busy(crosswalk)
 	var node: RoadNode = _roads.nodes.get(crosswalk.x)
 	if node == null:
 		return false

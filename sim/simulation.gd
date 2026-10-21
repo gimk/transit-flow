@@ -38,6 +38,7 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	vehicles.crosswalks = crosswalks
 	pedestrians = PedestrianSystem.new(roads, lots, signals, vehicles, crosswalks)
 	transit = TransitSystem.new(roads, router, vehicles, pedestrians)
+	transit.crosswalks = crosswalks
 	citizens = CitizenSystem.new(lots, router, vehicles, pedestrians, transit, clock)
 	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)

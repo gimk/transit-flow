@@ -2,9 +2,10 @@ class_name WalkNetwork
 extends RefCounted
 ## Where pedestrians walk, derived from the roads: a sidewalk along each side of every
 ## road, corners joining the sidewalks of neighbouring roads around each node, and, at
-## junctions of 3+ roads, a crosswalk across the mouth of each road. (A dead end is walked
-## round; a bend or straight continuation just joins its sidewalks.) Rebuilt lazily after
-## any road change; pedestrians cross roads only at crosswalks.
+## junctions of 3+ roads, a crosswalk across the mouth of each road; plus mid-block
+## crosswalks (at bus stops, Crosswalks.mid_block). (A dead end is walked round; a bend or
+## straight continuation just joins its sidewalks.) Rebuilt lazily after any road change;
+## pedestrians cross roads only at crosswalks.
 ##
 ## Sides: +1 is the right of a road's start -> end direction. Around a node, roads are
 ## sorted by the angle of their direction away from the node; the sidewalk to the right of
@@ -23,9 +24,16 @@ var sidewalks: Dictionary[Vector2i, Vector2i] = {}
 var _roads: RoadNetwork
 var _dirty := true
 var _next_point_id := 1
+## Every stretch of sidewalk between two graph points (sidewalks are split where a
+## mid-block crosswalk meets them).
+var _edges: Array[Vector2i] = []
+## Mid-block crosswalks (Crosswalks.mid_block), and the version the graph was built with.
+var _crosswalks: Crosswalks
+var _built_version := -1
 
 
-func _init(roads: RoadNetwork) -> void:
+func _init(roads: RoadNetwork, crosswalks: Crosswalks = null) -> void:
+	_crosswalks = crosswalks
 	_roads = roads
 	_roads.changed.connect(_on_roads_changed)
 
@@ -87,7 +95,7 @@ func _make_path(ids: PackedInt64Array, from: Vector2, to: Vector2) -> Dictionary
 func _nearest_sidewalk(position: Vector2) -> Dictionary:
 	var best := {}
 	var best_distance := INF
-	for ends: Vector2i in sidewalks.values():
+	for ends: Vector2i in _edges:
 		var a := graph.get_point_position(ends.x)
 		var b := graph.get_point_position(ends.y)
 		var point := Geometry2D.get_closest_point_to_segment(position, a, b)
@@ -103,8 +111,9 @@ func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
 
 
 func _ensure_built() -> void:
-	if _dirty:
+	if _dirty or (_crosswalks != null and _crosswalks.mid_block_version != _built_version):
 		_dirty = false
+		_built_version = _crosswalks.mid_block_version if _crosswalks != null else 0
 		_build()
 
 
@@ -112,7 +121,16 @@ func _build() -> void:
 	graph.clear()
 	crosswalk_edges.clear()
 	sidewalks.clear()
+	_edges.clear()
 	_next_point_id = 1
+	# Segment id -> its mid-block crosswalks, as [distance along the road, key].
+	var mid_block: Dictionary[int, Array] = {}
+	if _crosswalks != null:
+		for key: Vector2i in _crosswalks.mid_block:
+			var crossing: Dictionary = _crosswalks.mid_block[key]
+			if not mid_block.has(crossing.segment_id):
+				mid_block[crossing.segment_id] = []
+			mid_block[crossing.segment_id].append([crossing.distance, key])
 	# Vector3i(segment id, side, node id) -> the sidewalk end at that node.
 	var ends: Dictionary[Vector3i, int] = {}
 	for segment: RoadSegment in _roads.segments.values():
@@ -122,14 +140,35 @@ func _build() -> void:
 		var offset := segment.road_type.get_total_width() * 0.5 + SIDEWALK_OFFSET
 		var start_trim := _roads.get_junction_radius(segment.start_node_id)
 		var end_trim := _roads.get_junction_radius(segment.end_node_id)
+		var length := LaneBuilder.polyline_length(centerline)
+		var crossings: Array = mid_block.get(segment.id, []).filter(
+			func(c: Array) -> bool: return c[0] > start_trim and c[0] < length - end_trim)
+		crossings.sort_custom(func(x: Array, y: Array) -> bool: return x[0] < y[0])
+		# Per crossing: the point on each side where it meets the sidewalk.
+		var crossing_points: Array[Vector2i] = []
+		crossing_points.resize(crossings.size())
 		for side in [-1, 1]:
-			var line := LaneBuilder.trim_polyline(LaneBuilder.offset_polyline(centerline, side * offset), start_trim, end_trim)
+			var full_line := LaneBuilder.offset_polyline(centerline, side * offset)
+			var line := LaneBuilder.trim_polyline(full_line, start_trim, end_trim)
 			var a := _add_point(line[0])
 			var b := _add_point(line[-1])
-			graph.connect_points(a, b)
+			var previous := a
+			for i in crossings.size():
+				var point := _add_point(LaneBuilder.sub_polyline(full_line, crossings[i][0], crossings[i][0])[0])
+				_connect(previous, point)
+				previous = point
+				if side == -1:
+					crossing_points[i].x = point
+				else:
+					crossing_points[i].y = point
+			_connect(previous, b)
 			sidewalks[Vector2i(segment.id, side)] = Vector2i(a, b)
 			ends[Vector3i(segment.id, side, segment.start_node_id)] = a
 			ends[Vector3i(segment.id, side, segment.end_node_id)] = b
+		for i in crossings.size():
+			var across := crossing_points[i]
+			graph.connect_points(across.x, across.y)
+			crosswalk_edges[Vector2i(mini(across.x, across.y), maxi(across.x, across.y))] = crossings[i][1]
 	for node: RoadNode in _roads.nodes.values():
 		if node.elevation_layer != 0 or node.segment_ids.is_empty():
 			continue
@@ -173,3 +212,9 @@ func _away_from(node: RoadNode, segment: RoadSegment) -> Vector2:
 ## direction away from `node`.
 func _side(node: RoadNode, segment_id: int, away_side: int) -> int:
 	return away_side if _roads.segments[segment_id].start_node_id == node.id else -away_side
+
+
+## Joins two points with a stretch of sidewalk.
+func _connect(a: int, b: int) -> void:
+	graph.connect_points(a, b)
+	_edges.append(Vector2i(a, b))

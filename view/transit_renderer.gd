@@ -2,7 +2,7 @@ class_name TransitRenderer
 extends Node2D
 ## Bus lines and stops, from the latest tick snapshot: each line's way round as a faint
 ## coloured band, each stop as a sign at the curb (beyond its pull-in, for a bus bay) with
-## its waiting riders as dots on the sidewalk beside it.
+## its waiting riders as dots on the sidewalk beside it, and its crosswalk as a zebra.
 
 const LINE_WIDTH := 3.0
 const LINE_ALPHA := 0.35
@@ -36,6 +36,8 @@ func _draw() -> void:
 		if path.size() >= 2:
 			var color: Color = line.color
 			draw_polyline(path, Color(color, LINE_ALPHA), LINE_WIDTH)
+	for crossing: Dictionary in view.stop_crossings.values():
+		_draw_zebra(crossing.center, crossing.across, crossing.half_width)
 	for i in view.stop_positions.size():
 		var along := view.stop_directions[i]
 		# Toward the curb: right of the traffic's direction (y grows downward).
@@ -57,3 +59,14 @@ func _draw() -> void:
 		for k in waiting:
 			var offset := (k - (waiting - 1) * 0.5) * RIDER_SPACING
 			draw_circle(view.stop_positions[i] + out * (RIDERS_OFFSET + beyond) + along * offset, 1.4, RIDER_COLOR)
+
+
+## Zebra stripes across the road at a stop's crosswalk (like RoadMarkings' at junctions).
+func _draw_zebra(center: Vector2, across: Vector2, half_width: float) -> void:
+	var along := across.orthogonal()
+	var offset := -half_width + RoadMarkings.ZEBRA_SPACING * 0.5
+	while offset < half_width:
+		var stripe := center + across * offset
+		draw_line(stripe - along * RoadMarkings.ZEBRA_LENGTH * 0.5, stripe + along * RoadMarkings.ZEBRA_LENGTH * 0.5,
+			RoadMarkings.ZEBRA_COLOR, RoadMarkings.ZEBRA_WIDTH)
+		offset += RoadMarkings.ZEBRA_SPACING

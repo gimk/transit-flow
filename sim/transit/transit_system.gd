@@ -49,6 +49,10 @@ const MAX_TRANSFERS := 2
 const SNAP_DISTANCE := 24.0
 const MERGE_DISTANCE := 20.0
 const RESOLVE_DISTANCE := 24.0
+## Stop crosswalks: how far behind the bus they are, and how close two may be (closer ones,
+## at stops facing each other, are one).
+const CROSSING_SETBACK := 6.0
+const CROSSING_MERGE_DISTANCE := 48.0
 ## Line colours, in turn: blue, pink, purple, yellow (none green or brown like cars and
 ## trucks).
 const LINE_COLORS: Array[Color] = [
@@ -89,6 +93,8 @@ var _roads: RoadNetwork
 var _router: Router
 var _vehicles: VehicleSystem
 var _pedestrians: PedestrianSystem
+## Shared crosswalk state (set by Simulation): stops get a crosswalk (_update_crossings).
+var crosswalks: Crosswalks
 var _time := 0.0
 var _next_stop_id := 1
 var _next_line_id := 1
@@ -132,7 +138,7 @@ func add_stop(point: Vector2, bay := false) -> int:
 	stop.lane_id = spot.lane_id
 	stop.distance = spot.distance
 	stops[stop.id] = stop
-	_nearby_stops.clear()
+	_update_crossings()
 	return stop.id
 
 
@@ -173,7 +179,7 @@ func remove_stop(stop_id: int) -> void:
 	for rider: Rider in stop.waiting.duplicate():
 		_strand(rider)
 	stops.erase(stop_id)
-	_nearby_stops.clear()
+	_update_crossings()
 	for line: BusLine in lines.values():
 		if not line.stop_ids.has(stop_id):
 			continue
@@ -422,6 +428,7 @@ func restore(data: Dictionary) -> void:
 		_update_line(line)
 	_next_stop_id = int(data.get("next_stop_id", stops.size() + 1))
 	_next_line_id = int(data.get("next_line_id", lines.size() + 1))
+	_update_crossings()
 
 
 func dispose() -> void:
@@ -646,6 +653,7 @@ func _ensure_resolved() -> void:
 				_strand(rider)
 	for line: BusLine in lines.values():
 		_update_line(line)
+	_update_crossings()
 
 
 ## Finds the stop's lane again: the nearest lane going its way within RESOLVE_DISTANCE,
@@ -739,6 +747,43 @@ func _stops_in_reach(point: Vector2, max_walk: float) -> Dictionary:
 			result[stop.id] = distance
 	return result
 
+
+
+## Every stop gets a crosswalk across its road, just behind where the bus stands (so a
+## stopped bus doesn't cover it), for riders coming from the other side; stops facing
+## each other share one. Shared through Crosswalks.mid_block with pedestrians and drivers.
+func _update_crossings() -> void:
+	_nearby_stops.clear()
+	if crosswalks == null:
+		return
+	var crossings: Dictionary[Vector2i, Dictionary] = {}
+	for stop: BusStop in stops.values():
+		if not stop.is_active():
+			continue
+		var lane := _roads.lanes[stop.lane_id]
+		var segment := _roads.segments[lane.segment_id]
+		var behind := maxf(stop.distance - Vehicle.BUS_LENGTH * 0.5 - CROSSING_SETBACK, 0.0)
+		var centerline := LaneBuilder.get_polyline(segment.centerline)
+		var along := LaneBuilder.distance_along_polyline(centerline, lane.sample_pose(behind).origin)
+		var length := LaneBuilder.polyline_length(centerline)
+		if along < _roads.get_junction_radius(segment.start_node_id) + CROSSING_SETBACK \
+				or along > length - _roads.get_junction_radius(segment.end_node_id) - CROSSING_SETBACK:
+			continue  # Too close to a junction, which has crosswalks of its own.
+		var shared := false
+		for crossing: Dictionary in crossings.values():
+			shared = shared or (crossing.segment_id == segment.id and absf(crossing.distance - along) < CROSSING_MERGE_DISTANCE)
+		if shared:
+			continue
+		var center := LaneBuilder.sub_polyline(centerline, along, along)[0]
+		var ahead := LaneBuilder.sub_polyline(centerline, minf(along + 1.0, length), minf(along + 1.0, length))[0]
+		var lanes: Array = []
+		for lane_id in segment.lane_ids:
+			lanes.append([lane_id, _roads.lanes[lane_id].curve.get_closest_offset(center)])
+		crossings[Vector2i(Crosswalks.MID_BLOCK_BASE - stop.id, segment.id)] = {
+			"segment_id": segment.id, "distance": along, "center": center,
+			"across": (ahead - center).normalized().orthogonal(),
+			"half_width": segment.road_type.get_total_width() * 0.5, "lanes": lanes }
+	crosswalks.set_mid_block(crossings)
 
 ## Stops (on some line) within `max_walk` px on foot of stop `stop_id`, itself included:
 ## stop id -> walking distance. Cached until roads or stops change.

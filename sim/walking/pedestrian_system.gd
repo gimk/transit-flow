@@ -38,7 +38,7 @@ func _init(roads: RoadNetwork, lots: LotSystem, signals: TrafficLights, vehicles
 	_signals = signals
 	_vehicles = vehicles
 	crosswalks = p_crosswalks
-	network = WalkNetwork.new(roads)
+	network = WalkNetwork.new(roads, crosswalks)
 
 
 ## Walking distance between two lots, or INF if there's no way on foot.
@@ -140,6 +140,8 @@ func _walk(pedestrian: Pedestrian, distance: float) -> bool:
 
 ## May a pedestrian at the curb step onto `crossing` now?
 func _may_cross(crossing: Vector2i) -> bool:
+	if Crosswalks.is_mid_block(crossing):
+		return not _vehicles.is_crosswalk_busy(crossing)
 	var node: RoadNode = _roads.nodes.get(crossing.x)
 	if node == null:
 		return true

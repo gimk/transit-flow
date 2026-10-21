@@ -2,13 +2,31 @@ class_name Crosswalks
 extends RefCounted
 ## Who is on, or waiting at, each crosswalk: shared by pedestrians (who update it), cars
 ## (which give way to them) and traffic lights (waiting pedestrians call the walk phase).
-## A crosswalk is identified by Vector2i(junction node id, id of the road it crosses).
+## A crosswalk at a junction is identified by Vector2i(junction node id, id of the road it
+## crosses). Mid-block crosswalks (at bus stops, laid out by TransitSystem) by
+## Vector2i(MID_BLOCK_BASE - stop id, id of the road), and described in `mid_block`.
 
 const NONE := Vector2i(-1, -1)
+const MID_BLOCK_BASE := -1000
 
 ## Crosswalk -> number of pedestrians on it / waiting at its curb.
 var walkers: Dictionary[Vector2i, int] = {}
 var waiting: Dictionary[Vector2i, int] = {}
+## Mid-block crosswalk -> { "segment_id", "distance" (along the road from its start),
+## "center", "across" (unit vector across the road), "half_width", "lanes" (Array of
+## [lane id, distance along it], every lane it crosses) }.
+var mid_block: Dictionary[Vector2i, Dictionary] = {}
+## Goes up whenever `mid_block` changes (WalkNetwork rebuilds then).
+var mid_block_version := 0
+
+
+static func is_mid_block(crosswalk: Vector2i) -> bool:
+	return crosswalk.x <= MID_BLOCK_BASE
+
+
+func set_mid_block(crossings: Dictionary[Vector2i, Dictionary]) -> void:
+	mid_block = crossings
+	mid_block_version += 1
 
 
 func is_empty() -> bool:

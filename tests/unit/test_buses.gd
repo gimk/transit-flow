@@ -316,3 +316,40 @@ func test_traffic_passes_a_bus_in_a_bay() -> void:
 	assert_true(left_bay, "and the bus pulled out again")
 	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01, "no overlaps")
 	assert_eq(sim.vehicles.get_stuck_count(30.0), 0)
+
+
+## A stop gets a crosswalk across its road (just behind where the bus stands): riders from
+## the other side walk straight over instead of round by the junction, cars give way to
+## them, and nobody is ever on it with a car.
+func test_stops_get_a_crosswalk_that_cars_give_way_at() -> void:
+	_road(Vector2(0, 4), Vector2(24, 4))
+	var stop_id := _stop(12, 4, true)
+	assert_eq(sim.crosswalks.mid_block.size(), 1)
+	var key: Vector2i = sim.crosswalks.mid_block.keys()[0]
+	assert_true(Crosswalks.is_mid_block(key))
+	var crossing: Dictionary = sim.crosswalks.mid_block[key]
+	assert_lt(crossing.center.x, sim.transit.stops[stop_id].position.x, "behind the eastbound bus")
+	# From a door across the street to the stop: over the crosswalk.
+	var path := sim.pedestrians.network.find_path(Vector2(12, 3.5) * G, sim.transit.stops[stop_id].position)
+	assert_true(path.crossings.has(key))
+	assert_lt(path.length, 3.0 * G, "no detour to a junction")
+	# Traffic both ways and people crossing back and forth.
+	sim.lots.add_lot(Vector2i(11, 3), Lot.Type.RESIDENTIAL)
+	sim.lots.add_lot(Vector2i(11, 4), Lot.Type.COMMERCIAL)
+	sim.stress.target_count = 30
+	var both := 0
+	var walked := { "n": 0 }
+	sim.pedestrians.pedestrian_arrived.connect(func(_p: Pedestrian) -> void: walked.n += 1)
+	for tick in Simulation.TICK_RATE * 60:
+		if tick % 40 == 0:
+			sim.pedestrians.walk_between(Vector2(12, 3.5) * G, Vector2(12, 4.5) * G, 1)
+			sim.pedestrians.walk_between(Vector2(12, 4.5) * G, Vector2(12, 3.5) * G, 1)
+		sim.step()
+		if sim.crosswalks.has_walkers(key):
+			for entry: Array in crossing.lanes:
+				for vehicle: Vehicle in sim.roads.lanes[entry[0]].queue:
+					if absf(vehicle.distance - entry[1]) < vehicle.length * 0.5 + VehicleSystem.MID_BLOCK_HALF_WIDTH:
+						both += 1
+	assert_eq(both, 0, "never a car on it with someone crossing")
+	assert_gt(walked.n, 40, "people get across")
+	assert_eq(sim.vehicles.get_stuck_count(30.0), 0, "and cars get past")

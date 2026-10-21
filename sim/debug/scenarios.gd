@@ -168,6 +168,18 @@ static func build_town(sim: Simulation) -> Dictionary:
 	for x in [9, 3, -3, -9]:
 		crosstown.append(sim.transit.add_stop(at.call(x, 4) + Vector2(0, -10)))
 	bus_lines.append(sim.transit.add_line(crosstown))
+	# And the Ring: clockwise round the ring road, past the homes on the town's north and
+	# south edges (the right-hand curb going clockwise is the town side).
+	var ring: Array[int] = []
+	for x in [-9, -3, 3, 9]:
+		ring.append(sim.transit.add_stop(at.call(x, -8) + Vector2(0, 10)))
+	for y in [-2, 2]:
+		ring.append(sim.transit.add_stop(at.call(12, y) + Vector2(-10, 0)))
+	for x in [9, 3, -3, -9]:
+		ring.append(sim.transit.add_stop(at.call(x, 8) + Vector2(0, -10)))
+	for y in [2, -2]:
+		ring.append(sim.transit.add_stop(at.call(-12, y) + Vector2(10, 0)))
+	bus_lines.append(sim.transit.add_line(ring))
 
 	return { "center": at.call(0, 0), "lights": lights, "highways": highways, "bus_lines": bus_lines }
 

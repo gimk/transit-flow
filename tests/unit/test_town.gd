@@ -52,7 +52,8 @@ func test_town_uses_every_feature() -> void:
 		controls[node.control] = true
 	assert_true(controls.has(RoadNode.JunctionControl.TRAFFIC_LIGHT), "traffic lights")
 	assert_true(controls.has(RoadNode.JunctionControl.TRAFFIC_LIGHT_PROTECTED_LEFT), "protected left turns")
-	assert_eq(info.bus_lines.size(), 3)
+	assert_eq(info.bus_lines.size(), 4)
+	assert_gt(sim.crosswalks.mid_block.size(), 0, "crosswalks at bus stops")
 	var stops: Array = sim.transit.stops.values()
 	assert_true(stops.any(func(s: BusStop) -> bool: return s.bay), "bus bays")
 	assert_true(stops.any(func(s: BusStop) -> bool: return not s.bay), "curbside stops")
