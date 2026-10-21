@@ -10,6 +10,8 @@ var home_lot_id: int
 var work_lot_id := -1
 var state := State.AT_HOME
 var vehicle_id := -1
+## Walking instead (PedestrianSystem), or -1.
+var pedestrian_id := -1
 ## Lot the current trip heads to.
 var trip_lot_id := -1
 

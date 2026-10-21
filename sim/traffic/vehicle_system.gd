@@ -133,6 +133,8 @@ var _waiting: Dictionary[int, Array] = {}
 var _entry_counter := 0
 ## Vehicles waiting in driveways to pull out (not on the road yet), oldest first.
 var _departures: Array[Vehicle] = []
+## Pedestrians at crosswalks (set by Simulation): cars give way to them.
+var crosswalks: Crosswalks
 ## Connector id -> { conflicting connector id -> must give way to it } (_must_yield, cached;
 ## connector ids change whenever their junction is rebuilt, so cleared on road changes).
 var _yields: Dictionary[int, Dictionary] = {}
@@ -804,6 +806,8 @@ func _request_junction(vehicle: Vehicle) -> void:
 func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 	if not _conflicts_clear(vehicle, connector) or not _gap_accepted(vehicle, connector):
 		return false
+	if not _crosswalks_clear(connector):
+		return false
 	if not _exit_has_room(connector, vehicle):
 		return false
 	var since := vehicle.waiting_since if vehicle.requested_connector == connector else _time
@@ -825,6 +829,44 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 				and _gap_accepted(other, wanted) and _exit_has_room(wanted, other):
 			return false
 	return true
+
+
+## Pedestrians first: a turn passes over the crosswalks of the road it comes from and the
+## road it goes into; it may not be entered while someone is on one of them, or waiting
+## at it with the right to go (always without lights; with the walk light at lights).
+func _crosswalks_clear(connector: Lane) -> bool:
+	if crosswalks == null or crosswalks.is_empty():
+		return true
+	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
+	if node == null or node.get_degree() < 3:
+		return true
+	var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
+	var roads_crossed: Array[int] = [connector.outgoing_lanes[0].segment_id]
+	if feeder != null:
+		roads_crossed.append(feeder.segment_id)
+	for segment_id in roads_crossed:
+		var crosswalk := Vector2i(node.id, segment_id)
+		if crosswalks.has_walkers(crosswalk):
+			return false
+		if crosswalks.has_waiting(crosswalk) and (not node.has_lights() or _signals.is_walk_green(node, segment_id)):
+			return false
+	return true
+
+
+## Is a vehicle in (or allowed into) a turn over the crosswalk across road `crosswalk.y`
+## at junction `crosswalk.x`? Pedestrians wait at the curb while one is.
+func is_crosswalk_busy(crosswalk: Vector2i) -> bool:
+	var node: RoadNode = _roads.nodes.get(crosswalk.x)
+	if node == null:
+		return false
+	for connector_id in node.connector_lane_ids:
+		if not _connector_vehicles.has(connector_id):
+			continue
+		var connector := _roads.lanes[connector_id]
+		var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
+		if connector.outgoing_lanes[0].segment_id == crosswalk.y or (feeder != null and feeder.segment_id == crosswalk.y):
+			return true
+	return false
 
 
 ## Gap acceptance: drivers don't only avoid vehicles already in the junction, they also

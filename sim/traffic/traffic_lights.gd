@@ -32,6 +32,9 @@ class LightState:
 	var phase_count := 0
 
 
+## Pedestrians at crosswalks (set by Simulation), whose waiting calls walk phases.
+var crosswalks: Crosswalks
+
 var _roads: RoadNetwork
 ## Node id -> state, for every junction with traffic lights.
 var _states: Dictionary[int, LightState] = {}
@@ -57,6 +60,32 @@ func get_light(node: RoadNode, phase: int) -> Light:
 	if state.clearing:
 		return Light.AMBER if phase == state.phase else Light.RED
 	return Light.GREEN if phase == state.phase else Light.RED
+
+
+## Walk light for the crosswalk across road `segment_id` at `node`: pedestrians cross
+## alongside the traffic of the other road axis, so they walk while its through phase is
+## green (and always, where the lights can't alternate).
+func is_walk_green(node: RoadNode, segment_id: int) -> bool:
+	var phase := get_walk_phase(node, segment_id)
+	return phase == -1 or get_light(node, phase) == Light.GREEN
+
+
+## The light phase that lets pedestrians cross road `segment_id` at `node`, or -1 if any.
+func get_walk_phase(node: RoadNode, segment_id: int) -> int:
+	if node.signal_phase_count <= 1 or not _roads.segments.has(segment_id):
+		return -1
+	var axis := -1
+	for lane_id in _roads.segments[segment_id].lane_ids:
+		var lane := _roads.lanes[lane_id]
+		if lane.to_node_id == node.id:
+			axis = lane.signal_phase
+			break
+	if axis == -1:
+		# A one-way road leaving the junction: its axis from its direction.
+		var direction := LaneBuilder.start_direction(_roads.lanes[_roads.segments[segment_id].lane_ids[0]].curve)
+		axis = 0 if absf(direction.x) >= absf(direction.y) else 1
+	var alongside := 1 - axis
+	return alongside * 2 if node.signal_phase_count == 4 else alongside
 
 
 func _update(node: RoadNode, state: LightState, dt: float) -> void:
@@ -93,6 +122,13 @@ func _detect_demand(node: RoadNode, moving_only: bool) -> Array[bool]:
 	var demand: Array[bool] = []
 	demand.resize(node.signal_phase_count)
 	demand.fill(false)
+	# Pedestrians waiting at a crosswalk call its walk phase (they never extend a green).
+	if not moving_only and crosswalks != null and not crosswalks.waiting.is_empty():
+		for crosswalk: Vector2i in crosswalks.waiting:
+			if crosswalk.x == node.id:
+				var walk_phase := get_walk_phase(node, crosswalk.y)
+				if walk_phase != -1:
+					demand[walk_phase] = true
 	for segment_id in node.segment_ids:
 		for lane_id in _roads.segments[segment_id].lane_ids:
 			var lane := _roads.lanes[lane_id]

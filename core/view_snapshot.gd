@@ -14,6 +14,9 @@ var rotations := PackedFloat32Array()
 ## Length x width per vehicle.
 var sizes := PackedVector2Array()
 var colors := PackedColorArray()
+## Pedestrian id -> index into pedestrian_positions.
+var pedestrian_index: Dictionary[int, int] = {}
+var pedestrian_positions := PackedVector2Array()
 ## Light-controlled junction node id -> light (TrafficLights.Light) per phase.
 var lights: Dictionary[int, PackedInt32Array] = {}
 ## Lane id -> congestion (CongestionMonitor replaces its dictionary rather than editing
@@ -66,6 +69,13 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 			for phase in node.signal_phase_count:
 				phases.append(sim.signals.get_light(node, phase))
 			snapshot.lights[node.id] = phases
+	var walkers := sim.pedestrians.pedestrians
+	snapshot.pedestrian_positions.resize(walkers.size())
+	var p := 0
+	for pedestrian: Pedestrian in walkers.values():
+		snapshot.pedestrian_index[pedestrian.id] = p
+		snapshot.pedestrian_positions[p] = pedestrian.position
+		p += 1
 	snapshot.congestion = sim.congestion.congestion
 	snapshot.day = sim.clock.get_day()
 	snapshot.time_text = sim.clock.format_time()

@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phase 5 done, Phase 6a (driveways) done. Next: 6b (parking) or Phase 7 (pedestrians), then 8 (buses and mode choice).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Next: Phase 8 (buses, mode choice, parking and car availability).
 
 ---
 
@@ -314,7 +314,7 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 - Measured (Town): Flow 72% → 58%, 1 failed trip; median wait to pull out 1.7 s (p90 9 s), up to ~45 cars waiting at once at the evening peak. Stress grids unchanged.
 - *6b (to do): parking capacity per lot* — a full lot sends cars to the next lot of the same kind; needs walking (Phase 7) to be meaningful, so it may move there.
 
-### Phase 7 — Pedestrians and walking
+### Phase 7 — Pedestrians and walking ✅ (7a/7b; parking moves to Phase 8)
 - **Sidewalks** as pedestrian lanes, generated with each road type (both sides; none on highways). **Crosswalks** at junctions as pedestrian connectors, with conflict zones against vehicle connectors. Mid-block crossings later.
 - **Pedestrians** are lightweight agents on pedestrian lanes: no overtaking physics, just speed limited by crowding.
   - At a junction without lights, cars yield to pedestrians on the crosswalk, and a pedestrian waits for a gap in cars before stepping out.
@@ -327,6 +327,10 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
   - a busy crossing reduces car throughput at its junction.
 
 **Done when:** a downtown with heavy foot traffic slows turning cars, and moving a crossing or adding lights changes it visibly.
+
+*7a/7b done (2026-10-21):* `sim/walking/`. `WalkNetwork` derives the walkable graph from the roads (rebuilt lazily on change): a sidewalk along each side of every road (5 px beyond its edge, trimmed like the lanes), corners joining neighbouring roads' sidewalks around each node (by the angle of each road leaving it), a walk round dead ends, and at junctions of 3+ roads a crosswalk across each road's mouth. `PedestrianSystem` walks people door to door at 30 px/s (a third of a car), stopping at the curb of a crosswalk until no car is in the junction on a turn over it (`VehicleSystem.is_crosswalk_busy`) and, at lights, until the walk light is on (`TrafficLights.is_walk_green`: green for the other road axis' through phase; waiting pedestrians call it). Cars give way: a turn over a crosswalk (the road it leaves or enters) isn't entered while someone is on it or waiting with the right to go (`_crosswalks_clear`). The shared state is `Crosswalks` (who is on / waiting at each). Citizens walk trips up to 4 cells (`MAX_WALK_DISTANCE`); walks count in Flow. Pedestrians are dots (`PedestrianRenderer`), crosswalks zebra stripes. The pedestrians' own system turned out cheap enough (no pedestrian-pedestrian interaction), so the Phase 7 performance gate needed no port.
+- Measured: Town, 28 of ~420 daily trips are walked (homes and jobs are mostly further apart), Flow 60%; grid with random walks and traffic: 195 walks a minute, never a pedestrian on a crosswalk with a car on a turn over it.
+- Left for later: crowding (pedestrians don't slow each other), mid-block crossings, and parking (6b) together with car availability in Phase 8 — walking to work and driving home is still possible, since the car's whereabouts aren't tracked yet.
 
 ### Phase 8 — Buses and mode choice
 - **Buses** (was Phase 4): bus stops on lanes (curbside, where the bus blocks its lane while it waits; bus bays where it pulls out of the lane come later), `BusLineTool`, buses on fixed routes with a timetable or headway, capacity, and boarding time per passenger.

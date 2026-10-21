@@ -10,6 +10,7 @@
 [ext_resource type="Script" uid="uid://dug7rhpm2dygc" path="res://tools/bulldoze_tool.gd" id="8_bulldoze_tool"]
 [ext_resource type="Script" uid="uid://dcvg10y0fcwn6" path="res://tools/route_tool.gd" id="9_route_tool"]
 [ext_resource type="Script" uid="uid://u4r8qaxexhoi" path="res://view/lot_renderer.gd" id="10_lots"]
+[ext_resource type="Script" path="res://view/pedestrian_renderer.gd" id="30_pedestrians"]
 [ext_resource type="Script" uid="uid://bk1g48shsnbkp" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
 [ext_resource type="Script" path="res://tools/zone_tool.gd" id="12_zone_tool"]
 [ext_resource type="Script" path="res://view/zone_renderer.gd" id="16_zones"]
@@ -47,6 +48,9 @@ script = ExtResource("10_lots")
 
 [node name="VehicleRenderer" type="MultiMeshInstance2D" parent="World" unique_id=386211279]
 script = ExtResource("11_vehicles")
+
+[node name="PedestrianRenderer" type="MultiMeshInstance2D" parent="World"]
+script = ExtResource("30_pedestrians")
 
 [node name="LaneOverlay" type="Node2D" parent="World" unique_id=2125858775]
 script = ExtResource("5_lanes")

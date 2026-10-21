@@ -30,6 +30,7 @@ var citizens: Dictionary[int, Citizen] = {}
 var _lots: LotSystem
 var _router: Router
 var _vehicles: VehicleSystem
+var _pedestrians: PedestrianSystem
 var _clock: SimClock
 var _rng := RandomNumberGenerator.new()
 var _next_id := 1
@@ -42,15 +43,18 @@ var _workplaces: Array[Lot] = []
 var _shops: Array[Lot] = []
 
 
-func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, clock: SimClock) -> void:
+func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, pedestrians: PedestrianSystem,
+		clock: SimClock) -> void:
 	_lots = lots
 	_router = router
 	_vehicles = vehicles
+	_pedestrians = pedestrians
 	_clock = clock
 	_rng.seed = 11
 	_lots.changed.connect(_sync_with_lots)
 	_vehicles.vehicle_arrived.connect(_on_vehicle_arrived)
 	_vehicles.vehicle_failed.connect(_on_vehicle_failed)
+	_pedestrians.pedestrian_arrived.connect(_on_pedestrian_arrived)
 
 
 func step(time: float) -> void:
@@ -106,10 +110,14 @@ func get_employed_count() -> int:
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
 	if from_lot == to_lot:
 		# Already there (no car needed).
-		citizen.trip_lot_id = to_lot
-		citizen.state = travelling
-		citizen.leave_now = false
+		_set_off(citizen, to_lot, travelling)
 		_arrive(citizen)
+		return
+	# Short trips are walked.
+	var pedestrian := _pedestrians.walk(from_lot, to_lot, citizen.id, PedestrianSystem.MAX_WALK_DISTANCE)
+	if pedestrian != null:
+		citizen.pedestrian_id = pedestrian.id
+		_set_off(citizen, to_lot, travelling)
 		return
 	# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
 	var none: Array[Dictionary] = []
@@ -119,6 +127,10 @@ func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.S
 		citizen.retry_at = _time + RETRY_DELAY
 		return
 	citizen.vehicle_id = vehicle.id
+	_set_off(citizen, to_lot, travelling)
+
+
+func _set_off(citizen: Citizen, to_lot: int, travelling: Citizen.State) -> void:
 	citizen.trip_lot_id = to_lot
 	citizen.state = travelling
 	citizen.leave_now = false
@@ -128,6 +140,12 @@ func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.S
 
 func _on_vehicle_arrived(vehicle: Vehicle) -> void:
 	var citizen: Citizen = citizens.get(vehicle.owner_id)
+	if citizen != null:
+		_arrive(citizen)
+
+
+func _on_pedestrian_arrived(pedestrian: Pedestrian) -> void:
+	var citizen: Citizen = citizens.get(pedestrian.owner_id)
 	if citizen != null:
 		_arrive(citizen)
 
@@ -146,6 +164,7 @@ func _on_vehicle_failed(vehicle: Vehicle) -> void:
 
 func _arrive(citizen: Citizen) -> void:
 	citizen.vehicle_id = -1
+	citizen.pedestrian_id = -1
 	match citizen.state:
 		Citizen.State.TO_WORK:
 			citizen.state = Citizen.State.AT_WORK
@@ -172,6 +191,8 @@ func _sync_with_lots() -> void:
 		if not _lots.lots.has(citizen.home_lot_id):
 			if citizen.vehicle_id != -1:
 				_vehicles.remove(citizen.vehicle_id)
+			if citizen.pedestrian_id != -1:
+				_pedestrians.remove(citizen.pedestrian_id)
 			_leave_job(citizen)
 			_job_seekers.erase(citizen.id)
 			citizens.erase(citizen.id)

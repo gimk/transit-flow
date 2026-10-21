@@ -15,6 +15,8 @@ var zones: ZoneSystem
 var externals: ExternalConnections
 var signals: TrafficLights
 var vehicles: VehicleSystem
+var crosswalks := Crosswalks.new()
+var pedestrians: PedestrianSystem
 var citizens: CitizenSystem
 var freight: FreightSystem
 var stress: StressTraffic
@@ -31,11 +33,14 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	externals = ExternalConnections.new(roads)
 	signals = TrafficLights.new(roads)
 	vehicles = VehicleSystem.new(roads, router, lots, signals)
-	citizens = CitizenSystem.new(lots, router, vehicles, clock)
+	signals.crosswalks = crosswalks
+	vehicles.crosswalks = crosswalks
+	pedestrians = PedestrianSystem.new(roads, lots, signals, vehicles, crosswalks)
+	citizens = CitizenSystem.new(lots, router, vehicles, pedestrians, clock)
 	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
-	flow = FlowMetric.new(vehicles)
+	flow = FlowMetric.new(vehicles, pedestrians)
 
 
 func step() -> void:
@@ -46,6 +51,7 @@ func step() -> void:
 	freight.step(TICK_DT)
 	stress.step()
 	signals.step(TICK_DT)
+	pedestrians.step(get_sim_time(), TICK_DT)
 	vehicles.step(TICK_DT)
 	congestion.step(get_sim_time())
 

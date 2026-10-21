@@ -50,7 +50,8 @@ func _add_segment(segment_id: int) -> void:
 	_surfaces.add_child(surface)
 	var markings := RoadMarkings.new()
 	var roads := Game.simulation.roads
-	markings.setup(points, segment.road_type, roads.get_junction_radius(segment.start_node_id), roads.get_junction_radius(segment.end_node_id))
+	markings.setup(points, segment.road_type, roads.get_junction_radius(segment.start_node_id), roads.get_junction_radius(segment.end_node_id),
+		roads.nodes[segment.start_node_id].get_degree() >= 3, roads.nodes[segment.end_node_id].get_degree() >= 3)
 	_markings.add_child(markings)
 	_lines[segment_id] = [edge, surface, markings]
 
