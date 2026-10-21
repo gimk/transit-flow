@@ -204,3 +204,26 @@ func _stress_grid(even_h: StringName, even_v: StringName, odd_h: StringName, odd
 	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01, "no overlaps, lane changes included")
 	assert_gt(arrived.count, min_arrivals, "traffic flows")
 	assert_eq(sim.vehicles.get_stuck_count(30.0), 0, "no deadlock")
+
+
+## Junctions too close for the roads meeting there would leave lanes no vehicle fits (an
+## avenue cuts its lanes back 28 px from each junction): such roads are refused.
+func test_junctions_must_leave_room_for_a_vehicle_between_them() -> void:
+	_road(Vector2(0, 8), Vector2(20, 8), &"avenue_4lane")
+	_road(Vector2(8, 2), Vector2(8, 14), &"one_way_2lane")
+	var plan := roads.plan_road(Vector2(9, 14) * G, Vector2(9, 2) * G, 0, _type(&"one_way_2lane"))
+	assert_eq(plan.error, RoadNetwork.TOO_CLOSE_ERROR, "one cell from the first crossing of the avenue")
+	assert_eq(roads.plan_road(Vector2(10, 14) * G, Vector2(10, 2) * G, 0, _type(&"one_way_2lane")).error, "", "two cells is fine")
+	# Local streets only need one cell.
+	_road(Vector2(0, 20), Vector2(10, 20))
+	_road(Vector2(3, 17), Vector2(3, 23))
+	assert_eq(roads.plan_road(Vector2(4, 17) * G, Vector2(4, 23) * G, 0, _type(&"local_2lane")).error, "")
+
+
+func test_upgrading_to_an_avenue_checks_the_room_too() -> void:
+	_road(Vector2(0, 8), Vector2(20, 8))
+	_road(Vector2(8, 2), Vector2(8, 14))
+	_road(Vector2(9, 2), Vector2(9, 14))
+	var plan := roads.plan_road(Vector2(0, 8) * G, Vector2(20, 8) * G, 0, _type(&"avenue_4lane"))
+	assert_eq(plan.error, RoadNetwork.TOO_CLOSE_ERROR, "the street between the two crossings would shrink to nothing")
+	assert_eq(roads.segments.values().filter(func(s: RoadSegment) -> bool: return s.road_type.id == &"avenue_4lane").size(), 0)

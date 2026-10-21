@@ -19,6 +19,9 @@ signal changed(node_ids: Array, segment_ids: Array)
 const EPSILON := 0.5
 ## No segment may be shorter than this (it would leave no room between junctions).
 const MIN_SEGMENT_LENGTH := 16.0
+## Lanes between junctions must at least fit the longest vehicle (a truck) and a gap.
+const MIN_LANE_LENGTH := 21.0
+const TOO_CLOSE_ERROR := "Junctions too close together for these roads (wider roads need more room)"
 ## Connectors whose paths come closer than this (center to center) conflict: two
 ## vehicles (up to Vehicle.TRUCK_WIDTH wide) on them at once could touch.
 const CONFLICT_DISTANCE := 8.0
@@ -220,7 +223,74 @@ func plan_road(from: Vector2, to: Vector2, elevation_layer := 0, road_type: Road
 		builds_something = builds_something or not overlaps or upgrade
 	if not builds_something:
 		plan.error = "Road already exists"
+	elif road_type != null:
+		plan.error = _check_lane_room(plan, road_type, elevation_layer)
 	return plan
+
+
+## "" if, once the planned road is built, every lane it creates, converts or shortens
+## still fits the longest vehicle between its junctions (lanes are cut back from each
+## junction by half its widest road: two avenue junctions one cell apart would leave 8 px,
+## which no vehicle fits, and traffic there would crawl through one at a time).
+func _check_lane_room(plan: Dictionary, road_type: RoadType, elevation_layer: int) -> String:
+	var points: Array = plan.points
+	var count := points.size()
+	var half_width := road_type.get_total_width() * 0.5
+	# How far lanes will be cut back at each planned point (0 at a dead end).
+	var trims: Array[float] = []
+	for i in count:
+		var node_id := find_node_at(points[i], elevation_layer)
+		var degree := 0
+		var widest := 0.0
+		if node_id != -1:
+			degree = nodes[node_id].get_degree()
+			widest = get_junction_radius(node_id) if degree >= 2 else segments[nodes[node_id].segment_ids[0]].road_type.get_total_width() * 0.5
+		else:
+			var split_id := _find_segment_with_interior_point(points[i], elevation_layer)
+			if split_id != -1:
+				degree = 2
+				widest = segments[split_id].road_type.get_total_width() * 0.5
+		for piece in [i - 1, i]:
+			if piece < 0 or piece >= count - 1:
+				continue
+			if not plan.overlaps[piece]:
+				degree += 1
+			if not plan.overlaps[piece] or plan.upgrades[piece]:
+				widest = maxf(widest, half_width)
+		trims.append(widest if degree >= 2 else 0.0)
+	# The new road's own pieces (and those it converts).
+	for i in count - 1:
+		if plan.overlaps[i] and not plan.upgrades[i]:
+			continue
+		if points[i].distance_to(points[i + 1]) - trims[i] - trims[i + 1] < MIN_LANE_LENGTH:
+			return TOO_CLOSE_ERROR
+	# Existing roads it meets or splits: their stretches between (old and new) junctions.
+	for segment: RoadSegment in segments.values():
+		if segment.elevation_layer != elevation_layer:
+			continue
+		var polyline := LaneBuilder.get_polyline(segment.centerline)
+		var start := nodes[segment.start_node_id].position
+		var end := nodes[segment.end_node_id].position
+		# [distance along the segment, trim there]
+		var stops: Array = [[0.0, get_junction_radius(segment.start_node_id)], [segment.get_length(), get_junction_radius(segment.end_node_id)]]
+		var touched := false
+		for i in count:
+			if points[i].distance_to(start) <= EPSILON:
+				stops[0][1] = trims[i]
+				touched = true
+			elif points[i].distance_to(end) <= EPSILON:
+				stops[1][1] = trims[i]
+				touched = true
+			elif _is_on_interior(points[i], polyline):
+				stops.append([LaneBuilder.distance_along_polyline(polyline, points[i]), trims[i]])
+				touched = true
+		if not touched:
+			continue
+		stops.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+		for k in stops.size() - 1:
+			if stops[k + 1][0] - stops[k][0] - stops[k][1] - stops[k + 1][1] < MIN_LANE_LENGTH:
+				return TOO_CLOSE_ERROR
+	return ""
 
 
 ## Id of the node at `position` on the given layer, or -1.
