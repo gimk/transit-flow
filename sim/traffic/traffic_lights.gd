@@ -9,7 +9,9 @@ extends RefCounted
 ## - then shows amber for CLEARANCE_TIME (no new entries) before the next phase that
 ##   has someone waiting turns green; phases nobody waits for are skipped.
 ## Phases belong to the junction's turns (Lane.signal_phase on connectors): the two road
-## axes, plus their left turns when the junction has protected left turns.
+## axes, plus their left turns when the junction has protected left turns. Pedestrians
+## waiting call the phase they cross with, and may start only early in its green
+## (is_walk_green).
 ## Light state isn't saved: after loading, lights start over on phase 0.
 
 enum Light { GREEN, AMBER, RED }
@@ -17,6 +19,12 @@ enum Light { GREEN, AMBER, RED }
 const MIN_GREEN := 3.0  ## Sim seconds.
 const MAX_GREEN := 12.0
 const CLEARANCE_TIME := 1.0
+## Pedestrians may start crossing only this long into their green (see is_walk_green).
+const WALK_INTERVAL := 4.0
+## On a green that rests (nobody waiting on another phase), the walk light comes round
+## again this long after it last came on, if pedestrians are waiting; turning traffic
+## gets the time between.
+const WALK_RECALL := 12.0
 ## A vehicle this close to its stop line (px, front-most on its lane) is detected.
 const DETECTION_DISTANCE := 60.0
 ## A detected vehicle standing still this long on green counts as blocked, not flowing.
@@ -63,11 +71,16 @@ func get_light(node: RoadNode, phase: int) -> Light:
 
 
 ## Walk light for the crosswalk across road `segment_id` at `node`: pedestrians cross
-## alongside the traffic of the other road axis, so they walk while its through phase is
-## green (and always, where the lights can't alternate).
+## alongside the traffic of the other road axis, during the first WALK_INTERVAL of its
+## through phase's green (then "don't walk" flashes: those on the crosswalk finish, nobody
+## new starts, so it clears for turning traffic before the green ends). Always on where
+## the lights can't alternate.
 func is_walk_green(node: RoadNode, segment_id: int) -> bool:
 	var phase := get_walk_phase(node, segment_id)
-	return phase == -1 or get_light(node, phase) == Light.GREEN
+	if phase == -1:
+		return true
+	var state: LightState = _states.get(node.id)
+	return get_light(node, phase) == Light.GREEN and (state == null or state.elapsed < WALK_INTERVAL)
 
 
 ## The light phase that lets pedestrians cross road `segment_id` at `node`, or -1 if any.
@@ -106,6 +119,11 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 		if demand[phase]:
 			waiting_phase = phase
 			break
+	if waiting_phase == -1 and state.elapsed >= WALK_RECALL and _pedestrian_demand(node)[state.phase]:
+		# People arrived after the walk light went off, and nobody else waits: walk again
+		# (a new green, as far as timing goes).
+		state.elapsed = 0.0
+		return
 	if waiting_phase == -1 or state.elapsed < MIN_GREEN:
 		return
 	if _detect_demand(node, true)[state.phase] and state.elapsed < MAX_GREEN:
@@ -119,16 +137,8 @@ func _update(node: RoadNode, state: LightState, dt: float) -> void:
 ## an incoming lane, close to its stop line, by the connector it is heading for)? With
 ## `moving_only`, vehicles standing still for BLOCKED_TIME don't count.
 func _detect_demand(node: RoadNode, moving_only: bool) -> Array[bool]:
-	var demand: Array[bool] = []
-	demand.resize(node.signal_phase_count)
-	demand.fill(false)
 	# Pedestrians waiting at a crosswalk call its walk phase (they never extend a green).
-	if not moving_only and crosswalks != null and not crosswalks.waiting.is_empty():
-		for crosswalk: Vector2i in crosswalks.waiting:
-			if crosswalk.x == node.id:
-				var walk_phase := get_walk_phase(node, crosswalk.y)
-				if walk_phase != -1:
-					demand[walk_phase] = true
+	var demand := _pedestrian_demand(node) if not moving_only else _no_demand(node)
 	for segment_id in node.segment_ids:
 		for lane_id in _roads.segments[segment_id].lane_ids:
 			var lane := _roads.lanes[lane_id]
@@ -152,3 +162,22 @@ func _on_roads_changed(node_ids: Array, _segment_ids: Array) -> void:
 		elif not _states.has(node_id) or _states[node_id].phase_count != node.signal_phase_count:
 			_states[node_id] = LightState.new()
 			_states[node_id].phase_count = node.signal_phase_count
+
+
+## Per phase: are pedestrians waiting to cross with it?
+func _pedestrian_demand(node: RoadNode) -> Array[bool]:
+	var demand := _no_demand(node)
+	if crosswalks != null and not crosswalks.waiting.is_empty():
+		for crosswalk: Vector2i in crosswalks.waiting:
+			if crosswalk.x == node.id:
+				var walk_phase := get_walk_phase(node, crosswalk.y)
+				if walk_phase != -1:
+					demand[walk_phase] = true
+	return demand
+
+
+static func _no_demand(node: RoadNode) -> Array[bool]:
+	var demand: Array[bool] = []
+	demand.resize(node.signal_phase_count)
+	demand.fill(false)
+	return demand

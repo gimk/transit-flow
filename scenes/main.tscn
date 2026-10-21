@@ -11,6 +11,7 @@
 [ext_resource type="Script" uid="uid://dcvg10y0fcwn6" path="res://tools/route_tool.gd" id="9_route_tool"]
 [ext_resource type="Script" uid="uid://u4r8qaxexhoi" path="res://view/lot_renderer.gd" id="10_lots"]
 [ext_resource type="Script" path="res://view/pedestrian_renderer.gd" id="30_pedestrians"]
+[ext_resource type="Script" path="res://view/transit_renderer.gd" id="31_transit"]
 [ext_resource type="Script" uid="uid://bk1g48shsnbkp" path="res://view/vehicle_renderer.gd" id="11_vehicles"]
 [ext_resource type="Script" path="res://tools/zone_tool.gd" id="12_zone_tool"]
 [ext_resource type="Script" path="res://view/zone_renderer.gd" id="16_zones"]
@@ -19,6 +20,7 @@
 [ext_resource type="Script" uid="uid://dceukk0ff5qlu" path="res://view/intersection_renderer.gd" id="13_intersections"]
 [ext_resource type="Script" uid="uid://blpje5h1ldfb1" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
 [ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
+[ext_resource type="Script" path="res://tools/bus_line_tool.gd" id="32_bus_tool"]
 
 [node name="Main" type="Node2D" unique_id=1531639300]
 
@@ -45,6 +47,9 @@ script = ExtResource("17_externals")
 
 [node name="LotRenderer" type="Node2D" parent="World" unique_id=557388674]
 script = ExtResource("10_lots")
+
+[node name="TransitRenderer" type="Node2D" parent="World"]
+script = ExtResource("31_transit")
 
 [node name="VehicleRenderer" type="MultiMeshInstance2D" parent="World" unique_id=386211279]
 script = ExtResource("11_vehicles")
@@ -88,6 +93,9 @@ hint = "Drag to remove zoning (and the buildings on it)"
 
 [node name="SignalTool" type="Node2D" parent="World/Tools" unique_id=653219520]
 script = ExtResource("15_signal_tool")
+
+[node name="BusLineTool" type="Node2D" parent="World/Tools"]
+script = ExtResource("32_bus_tool")
 
 [node name="DayNight" type="CanvasModulate" parent="World"]
 script = ExtResource("18_day_night")

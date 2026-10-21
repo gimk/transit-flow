@@ -90,6 +90,9 @@ func test_late_drivers_turn_impatient_then_give_up() -> void:
 ## their trips fail, and Flow drops.
 func test_flow_drops_when_the_commute_road_is_cut() -> void:
 	var info := Scenarios.build_bottleneck(sim, Vector2i(30, 30))
+	# Everyone drives (people on foot don't mind the road being cut).
+	for citizen: Citizen in sim.citizens.citizens.values():
+		citizen.has_car = true
 	for tick in Simulation.TICK_RATE * 40:
 		sim.step()
 	var before := sim.flow.get_flow_percent(sim.get_sim_time())

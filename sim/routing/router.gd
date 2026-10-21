@@ -68,6 +68,11 @@ func find_route_onward(from_lane_id: int, ends: Array[Dictionary]) -> Route:
 	return find_best_route(starts, ends)
 
 
+## Travel time of a route on empty roads (Route.get_free_flow_time).
+func get_free_flow_time(route: Route) -> float:
+	return route.get_free_flow_time(_roads)
+
+
 ## Drops cached paths, e.g. after congestion costs change.
 func invalidate_cache() -> void:
 	_path_cache.clear()

@@ -95,15 +95,15 @@ func test_at_lights_people_cross_on_the_walk_light() -> void:
 	var shop := sim.lots.add_lot(Vector2i(5, 4), Lot.Type.COMMERCIAL)
 	var west_arm := _crosswalk(junction, Vector2.LEFT)
 	var walker := sim.pedestrians.walk(home, shop, 1)
-	var crossed_on_red := false
+	var stepped_out_on_red := false
 	var waited := false
 	for i in 1200:
+		var was_on := walker.on_crosswalk == west_arm
 		sim.step()
-		if sim.crosswalks.has_walkers(west_arm) and not sim.signals.is_walk_green(node, west_arm.y):
-			# Allowed only if they stepped out while it was still green.
-			crossed_on_red = crossed_on_red or walker.leg_progress < 1.0
+		if not was_on and walker.on_crosswalk == west_arm:
+			stepped_out_on_red = stepped_out_on_red or not sim.signals.is_walk_green(node, west_arm.y)
 		waited = waited or sim.crosswalks.has_waiting(west_arm)
-	assert_false(crossed_on_red, "never stepped out on red")
+	assert_false(stepped_out_on_red, "never stepped out unless the walk light was on")
 	assert_false(sim.pedestrians.pedestrians.has(walker.id), "the walk light came (pedestrians call it)")
 	# Crossing the western arm walks alongside north-south traffic.
 	var phase := sim.signals.get_walk_phase(node, west_arm.y)

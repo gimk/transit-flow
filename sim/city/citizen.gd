@@ -2,13 +2,13 @@ class_name Citizen
 extends RefCounted
 ## A lightweight person record. Citizens are only simulated (as a vehicle or a
 ## pedestrian) while travelling; the rest of the time they are a state plus a personal
-## daily schedule. A trip is a list of legs, each walked or driven (CitizenSystem).
+## daily schedule. A trip is a list of legs: walked, driven or by bus (CitizenSystem).
 
 enum State { AT_HOME, TO_WORK, AT_WORK, TO_SHOP, AT_SHOP, TO_HOME }
-## How a leg is travelled; a trip's mode is its main one (any car leg makes it a car trip).
-enum Mode { WALK, CAR }
+## How a leg is travelled; a trip's mode is its main one (a car or bus leg in it).
+enum Mode { WALK, CAR, BUS }
 
-const MODE_NAMES := { Mode.WALK: "Walk", Mode.CAR: "Car" }
+const MODE_NAMES := { Mode.CAR: "Car", Mode.BUS: "Bus", Mode.WALK: "Walk" }
 
 var id: int
 var home_lot_id: int
@@ -27,14 +27,20 @@ var car_lot_id := -1
 ## Personal taste for driving: multiplies the car's cost in mode choice (below 1 likes it).
 var car_preference := 1.0
 
-## The current trip: legs still to go ({ "mode": Mode, "from": lot id, "to": lot id }),
-## its main mode, when it started, and its ideal (free-flow) time, summed over the legs
-## started so far.
+## The current trip: legs still to go, its main mode, when it started, its ideal
+## (free-flow) time summed over the legs started so far, and the yardstick Flow caps that
+## ideal at (the drive between the two places on empty roads, CitizenSystem).
+## Legs: walk { "mode": WALK, "from": Vector2, "to": Vector2 }, car { "mode": CAR,
+## "from": lot id, "to": lot id }, bus { "mode": BUS, "line": line id, "from": stop id,
+## "to": stop id }.
 var legs: Array[Dictionary] = []
 var trip_mode := Mode.CAR
 var trip_start_time := 0.0
 var trip_ideal_time := 0.0
+var trip_reference_time := INF
 var trip_end_time := 0.0
+## Waiting for or riding a bus (TransitSystem).
+var on_bus := false
 
 ## Personal schedule, in hours of the day.
 var leave_home_hour := 7.5

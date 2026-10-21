@@ -111,6 +111,9 @@ const GAP_SHRINK_TIME := 10.0  ## Sim seconds.
 ## At a junction without lights, drivers slow to this fraction of the speed limit by the
 ## stop line to look both ways, even when the junction is empty.
 const LOOK_SPEED_FRACTION := 0.4
+## Without lights, a driver who has waited this long at a busy crosswalk gets to go once
+## it is empty (_crosswalks_clear).
+const CROSSWALK_PATIENCE := 4.0
 
 var vehicles: Dictionary[int, Vehicle] = {}
 
@@ -197,6 +200,18 @@ func depart(origin_lot_id: int, origin_points: Array[Dictionary], destination_lo
 ## Vehicles waiting in driveways to pull out, in the order they set off.
 func get_waiting_departures() -> Array[Vehicle]:
 	return _departures
+
+
+## Sends a dwelling bus on: `route` must start where it is (its lane, at or behind its
+## position). Its trip clock restarts.
+func set_route(vehicle: Vehicle, route: Route) -> void:
+	vehicle.next_lanes = _to_lanes(route.lane_ids.slice(1))
+	vehicle.end_distance = route.end_distance
+	vehicle.destination_lane_id = route.lane_ids[-1]
+	vehicle.destination_distance = route.end_distance
+	vehicle.trip_start_time = _time
+	vehicle.ideal_trip_time = route.get_free_flow_time(_roads) + START_STOP_ALLOWANCE
+	vehicle.dwelling = false
 
 
 func _new_vehicle(owner_id: int, kind: Vehicle.Kind, destination_lot_id: int, route: Route) -> Vehicle:
@@ -314,6 +329,10 @@ func step(dt: float) -> void:
 		vehicle.previous_position = vehicle.position
 		vehicle.previous_rotation = vehicle.rotation
 		vehicle.lateral_offset = move_toward(vehicle.lateral_offset, 0.0, LANE_CHANGE_SLIDE_SPEED * dt)
+		if vehicle.dwelling:
+			# A bus at its stop, holding up the lane until it is sent on.
+			vehicle.speed = 0.0
+			continue
 		_update_speed(vehicle, dt)
 		if _advance(vehicle, dt):
 			arrived.append(vehicle)
@@ -322,14 +341,18 @@ func step(dt: float) -> void:
 		var slow := vehicle.speed < SLOW_FRACTION * vehicle.lane.speed_limit
 		vehicle.slow_time = vehicle.slow_time + dt if slow else 0.0
 		var elapsed := _time - vehicle.trip_start_time
-		if elapsed > vehicle.ideal_trip_time * IMPATIENT_FACTOR + IMPATIENT_GRACE:
+		if elapsed > vehicle.ideal_trip_time * IMPATIENT_FACTOR + IMPATIENT_GRACE and not vehicle.in_service:
 			vehicle.impatient = true
 			if elapsed > vehicle.ideal_trip_time * GIVE_UP_FACTOR + GIVE_UP_GRACE:
 				gave_up.append(vehicle)
 	for vehicle in arrived:
-		_detach(vehicle)
-		vehicles.erase(vehicle.id)
 		vehicle.trip_end_time = _time
+		if vehicle.in_service:
+			vehicle.dwelling = true
+			vehicle.speed = 0.0
+		else:
+			_detach(vehicle)
+			vehicles.erase(vehicle.id)
 		vehicle_arrived.emit(vehicle)
 	for vehicle in gave_up:
 		if vehicles.has(vehicle.id):
@@ -479,9 +502,9 @@ func _place_waiting_departures() -> void:
 
 
 ## How fast the vehicle should be going when it reaches the end of its trip: driveway
-## speed, or a stop if it has to wait to turn across the road.
+## speed, or a stop if it has to wait to turn across the road or is a bus at a stop.
 func _final_speed(vehicle: Vehicle) -> float:
-	if _must_cross_to_arrive(vehicle):
+	if vehicle.in_service or _must_cross_to_arrive(vehicle):
 		return 0.0
 	return TRUCK_DRIVEWAY_SPEED if vehicle.kind == Vehicle.Kind.TRUCK else DRIVEWAY_SPEED
 
@@ -806,7 +829,7 @@ func _request_junction(vehicle: Vehicle) -> void:
 func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 	if not _conflicts_clear(vehicle, connector) or not _gap_accepted(vehicle, connector):
 		return false
-	if not _crosswalks_clear(connector):
+	if not _crosswalks_clear(vehicle, connector):
 		return false
 	if not _exit_has_room(connector, vehicle):
 		return false
@@ -833,28 +856,42 @@ func _can_enter(vehicle: Vehicle, connector: Lane) -> bool:
 
 ## Pedestrians first: a turn passes over the crosswalks of the road it comes from and the
 ## road it goes into; it may not be entered while someone is on one of them, or waiting
-## at it with the right to go (always without lights; with the walk light at lights).
-func _crosswalks_clear(connector: Lane) -> bool:
+## at it with the right to go (with the walk light at lights). Without lights, a driver
+## who has waited CROSSWALK_PATIENCE goes once the crosswalk is empty: the people at the
+## curb let them (otherwise a steady stream of walkers would hold them up for ever).
+func _crosswalks_clear(vehicle: Vehicle, connector: Lane) -> bool:
 	if crosswalks == null or crosswalks.is_empty():
 		return true
 	var node: RoadNode = _roads.nodes.get(connector.from_node_id)
 	if node == null or node.get_degree() < 3:
 		return true
-	var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
-	var roads_crossed: Array[int] = [connector.outgoing_lanes[0].segment_id]
-	if feeder != null:
-		roads_crossed.append(feeder.segment_id)
-	for segment_id in roads_crossed:
+	var waited := vehicle.requested_connector == connector and _time - vehicle.waiting_since >= CROSSWALK_PATIENCE
+	for segment_id in _roads_crossed(connector):
 		var crosswalk := Vector2i(node.id, segment_id)
 		if crosswalks.has_walkers(crosswalk):
 			return false
-		if crosswalks.has_waiting(crosswalk) and (not node.has_lights() or _signals.is_walk_green(node, segment_id)):
-			return false
+		if crosswalks.has_waiting(crosswalk):
+			if node.has_lights() and _signals.is_walk_green(node, segment_id):
+				return false
+			if not node.has_lights() and not waited:
+				return false
 	return true
 
 
-## Is a vehicle in (or allowed into) a turn over the crosswalk across road `crosswalk.y`
-## at junction `crosswalk.x`? Pedestrians wait at the curb while one is.
+## The roads (segment ids) whose crosswalks a turn passes over: the one it comes from
+## and the one it goes into.
+func _roads_crossed(connector: Lane) -> Array[int]:
+	var roads_crossed: Array[int] = [connector.outgoing_lanes[0].segment_id]
+	var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
+	if feeder != null:
+		roads_crossed.append(feeder.segment_id)
+	return roads_crossed
+
+
+## Must pedestrians at the curb of the crosswalk across road `crosswalk.y` at junction
+## `crosswalk.x` wait for a car? Yes while one is in (or allowed into) a turn over it, and,
+## without lights, while a driver who has waited CROSSWALK_PATIENCE for such a turn is
+## at the stop line (see _crosswalks_clear).
 func is_crosswalk_busy(crosswalk: Vector2i) -> bool:
 	var node: RoadNode = _roads.nodes.get(crosswalk.x)
 	if node == null:
@@ -862,10 +899,12 @@ func is_crosswalk_busy(crosswalk: Vector2i) -> bool:
 	for connector_id in node.connector_lane_ids:
 		if not _connector_vehicles.has(connector_id):
 			continue
-		var connector := _roads.lanes[connector_id]
-		var feeder: Lane = _roads.lanes.get(connector.feeder_lane_id)
-		if connector.outgoing_lanes[0].segment_id == crosswalk.y or (feeder != null and feeder.segment_id == crosswalk.y):
+		if _roads_crossed(_roads.lanes[connector_id]).has(crosswalk.y):
 			return true
+	if not node.has_lights():
+		for vehicle: Vehicle in _waiting.get(node.id, []):
+			if _time - vehicle.waiting_since >= CROSSWALK_PATIENCE and _roads_crossed(vehicle.requested_connector).has(crosswalk.y):
+				return true
 	return false
 
 
@@ -1132,7 +1171,12 @@ func _advance(vehicle: Vehicle, dt: float) -> bool:
 				if vehicle.driveway_wait_since == INF:
 					vehicle.driveway_wait_since = _time
 				return false
-			vehicle.distance = vehicle.end_distance
+			if vehicle.in_service:
+				# A bus stays on the road: no further than its move allows (the vehicle
+				# ahead may be closer than the stop).
+				vehicle.distance += minf(move, maxf(remaining, 0.0))
+			else:
+				vehicle.distance = vehicle.end_distance
 			return true
 		if move < remaining:
 			vehicle.distance += move

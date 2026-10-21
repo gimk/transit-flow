@@ -41,6 +41,17 @@ static func build_bottleneck(sim: Simulation, origin: Vector2i) -> Dictionary:
 	}
 
 
+## A bus line along the Bottleneck's main road: east past the suburb and the factories
+## on the south side, back west on the north side, turning round at the road's ends.
+static func add_bottleneck_bus_line(sim: Simulation, origin: Vector2i) -> int:
+	var stops: Array[int] = []
+	for x in [-12, -8, -4, 5, 9, 13]:
+		stops.append(sim.transit.add_stop(Vector2(origin + Vector2i(x, 0)) * Grid.CELL_SIZE + Vector2(0, 10)))
+	for x in [13, 9, 5, -4, -8, -12]:
+		stops.append(sim.transit.add_stop(Vector2(origin + Vector2i(x, 0)) * Grid.CELL_SIZE + Vector2(0, -10)))
+	return sim.transit.add_line(stops)
+
+
 ## Where the Town scenario sits: its center cell (the Main Street / Avenue crossing),
 ## placed so its two highways reach the west and north map edges after a short drive.
 const TOWN_CENTER := Vector2i(20, 18)
@@ -58,12 +69,15 @@ const TOWN_CENTER := Vector2i(20, 18)
 ## - Zones, developed at once: two residential districts in the west (Oak Hill north of
 ##   Main Street, Riverside south of it) and Southgate in the south-east; shops downtown
 ##   along Main Street and the Avenue; an industrial park in the north-east.
+## - Two bus lines crossing downtown, each there and back: along Main Street and up and
+##   down the Avenue.
 ## Commuters from the west cross the Avenue to the factories, Riverside's cross Main
 ## Street, trucks come in from both highways: every kind of conflict happens somewhere.
-## Returns positions (world px):
+## Returns (positions in world px):
 ## - "center": the downtown crossing,
 ## - "lights": the light-controlled junctions,
-## - "highways": the two external connection points.
+## - "highways": the two external connection points,
+## - "bus_lines": the bus line ids.
 static func build_town(sim: Simulation) -> Dictionary:
 	var road_type := RoadType.load_by_id(&"local_2lane")
 	var at := func(x: int, y: int) -> Vector2: return Vector2(TOWN_CENTER + Vector2i(x, y)) * Grid.CELL_SIZE
@@ -109,7 +123,23 @@ static func build_town(sim: Simulation) -> Dictionary:
 	zone.call(5, -3, 6, -2, Lot.Type.INDUSTRIAL)
 	sim.zones.develop_all_now()
 
-	return { "center": at.call(0, 0), "lights": lights, "highways": highways }
+	# Two bus lines crossing downtown, each there and back: along Main Street and up and
+	# down the Avenue (riders change between them at the crossing).
+	var bus_lines: Array[int] = []
+	var main_street: Array[int] = []
+	for x in [-9, -2, 2, 9]:
+		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, 10)))
+	for x in [9, 2, -2, -9]:
+		main_street.append(sim.transit.add_stop(at.call(x, 0) + Vector2(0, -10)))
+	bus_lines.append(sim.transit.add_line(main_street))
+	var avenue: Array[int] = []
+	for y in [-6, -2, 2, 6]:
+		avenue.append(sim.transit.add_stop(at.call(0, y) + Vector2(-10, 0)))
+	for y in [6, 2, -2, -6]:
+		avenue.append(sim.transit.add_stop(at.call(0, y) + Vector2(10, 0)))
+	bus_lines.append(sim.transit.add_line(avenue))
+
+	return { "center": at.call(0, 0), "lights": lights, "highways": highways, "bus_lines": bus_lines }
 
 
 ## The starting map of a new game: a highway entering from the middle of the west edge,

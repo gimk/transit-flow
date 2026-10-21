@@ -7,15 +7,21 @@ extends RefCounted
 ## - evening rush: leave work between ~16:00 and 19:00, on some evenings via a shop
 ##   (stay 30-60 game minutes), then go home.
 ##
-## Trips (_plan_trip). A trip is a list of legs, walked or driven. Citizens own a car,
-## parked where they last left it (Citizen.car_lot_id): they can only drive from there,
-## walking to it first if it's nearby. A driver parks at their destination if it has a
-## free space, else nearby and walks the rest (Parking). Each trip goes the cheapest way
-## by generalized cost: time on foot counts WALK_WEIGHT times, driving costs its expected
-## time (current congestion included) plus CAR_OVERHEAD for getting the car out and
-## parking it, scaled by the citizen's taste for driving. People choose to walk only up
-## to MAX_CHOSEN_WALK (a whole trip, or to and from the car); with no other way, they
-## walk however far. Someone heading home whose car isn't there drives it home.
+## Trips (plan_trip). A trip is a list of legs: walked, driven or by bus. Most citizens
+## own a car (CAR_OWNERSHIP), parked where they last left it (Citizen.car_lot_id): they
+## can only drive from there, walking to it first if it's nearby. A driver parks at their
+## destination if it has a free space, else nearby and walks the rest (Parking). Bus
+## trips walk to a stop, ride (changing lines at shared stops) and walk on
+## (TransitSystem.plan_ride). Each trip goes the cheapest way by generalized cost: a trip
+## on foot costs its time; walking to and from the car or a stop counts WALK_WEIGHT
+## times; driving costs its expected time (current congestion included) plus CAR_OVERHEAD
+## for getting the car out and parking it, scaled by the citizen's taste for driving;
+## waiting for a bus counts double. Walks to or from the car or a stop are at most
+## MAX_CHOSEN_WALK. Someone heading home whose car isn't there drives it home.
+##
+## Flow scores a trip against its legs' free-flow times, capped at the drive between the
+## two places on empty roads plus CAR_ACCESS_TIME: walking across town, or parking far
+## away, counts as slow even when nothing held it up.
 ##
 ## Trips that can't start (no road, no route) are retried shortly. A trip that fails on
 ## the way (road gone, driver gave up) still ends at its destination if that still
@@ -40,12 +46,20 @@ const LATE_NIGHT_END_HOUR := 5.0
 const JOB_MATCHES_PER_TICK := 10
 ## Mode choice (see the class doc). Costs are in sim seconds. Distances here are
 ## compressed (a car crosses a cell in under a second), so the overhead of using a car is
-## large next to the drive itself: with it, the average citizen walks up to ~3 cells.
+## large next to the drive itself: about the time it takes to walk two or three cells.
+## With it, the average citizen walks trips up to ~3 cells. Walks to and from the car or
+## a bus stop count WALK_WEIGHT times (a chore on the way); a trip on foot counts as it is.
 const WALK_WEIGHT := 1.5
-const CAR_OVERHEAD := 9.0
+const CAR_OVERHEAD := 10.0
+## Longest walk to or from the car or a bus stop.
 const MAX_CHOSEN_WALK := PedestrianSystem.MAX_WALK_DISTANCE
 ## Spread of Citizen.car_preference.
 const CAR_PREFERENCE_RANGE := Vector2(0.85, 1.2)
+## Share of citizens owning a car.
+const CAR_OWNERSHIP := 0.8
+## Time a car trip takes beyond the drive itself (to the car, parking), for Flow's
+## yardstick (sim seconds).
+const CAR_ACCESS_TIME := 4.0
 
 var citizens: Dictionary[int, Citizen] = {}
 var parking: Parking
@@ -54,6 +68,7 @@ var _lots: LotSystem
 var _router: Router
 var _vehicles: VehicleSystem
 var _pedestrians: PedestrianSystem
+var _transit: TransitSystem
 var _clock: SimClock
 var _rng := RandomNumberGenerator.new()
 var _next_id := 1
@@ -66,12 +81,13 @@ var _workplaces: Array[Lot] = []
 var _shops: Array[Lot] = []
 
 
-func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, pedestrians: PedestrianSystem,
+func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, pedestrians: PedestrianSystem, transit: TransitSystem,
 		clock: SimClock) -> void:
 	_lots = lots
 	_router = router
 	_vehicles = vehicles
 	_pedestrians = pedestrians
+	_transit = transit
 	_clock = clock
 	parking = Parking.new(lots, pedestrians)
 	_rng.seed = 11
@@ -79,6 +95,8 @@ func _init(lots: LotSystem, router: Router, vehicles: VehicleSystem, pedestrians
 	_vehicles.vehicle_arrived.connect(_on_vehicle_arrived)
 	_vehicles.vehicle_failed.connect(_on_vehicle_failed)
 	_pedestrians.pedestrian_arrived.connect(_on_pedestrian_arrived)
+	_transit.rider_arrived.connect(_on_rider_arrived)
+	_transit.rider_stranded.connect(_on_rider_stranded)
 
 
 func step(time: float) -> void:
@@ -135,20 +153,22 @@ func get_employed_count() -> int:
 ## "legs": Array[Dictionary] (see Citizen.legs), "cost": generalized cost }, or {} if
 ## there's none.
 func plan_trip(citizen: Citizen, from_lot: int, to_lot: int, going_home := false) -> Dictionary:
+	var from := _lots.lots[from_lot].get_center()
+	var to := _lots.lots[to_lot].get_center()
 	var walk := {}
-	var walk_length := _pedestrians.get_walking_distance(from_lot, to_lot)
+	var walk_length := _pedestrians.network.get_distance(from, to)
 	if walk_length < INF:
-		walk = { "mode": Citizen.Mode.WALK, "legs": [_leg(Citizen.Mode.WALK, from_lot, to_lot)],
-			"cost": _walk_cost(walk_length) }
+		walk = { "mode": Citizen.Mode.WALK, "legs": [_walk_leg(from, to)], "cost": _walk_time(walk_length) }
 	var car := _plan_drive(citizen, from_lot, to_lot)
-	if car.is_empty():
-		return walk  # However far.
 	# The car goes back home with them.
-	if going_home and citizen.car_lot_id != citizen.home_lot_id:
+	if going_home and not car.is_empty() and citizen.car_lot_id != citizen.home_lot_id:
 		return car
-	if walk.is_empty() or walk_length > MAX_CHOSEN_WALK:
-		return car
-	return walk if walk.cost <= car.cost else car
+	var options: Array[Dictionary] = [car, _transit.plan_ride(from, to, MAX_CHOSEN_WALK, WALK_WEIGHT), walk]
+	var best := {}
+	for option in options:
+		if not option.is_empty() and (best.is_empty() or option.cost < best.cost):
+			best = option
+	return best
 
 
 func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.State) -> void:
@@ -166,6 +186,7 @@ func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.S
 	citizen.trip_mode = plan.mode
 	citizen.trip_start_time = _time
 	citizen.trip_ideal_time = 0.0
+	citizen.trip_reference_time = _drive_reference(from_lot, to_lot)
 	for leg in citizen.legs:
 		if leg.mode == Citizen.Mode.CAR:
 			# The space at the other end is theirs from now on.
@@ -177,8 +198,8 @@ func _depart(citizen: Citizen, from_lot: int, to_lot: int, travelling: Citizen.S
 
 
 ## A drive from wherever the car is (walking there first) to a parking space at or near
-## `to_lot` (walking on from it), as a plan (see plan_trip), or {} if the car isn't
-## within reach or can't get there.
+## `to_lot` (walking on from it), as a plan (see plan_trip), or {} if the citizen has no
+## car within reach or it can't get there.
 func _plan_drive(citizen: Citizen, from_lot: int, to_lot: int) -> Dictionary:
 	if not citizen.has_car or not _lots.lots.has(citizen.car_lot_id):
 		return {}
@@ -192,25 +213,39 @@ func _plan_drive(citizen: Citizen, from_lot: int, to_lot: int) -> Dictionary:
 		var to_car := _pedestrians.get_walking_distance(from_lot, car_at)
 		if to_car > MAX_CHOSEN_WALK:
 			return {}
-		legs.append(_leg(Citizen.Mode.WALK, from_lot, car_at))
+		legs.append(_walk_leg(_lots.lots[from_lot].get_center(), _lots.lots[car_at].get_center()))
 		cost += _walk_cost(to_car)
 	var route := _router.find_best_route(_lots.get_access_points(car_at), _lots.get_access_points(park_at))
 	if route == null:
 		return {}
-	legs.append(_leg(Citizen.Mode.CAR, car_at, park_at))
+	legs.append({ "mode": Citizen.Mode.CAR, "from": car_at, "to": park_at })
 	cost += (route.travel_time + CAR_OVERHEAD) * citizen.car_preference
 	if park_at != to_lot:
-		legs.append(_leg(Citizen.Mode.WALK, park_at, to_lot))
+		legs.append(_walk_leg(_lots.lots[park_at].get_center(), _lots.lots[to_lot].get_center()))
 		cost += _walk_cost(_pedestrians.get_walking_distance(park_at, to_lot))
 	return { "mode": Citizen.Mode.CAR, "legs": legs, "cost": cost }
 
 
-static func _leg(mode: Citizen.Mode, from_lot: int, to_lot: int) -> Dictionary:
-	return { "mode": mode, "from": from_lot, "to": to_lot }
+## Flow's yardstick for a trip between two lots: the drive on empty roads, plus the time
+## a car trip takes beyond it (INF if there's no road between them).
+func _drive_reference(from_lot: int, to_lot: int) -> float:
+	var route := _router.find_best_route(_lots.get_access_points(from_lot), _lots.get_access_points(to_lot))
+	if route == null:
+		return INF
+	return _router.get_free_flow_time(route) + VehicleSystem.START_STOP_ALLOWANCE + CAR_ACCESS_TIME
 
 
+static func _walk_leg(from: Vector2, to: Vector2) -> Dictionary:
+	return { "mode": Citizen.Mode.WALK, "from": from, "to": to }
+
+
+static func _walk_time(length: float) -> float:
+	return length / PedestrianSystem.WALK_SPEED + PedestrianSystem.START_STOP_ALLOWANCE
+
+
+## Cost of walking to or from the car or a stop.
 static func _walk_cost(length: float) -> float:
-	return (length / PedestrianSystem.WALK_SPEED + PedestrianSystem.START_STOP_ALLOWANCE) * WALK_WEIGHT
+	return _walk_time(length) * WALK_WEIGHT
 
 
 func _set_off(citizen: Citizen, to_lot: int, travelling: Citizen.State) -> void:
@@ -225,26 +260,36 @@ func _set_off(citizen: Citizen, to_lot: int, travelling: Citizen.State) -> void:
 func _next_leg(citizen: Citizen) -> void:
 	citizen.vehicle_id = -1
 	citizen.pedestrian_id = -1
+	citizen.on_bus = false
+	if not _lots.lots.has(citizen.trip_lot_id):
+		_finish_trip(citizen, false)  # The destination went while they were on the way.
+		return
 	if citizen.legs.is_empty():
 		_finish_trip(citizen, true)
 		return
 	var leg: Dictionary = citizen.legs.pop_front()
-	if leg.mode == Citizen.Mode.WALK:
-		var pedestrian := _pedestrians.walk(leg.from, leg.to, citizen.id)
-		if pedestrian != null:
-			citizen.pedestrian_id = pedestrian.id
-			citizen.trip_ideal_time += pedestrian.ideal_trip_time
-			return
-	else:
-		# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
-		var none: Array[Dictionary] = []
-		var vehicle := _vehicles.depart(leg.from, none, leg.to, none, citizen.id)
-		if vehicle != null:
-			vehicle.scored_by_owner = true
-			citizen.vehicle_id = vehicle.id
-			citizen.trip_ideal_time += vehicle.ideal_trip_time
-			return
-	# The way vanished since the trip was planned (a road or lot changed).
+	match leg.mode:
+		Citizen.Mode.WALK:
+			var pedestrian := _pedestrians.walk_between(leg.from, leg.to, citizen.id)
+			if pedestrian != null:
+				citizen.pedestrian_id = pedestrian.id
+				citizen.trip_ideal_time += pedestrian.ideal_trip_time
+				return
+		Citizen.Mode.CAR:
+			# Gets in the car in its driveway; it pulls out when there is a gap (VehicleSystem.depart).
+			var none: Array[Dictionary] = []
+			var vehicle := _vehicles.depart(leg.from, none, leg.to, none, citizen.id)
+			if vehicle != null:
+				vehicle.scored_by_owner = true
+				citizen.vehicle_id = vehicle.id
+				citizen.trip_ideal_time += vehicle.ideal_trip_time
+				return
+		Citizen.Mode.BUS:
+			if _transit.wait_for_bus(citizen.id, leg.line, leg.from, leg.to):
+				citizen.on_bus = true
+				citizen.trip_ideal_time += _transit.get_ride_ideal(leg.line, leg.from, leg.to)
+				return
+	# The way vanished since the trip was planned (a road, lot or bus line changed).
 	_finish_trip(citizen, false)
 
 
@@ -252,7 +297,9 @@ func _next_leg(citizen: Citizen) -> void:
 ## if the destination still exists, so the day carries on).
 func _finish_trip(citizen: Citizen, completed: bool) -> void:
 	citizen.legs.clear()
+	citizen.on_bus = false
 	citizen.trip_end_time = _time
+	citizen.trip_ideal_time = minf(citizen.trip_ideal_time, citizen.trip_reference_time)
 	trip_ended.emit(citizen, completed)
 	if completed or _lots.lots.has(citizen.trip_lot_id):
 		_arrive(citizen)
@@ -273,6 +320,19 @@ func _on_pedestrian_arrived(pedestrian: Pedestrian) -> void:
 	var citizen: Citizen = citizens.get(pedestrian.owner_id)
 	if citizen != null and citizen.pedestrian_id == pedestrian.id:
 		_next_leg(citizen)
+
+
+func _on_rider_arrived(citizen_id: int) -> void:
+	var citizen: Citizen = citizens.get(citizen_id)
+	if citizen != null and citizen.on_bus:
+		_next_leg(citizen)
+
+
+## Their stop or line went, or no bus came: the trip fails.
+func _on_rider_stranded(citizen_id: int) -> void:
+	var citizen: Citizen = citizens.get(citizen_id)
+	if citizen != null and citizen.on_bus:
+		_finish_trip(citizen, false)
 
 
 ## The car ends up where it was going to park anyway (Citizen.car_lot_id).
@@ -313,6 +373,8 @@ func _sync_with_lots() -> void:
 		if not _lots.lots.has(citizen.home_lot_id):
 			if citizen.vehicle_id != -1:
 				_vehicles.remove(citizen.vehicle_id)
+			if citizen.on_bus:
+				_transit.remove_rider(citizen.id)
 			if citizen.pedestrian_id != -1:
 				_pedestrians.remove(citizen.pedestrian_id)
 			parking.release(citizen.car_lot_id)
@@ -326,6 +388,15 @@ func _sync_with_lots() -> void:
 			citizen.car_lot_id = citizen.home_lot_id
 		if citizen.state == Citizen.State.AT_SHOP and not _lots.lots.has(citizen.trip_lot_id):
 			citizen.state = Citizen.State.AT_HOME
+		if citizen.is_travelling() and not _lots.lots.has(citizen.trip_lot_id):
+			# Heading for a place that's gone: they give up and go home. (A car on the way
+			# is turned back by VehicleSystem, which fails it; walkers and riders here.)
+			if citizen.pedestrian_id != -1:
+				_pedestrians.remove(citizen.pedestrian_id)
+				_finish_trip(citizen, false)
+			elif citizen.on_bus:
+				_transit.remove_rider(citizen.id)
+				_finish_trip(citizen, false)
 		if citizen.work_lot_id != -1 and not _lots.lots.has(citizen.work_lot_id):
 			_jobs_taken.erase(citizen.work_lot_id)
 			citizen.work_lot_id = -1
@@ -344,6 +415,7 @@ func _add_citizen(home_lot_id: int) -> void:
 	citizen.leave_home_hour = 6.5 + (_rng.randf() + _rng.randf()) * 0.5 * 2.5
 	citizen.leave_work_hour = 16.0 + (_rng.randf() + _rng.randf()) * 0.5 * 3.0
 	citizen.car_preference = _rng.randf_range(CAR_PREFERENCE_RANGE.x, CAR_PREFERENCE_RANGE.y)
+	citizen.has_car = _rng.randf() < CAR_OWNERSHIP
 	citizens[citizen.id] = citizen
 	_job_seekers[citizen.id] = true
 

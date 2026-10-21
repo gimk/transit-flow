@@ -173,7 +173,7 @@ func test_zone_tools_paint_areas_that_develop_next_to_roads() -> void:
 
 func test_main_scene_has_its_key_nodes() -> void:
 	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
-			"World/VehicleRenderer", "World/PedestrianRenderer", "World/HeatmapOverlay", "World/DayNight", "World/ExternalRenderer",
+			"World/VehicleRenderer", "World/PedestrianRenderer", "World/TransitRenderer", "World/HeatmapOverlay", "World/DayNight", "World/ExternalRenderer",
 			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD", "HUD/ToolPalette"]:
 		assert_not_null(_main.get_node_or_null(path), path)
 	for tool_id: StringName in ToolManager.TOOL_SHORTCUTS.values():
@@ -194,6 +194,38 @@ func test_signal_tool_cycles_junction_control() -> void:
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), true)
 		await _mouse_left(_grid_point(0, 0) + Vector2(5, 5), false)
 		assert_eq(node.control, control)
+
+
+func _click(world: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
+	await _mouse_motion(world)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = button
+		event.pressed = pressed
+		event.position = _to_screen(world)
+		_viewport.push_input(event)
+		await wait_process_frames(1)
+
+
+func test_bus_line_tool_places_stops_and_opens_a_line() -> void:
+	var roads := Game.simulation.roads
+	roads.add_road(_grid_point(-6, 0), _grid_point(6, 0), RoadType.load_by_id(&"local_2lane"))
+	await _press_action(&"tool_bus")
+	assert_eq(_active_tool_id(), &"BusLineTool")
+	var south := Vector2(0, 10)
+	var north := Vector2(0, -10)
+	for point in [_grid_point(-4, 0) + south, _grid_point(4, 0) + south, _grid_point(4, 0) + north, _grid_point(-4, 0) + north]:
+		await _click(point)
+	assert_eq(Game.simulation.transit.stops.size(), 4, "a stop on each side at each end")
+	assert_eq(Game.simulation.transit.lines.size(), 0, "not open yet")
+	await _click(_grid_point(-4, 0) + south)  # The first stop again.
+	var transit := Game.simulation.transit
+	assert_eq(transit.lines.size(), 1)
+	assert_eq(transit.lines.values()[0].stop_ids.size(), 4)
+	# Right-clicking a stop removes it; the line goes on through the others.
+	await _click(_grid_point(4, 0) + north, MOUSE_BUTTON_RIGHT)
+	assert_eq(transit.stops.size(), 3)
+	assert_eq(transit.lines.values()[0].stop_ids.size(), 3)
 
 
 func test_bottleneck_scenario_loads() -> void:

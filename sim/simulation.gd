@@ -17,6 +17,7 @@ var signals: TrafficLights
 var vehicles: VehicleSystem
 var crosswalks := Crosswalks.new()
 var pedestrians: PedestrianSystem
+var transit: TransitSystem
 var citizens: CitizenSystem
 var freight: FreightSystem
 var stress: StressTraffic
@@ -36,7 +37,8 @@ func _init(p_roads: RoadNetwork = null) -> void:
 	signals.crosswalks = crosswalks
 	vehicles.crosswalks = crosswalks
 	pedestrians = PedestrianSystem.new(roads, lots, signals, vehicles, crosswalks)
-	citizens = CitizenSystem.new(lots, router, vehicles, pedestrians, clock)
+	transit = TransitSystem.new(roads, router, vehicles, pedestrians)
+	citizens = CitizenSystem.new(lots, router, vehicles, pedestrians, transit, clock)
 	freight = FreightSystem.new(lots, externals, router, vehicles, clock)
 	stress = StressTraffic.new(roads, router, vehicles)
 	congestion = CongestionMonitor.new(roads, router, vehicles)
@@ -52,6 +54,7 @@ func step() -> void:
 	stress.step()
 	signals.step(TICK_DT)
 	pedestrians.step(get_sim_time(), TICK_DT)
+	transit.step(get_sim_time())
 	vehicles.step(TICK_DT)
 	congestion.step(get_sim_time())
 
@@ -59,6 +62,7 @@ func step() -> void:
 ## Breaks internal reference cycles so the simulation can be freed. Call before
 ## dropping the last reference to a simulation (Game does this when replacing it).
 func dispose() -> void:
+	transit.dispose()
 	vehicles.dispose()
 	roads.dispose()
 
@@ -68,7 +72,8 @@ func get_sim_time() -> float:
 	return tick_count * TICK_DT
 
 
-## Citizens and vehicles are not saved yet: on load everyone starts at home.
+## Citizens, vehicles and buses are not saved yet: on load everyone starts at home (bus
+## stops and lines are saved).
 func to_dict() -> Dictionary:
 	return {
 		"version": SAVE_VERSION,
@@ -78,6 +83,7 @@ func to_dict() -> Dictionary:
 		"lots": lots.to_dict(),
 		"zones": zones.to_dict(),
 		"externals": externals.to_dict(),
+		"transit": transit.to_dict(),
 	}
 
 
@@ -91,4 +97,5 @@ static func from_dict(data: Dictionary) -> Simulation:
 	sim.lots.restore(data.get("lots", {}))
 	sim.zones.restore(data.get("zones", {}))
 	sim.externals.restore(data.get("externals", {}))
+	sim.transit.restore(data.get("transit", {}))
 	return sim

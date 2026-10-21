@@ -3,12 +3,15 @@ extends RefCounted
 ## A vehicle driving a route. Only VehicleSystem creates, moves and removes vehicles.
 ## `distance` is the position of the vehicle's center along its current lane.
 
-enum Kind { CAR, TRUCK }
+enum Kind { CAR, TRUCK, BUS }
 
 const CAR_LENGTH := 11.0
 const CAR_WIDTH := 6.0
 const TRUCK_LENGTH := 17.0
 const TRUCK_WIDTH := 7.0
+## A short city bus (kept no longer than a truck, which junction spacing allows for).
+const BUS_LENGTH := 17.0
+const BUS_WIDTH := 8.0
 ## The longest vehicle there is: assumed wherever a vehicle's length isn't known yet.
 const MAX_LENGTH := TRUCK_LENGTH
 
@@ -18,8 +21,14 @@ var length := CAR_LENGTH
 var width := CAR_WIDTH
 ## Who the trip belongs to (a citizen id, or a debug/traffic owner code).
 var owner_id := -1
-## One leg of an owner's longer trip, which Flow scores as a whole (citizens' cars).
+## Not scored by Flow on its own: one leg of an owner's longer trip, scored as a whole
+## (citizens' cars), or a bus (its riders' trips are scored).
 var scored_by_owner := false
+## A bus in service (TransitSystem): at the end of each route (a stop) it stays put,
+## `dwelling`, until it is given the route to its next stop (VehicleSystem.set_route).
+## It never runs out of patience.
+var in_service := false
+var dwelling := false
 ## Where the trip ends. If `destination_lot_id` is set, re-routing follows that lot's
 ## (possibly moved) access point; otherwise the fixed lane position below is used.
 var destination_lot_id := -1
@@ -91,8 +100,16 @@ var previous_rotation := 0.0
 
 func set_kind(p_kind: Kind) -> void:
 	kind = p_kind
-	length = TRUCK_LENGTH if kind == Kind.TRUCK else CAR_LENGTH
-	width = TRUCK_WIDTH if kind == Kind.TRUCK else CAR_WIDTH
+	match kind:
+		Kind.TRUCK:
+			length = TRUCK_LENGTH
+			width = TRUCK_WIDTH
+		Kind.BUS:
+			length = BUS_LENGTH
+			width = BUS_WIDTH
+		_:
+			length = CAR_LENGTH
+			width = CAR_WIDTH
 
 
 func is_on_last_lane() -> bool:

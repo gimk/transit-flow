@@ -17,6 +17,7 @@ const FAMILIES: Array[Dictionary] = [
 		{ "tool": &"IndustrialZoneTool", "label": "Industrial", "tooltip": "Zone Industrial (I)" },
 		{ "tool": &"DezoneTool", "label": "Dezone", "tooltip": "Remove zoning (X)" },
 	] },
+	{ "label": "Transit", "tool": &"BusLineTool", "tooltip": "Bus lines (U): click stops in order, then the first one again to open the line" },
 	{ "label": "Signals", "tool": &"SignalTool", "tooltip": "Traffic lights (L): click a junction to toggle its lights" },
 	{ "label": "Bulldoze", "tool": &"BulldozeTool", "tooltip": "Bulldoze (B)" },
 	{ "label": "Route", "tool": &"RouteTool", "tooltip": "Route inspector (T): click two roads to see the quickest route" },

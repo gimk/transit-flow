@@ -11,8 +11,9 @@ extends RefCounted
 
 signal pedestrian_arrived(pedestrian: Pedestrian)
 
-## Walking pace (px per sim second): a third of a car on a local street.
-const WALK_SPEED := 30.0
+## Walking pace (px per sim second): a sixth of a car on a local street, about the real
+## ratio in town (5 km/h against 30).
+const WALK_SPEED := 15.0
 ## Citizens walk trips up to this long (px) instead of driving.
 const MAX_WALK_DISTANCE := 4.0 * Grid.CELL_SIZE
 ## Added to a walk's ideal time for setting off and arriving.
@@ -52,14 +53,22 @@ func get_walking_distance(from_lot_id: int, to_lot_id: int) -> float:
 func walk(from_lot_id: int, to_lot_id: int, owner_id: int, max_distance := INF) -> Pedestrian:
 	if not (_lots.lots.has(from_lot_id) and _lots.lots.has(to_lot_id)):
 		return null
-	var path := network.find_path(_lots.lots[from_lot_id].get_center(), _lots.lots[to_lot_id].get_center())
+	var pedestrian := walk_between(_lots.lots[from_lot_id].get_center(), _lots.lots[to_lot_id].get_center(), owner_id, max_distance)
+	if pedestrian != null:
+		pedestrian.destination_lot_id = to_lot_id
+	return pedestrian
+
+
+## Starts walking between two places (e.g. a door and a bus stop). Returns null if there's
+## no way on foot, or it is longer than `max_distance`.
+func walk_between(from: Vector2, to: Vector2, owner_id: int, max_distance := INF) -> Pedestrian:
+	var path := network.find_path(from, to)
 	if path.is_empty() or path.length > max_distance:
 		return null
 	var pedestrian := Pedestrian.new()
 	pedestrian.id = _next_id
 	_next_id += 1
 	pedestrian.owner_id = owner_id
-	pedestrian.destination_lot_id = to_lot_id
 	pedestrian.points = path.points
 	pedestrian.crossings = path.crossings
 	pedestrian.position = path.points[0]

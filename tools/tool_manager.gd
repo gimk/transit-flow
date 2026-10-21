@@ -14,6 +14,7 @@ const TOOL_SHORTCUTS := {
 	&"tool_industrial": &"IndustrialZoneTool",
 	&"tool_dezone": &"DezoneTool",
 	&"tool_signals": &"SignalTool",
+	&"tool_bus": &"BusLineTool",
 }
 
 var active_tool: BuildTool = null

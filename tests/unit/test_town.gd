@@ -58,8 +58,9 @@ func test_town_lives_through_a_whole_day() -> void:
 	sim.vehicles.vehicle_arrived.connect(_on_arrived.bind(stats))
 	sim.citizens.trip_ended.connect(_on_trip_ended.bind(stats))
 	sim.vehicles.vehicle_failed.connect(func(_v: Vehicle) -> void: stats.failed += 1)
-	# When 95% of commuters are at work (a driver who gave up on the way may only arrive
-	# the next day).
+	# When 95% of the commuters with a car are at work (a driver who gave up on the way
+	# may only arrive the next day). People without one who walk across town take hours
+	# at this clock's pace (a game day is under five minutes), so they're left out.
 	var everyone_at_work := -1.0
 	var violations := 0
 	var worst_gap := INF
@@ -70,7 +71,9 @@ func test_town_lives_through_a_whole_day() -> void:
 		violations += Checks.connector_conflict_violations(sim)
 		worst_gap = minf(worst_gap, Checks.min_queue_gap(sim))
 		peak = maxi(peak, sim.vehicles.vehicles.size())
-		if everyone_at_work < 0.0 and _count_citizens(Citizen.State.AT_WORK) >= sim.citizens.citizens.size() * 0.95:
+		var drivers := sim.citizens.citizens.values().filter(func(c: Citizen) -> bool: return c.has_car)
+		var drivers_at_work := drivers.filter(func(c: Citizen) -> bool: return c.state == Citizen.State.AT_WORK).size()
+		if everyone_at_work < 0.0 and not drivers.is_empty() and drivers_at_work >= drivers.size() * 0.95:
 			everyone_at_work = sim.clock.get_time_of_day_hours()
 		if tick % Simulation.TICK_RATE == 0:
 			most_stuck = maxi(most_stuck, sim.vehicles.get_stuck_count(30.0))
@@ -86,7 +89,7 @@ func test_town_lives_through_a_whole_day() -> void:
 	assert_gte(worst_gap, VehicleSystem.MIN_GAP - 0.01, "no overlaps in any queue")
 	assert_eq(most_stuck, 0, "nobody ever stopped for 30 s (no deadlock)")
 	assert_gte(commutes.size(), sim.citizens.citizens.size() - 5, "(almost) every commuter reached work (a few give up in the jam)")
-	assert_between(everyone_at_work, 9.0, 16.0, "the morning rush (95% at work) is over before the evening one")
+	assert_between(everyone_at_work, 9.0, 16.0, "the morning rush (95% of drivers at work) is over before the evening one")
 	assert_gt(median_ratio, 1.2, "the morning rush is congested (that's the point of the scenario)")
 	assert_eq(_count_citizens(Citizen.State.AT_HOME), sim.citizens.citizens.size(), "everyone home by 06:00")
 	assert_gt(stats.trucks, 150, "freight runs all day")
