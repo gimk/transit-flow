@@ -45,10 +45,10 @@ static func _paint_house(canvas: CanvasItem, rect: Rect2, front: Vector2, rng: R
 	var depth := _depth(rect, front)
 	# The house stands at the front of its garden, somewhere along it; the rest is lawn
 	# with a tree when there's room for one.
-	var house_length := minf(length, maxf(14.0, length * rng.randf_range(0.5, 0.75)))
-	var house_depth := minf(depth, maxf(10.0, depth * rng.randf_range(0.7, 0.95)))
-	var start := rng.randf_range(0.0, length - house_length)
-	var house := _sub(rect, front, start, 0.0, start + house_length, house_depth)
+	var house := _house_rect(rect, front, rng)
+	# How far along the street the house starts (_sub measures from the left or top).
+	var start := house.position.x - rect.position.x if front.x == 0.0 else house.position.y - rect.position.y
+	var house_length := _length(house, front)
 	var room_left := start
 	var room_right := length - start - house_length
 	if maxf(room_left, room_right) >= 9.0:
@@ -71,6 +71,25 @@ static func _paint_house(canvas: CanvasItem, rect: Rect2, front: Vector2, rng: R
 
 
 ## A roof with two long slopes meeting at a ridge; hipped roofs slope at the ends too.
+## Where the house stands on a home's lot (`rect`, the building area, with the street
+## side `front`, as passed to paint()): for views that dress it, e.g. lit windows.
+static func house_rect(rect: Rect2, front: Vector2, seed: int) -> Rect2:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	return _house_rect(rect, front, rng)
+
+
+## The house's place, drawn from `rng` (the first draws for a home: paint() and
+## house_rect() must agree).
+static func _house_rect(rect: Rect2, front: Vector2, rng: RandomNumberGenerator) -> Rect2:
+	var length := _length(rect, front)
+	var depth := _depth(rect, front)
+	var house_length := minf(length, maxf(14.0, length * rng.randf_range(0.5, 0.75)))
+	var house_depth := minf(depth, maxf(10.0, depth * rng.randf_range(0.7, 0.95)))
+	var start := rng.randf_range(0.0, length - house_length)
+	return _sub(rect, front, start, 0.0, start + house_length, house_depth)
+
+
 static func _paint_pitched_roof(canvas: CanvasItem, rect: Rect2, ridge_along_x: bool, hipped: bool, color: Color) -> void:
 	var lit := color.lightened(0.18)
 	var shaded := color.darkened(0.22)

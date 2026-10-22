@@ -105,7 +105,7 @@ func _process(_delta: float) -> void:
 		multimesh.instance_count = maxi(count, maxi(multimesh.instance_count * 2, MIN_CAPACITY))
 	multimesh.visible_instance_count = count
 	var dt := to.time - from.time
-	(material as ShaderMaterial).set_shader_parameter("night", night_amount(to.hours) if _day_night else 0.0)
+	(material as ShaderMaterial).set_shader_parameter("night", DayNight.night_amount(to.hours) if _day_night else 0.0)
 	for vehicle_id: int in to.vehicle_index:
 		var i: int = to.vehicle_index[vehicle_id]
 		var position_now := to.positions[i]
@@ -123,12 +123,6 @@ func _process(_delta: float) -> void:
 		multimesh.set_instance_color(i, lateness_color(to.lateness[i]) if show_lateness else to.colors[i])
 		var lamps := to.indicators[i] | (LAMP_BRAKE if braking else 0)
 		multimesh.set_instance_custom_data(i, Color(to.kinds[i], lamps, size.x, size.y))
-
-
-## How dark it is (0 day, 1 night), from the day / night tint.
-static func night_amount(hours: float) -> float:
-	var night_tint: Color = DayNight.KEYFRAMES[0][1]
-	return clampf((1.0 - DayNight.tint_at(hours).get_luminance()) / (1.0 - night_tint.get_luminance()), 0.0, 1.0)
 
 
 ## Normal colour of a vehicle that isn't a bus (buses take their line's colour): cars in

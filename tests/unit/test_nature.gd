@@ -1,6 +1,6 @@
 extends GutTest
-## Greenery on unzoned land (NatureRenderer.lay_out): trees and parks keep off roads,
-## sidewalks, zones and lots, and come out the same every time.
+## Trees on unzoned land (NatureRenderer.lay_out): they keep off roads, sidewalks, zones
+## and lots, and come out the same every time.
 
 const G := 64.0
 
@@ -24,13 +24,11 @@ func after_each() -> void:
 	sim.dispose()
 
 
-func test_greenery_keeps_off_roads_sidewalks_zones_and_lots() -> void:
+func test_trees_keep_off_roads_sidewalks_zones_and_lots() -> void:
 	var started := Time.get_ticks_msec()
-	var layout := NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots)
+	var trees := NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots)
 	gut.p("laid out the whole map in %d ms" % (Time.get_ticks_msec() - started))
-	var trees: Array[Vector3] = layout.trees
 	assert_gt(trees.size(), 100, "a fair number of trees")
-	assert_gt((layout.parks as Array).size(), 0, "some parks beside the roads")
 	for tree in trees:
 		var at := Vector2(tree.x, tree.y)
 		var cell := Grid.world_to_cell(at)
@@ -44,11 +42,9 @@ func test_greenery_keeps_off_roads_sidewalks_zones_and_lots() -> void:
 				if gap < clear + tree.z - 1.0:
 					fail_test("tree at %s over the road or its sidewalk" % at)
 					return
-	for park: Dictionary in layout.parks:
-		assert_false(sim.zones.zones.has(Grid.world_to_cell((park.plot as Rect2).get_center())))
 
 
 func test_the_same_map_gets_the_same_greenery() -> void:
 	var first := NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots)
 	var second := NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots)
-	assert_eq(first.trees, second.trees)
+	assert_eq(first, second)

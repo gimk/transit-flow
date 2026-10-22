@@ -22,6 +22,7 @@
 [ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
 [ext_resource type="Script" path="res://tools/bus_line_tool.gd" id="32_bus_tool"]
 [ext_resource type="Script" path="res://view/nature_renderer.gd" id="33_nature"]
+[ext_resource type="Script" path="res://view/night_lights.gd" id="34_night_lights"]
 
 [node name="Main" type="Node2D" unique_id=1531639300]
 
@@ -103,6 +104,9 @@ script = ExtResource("32_bus_tool")
 
 [node name="DayNight" type="CanvasModulate" parent="World"]
 script = ExtResource("18_day_night")
+
+[node name="NightLights" type="CanvasLayer" parent="World"]
+script = ExtResource("34_night_lights")
 
 [node name="MapCamera" type="Camera2D" parent="." unique_id=1405124855]
 script = ExtResource("2_camera")

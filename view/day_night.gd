@@ -7,14 +7,14 @@ extends CanvasModulate
 const OVERLAY_ID := &"day_night"
 ## (hour, tint) keyframes, interpolated linearly; must start at 0 and end at 24.
 const KEYFRAMES := [
-	[0.0, Color(0.38, 0.42, 0.62)],
-	[5.0, Color(0.38, 0.42, 0.62)],
+	[0.0, Color(0.48, 0.52, 0.72)],
+	[5.0, Color(0.48, 0.52, 0.72)],
 	[6.5, Color(0.95, 0.78, 0.68)],
 	[8.0, Color(1, 1, 1)],
 	[17.5, Color(1, 1, 1)],
 	[19.5, Color(0.95, 0.72, 0.62)],
-	[21.0, Color(0.38, 0.42, 0.62)],
-	[24.0, Color(0.38, 0.42, 0.62)],
+	[21.0, Color(0.48, 0.52, 0.72)],
+	[24.0, Color(0.48, 0.52, 0.72)],
 ]
 
 
@@ -24,6 +24,13 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	color = tint_at(Game.view_to.hours)
+
+
+## How dark it is (0 day, 1 night), from the tint: drives headlights and the light layer
+## (NightLights).
+static func night_amount(hour: float) -> float:
+	var night_tint: Color = KEYFRAMES[0][1]
+	return clampf((1.0 - tint_at(hour).get_luminance()) / (1.0 - night_tint.get_luminance()), 0.0, 1.0)
 
 
 static func tint_at(hour: float) -> Color:

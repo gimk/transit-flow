@@ -102,6 +102,12 @@ func _process(_delta: float) -> void:
 		_update_parked()
 
 
+## Per lot, where things are drawn (see layout(); plus "id", "type", "seed", "plot",
+## "door"): for other views that dress buildings, e.g. lit windows (NightLights).
+func get_layouts() -> Array[Dictionary]:
+	return _layouts
+
+
 func _mark_dirty() -> void:
 	_dirty = true
 
