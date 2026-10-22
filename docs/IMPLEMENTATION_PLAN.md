@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Next: the polish track (graphics and gameplay, a checklist before Phase 10+).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Now: the polish track (graphics and gameplay, a checklist before Phase 10+); buildings done.
 
 ---
 
@@ -407,7 +407,7 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 The simulation is ahead of how the game looks and plays: everything is drawn with flat rectangles, lines and dots, and the only way to understand what happens is the debug panel. This track makes the existing systems readable and pleasant to play, without adding new ones. Order within each group is a suggested priority.
 
 **World visuals**
-- [ ] Buildings with a look per zone and size (roof shapes, a few house / shop / factory styles; shadows), instead of flat coloured rectangles.
+- [x] Buildings with a look per zone and size (roof shapes, a few house / shop / factory styles; shadows), instead of flat coloured rectangles. *Done (2026-10-22):* `BuildingPainter`, style picked from a seed per lot (its cell), so a lot keeps its look. Houses: hipped or gabled roofs in five colours, lit on the north-west slopes, in a garden with a tree when there's room. Shops: flat roofs with a parapet, a striped awning on the street side, rooftop units, two shops on wide lots. Factories: sawtooth or ribbed roofs, yellow-edged loading doors on the street side, sometimes a silo. Everything casts a shadow down-right by its height. Parked cars moved to a layer of their own, so buildings are only redrawn when lots or roads change.
 - [ ] Vehicles as small top-down sprites (car, truck, bus) with a slight per-car tint; brake lights when slowing, indicators when turning or changing lanes, headlights at night.
 - [ ] People as tiny figures (or at least a darker outline) so they read against sidewalks; riders visible boarding and getting off.
 - [ ] Roads: asphalt texture or subtle noise, kerbs and sidewalks drawn (sidewalks exist in the sim but aren't drawn), cleaner junction corners on avenues and curves.
