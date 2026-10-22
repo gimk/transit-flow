@@ -403,3 +403,18 @@ func test_the_grid_shows_only_with_tools_that_snap_to_it() -> void:
 	assert_eq(grid._grid_target, 0.0, "bulldozing doesn't")
 	await _press_action(&"tool_residential")
 	assert_eq(grid._grid_target, 1.0, "zoning does")
+
+
+func test_trees_follow_road_edits_without_laying_out_the_whole_map() -> void:
+	var nature := _main.get_node("World/NatureRenderer") as NatureRenderer
+	var trees := (nature.get_node("Trees") as MultiMeshInstance2D).multimesh
+	var sim := Game.simulation
+	var local := RoadType.load_by_id(&"local_2lane")
+	var first := sim.roads.add_road(_grid_point(-3, 0), _grid_point(3, 0), local)
+	sim.roads.add_road(_grid_point(0, -3), _grid_point(0, 3), local)  # Splits the first.
+	await wait_process_frames(2)
+	assert_eq(trees.instance_count, NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots).size(), "same as from scratch")
+	sim.roads.add_curved_road(_grid_point(3, 0), _grid_point(5, 0), _grid_point(5, 2), local)
+	sim.roads.remove_segment(sim.roads.segments.keys()[0] if sim.roads.segments.has(first) == false else first)
+	await wait_process_frames(2)
+	assert_eq(trees.instance_count, NatureRenderer.lay_out(sim.roads, sim.zones.zones, sim.lots).size(), "after more edits")

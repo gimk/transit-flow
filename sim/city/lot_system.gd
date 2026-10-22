@@ -24,18 +24,27 @@ const DRIVEWAY_SETBACK := Vehicle.MAX_LENGTH + 4.0
 const ROAD_CLEARANCE := WalkNetwork.SIDEWALK_OFFSET + 2.0
 ## A plot narrower than this (px) holds no building.
 const MIN_PLOT := 16.0
+## How far around a changed road lots may be affected by the edit (px): the widest road's
+## half width and clearance plus a cell, which also covers ACCESS_DISTANCE.
+const EDIT_REACH := 2.0 * Grid.CELL_SIZE
 
 var lots: Dictionary[int, Lot] = {}
 
 var _roads: RoadNetwork
 var _lot_by_cell: Dictionary[Vector2i, int] = {}
 var _access_cache: Dictionary[int, Array] = {}
+## Each road segment's box (RoadSegment.get_bounds), kept so that after a road edit the
+## area the changed roads covered before and after it is known: only lots there need
+## their plot and access worked out again.
+var _segment_bounds: Dictionary[int, Rect2] = {}
 var _next_id := 1
 
 
 func _init(roads: RoadNetwork) -> void:
 	_roads = roads
 	_roads.changed.connect(_on_roads_changed)
+	for segment: RoadSegment in roads.segments.values():
+		_segment_bounds[segment.id] = segment.get_bounds()
 
 
 ## Returns the new lot id, or -1 if the cell is taken, outside the map, or the roads
@@ -68,7 +77,9 @@ static func compute_plot(roads: RoadNetwork, cell: Vector2i) -> Rect2:
 		if segment.elevation_layer != 0:
 			continue
 		var half := segment.road_type.get_total_width() * 0.5 + ROAD_CLEARANCE
-		var points := LaneBuilder.get_polyline(segment.centerline)
+		if not segment.get_bounds().grow(half + reach).intersects(cell_rect):
+			continue  # Too far to matter (most roads, for most cells).
+		var points := segment.get_polyline()
 		for i in points.size() - 1:
 			var a := points[i]
 			var b := points[i + 1]
@@ -151,7 +162,10 @@ func get_access(lot_id: int) -> Dictionary:
 func get_access_points(lot_id: int) -> Array[Dictionary]:
 	if not lots.has(lot_id):
 		return []
-	if not _access_cache.has(lot_id):
+	var cached: Array = _access_cache.get(lot_id, [])
+	# Road edits only clear the lots near them (_on_roads_changed); a lane gone anyway
+	# means this one was missed: work it out again rather than hand out a stale lane.
+	if not _access_cache.has(lot_id) or cached.any(func(point: Dictionary) -> bool: return not _roads.lanes.has(point.lane_id)):
 		_access_cache[lot_id] = _find_access_points(lots[lot_id].get_center())
 	return _access_cache[lot_id]
 
@@ -209,11 +223,26 @@ static func _set_back(lane: Lane, distance: float) -> float:
 	return clampf(distance, DRIVEWAY_SETBACK, lane.length - DRIVEWAY_SETBACK)
 
 
-func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
-	_access_cache.clear()
-	# Roads may have taken land: re-fit every plot, and drop lots left without room.
+func _on_roads_changed(_node_ids: Array, segment_ids: Array) -> void:
+	# Where the changed roads were and are now, widened by as far as a road can reach into
+	# a plot (half its width, the clearance and a cell) or a lot reach a road
+	# (ACCESS_DISTANCE): lots outside that are untouched by the edit.
+	var areas: Array[Rect2] = []
+	for segment_id: int in segment_ids:
+		if _segment_bounds.has(segment_id):
+			areas.append(_segment_bounds[segment_id].grow(EDIT_REACH))
+			_segment_bounds.erase(segment_id)
+		var segment: RoadSegment = _roads.segments.get(segment_id)
+		if segment != null:
+			_segment_bounds[segment_id] = segment.get_bounds()
+			areas.append(segment.get_bounds().grow(EDIT_REACH))
+	# Roads may have taken land: re-fit those plots, and drop lots left without room.
 	var removed := false
 	for lot: Lot in lots.values():
+		var cell_rect := Rect2(Vector2(lot.cell) * Grid.CELL_SIZE, Vector2.ONE * Grid.CELL_SIZE)
+		if not areas.any(func(area: Rect2) -> bool: return area.intersects(cell_rect)):
+			continue
+		_access_cache.erase(lot.id)
 		lot.plot = compute_plot(_roads, lot.cell)
 		if not lot.plot.has_area():
 			lots.erase(lot.id)

@@ -355,13 +355,19 @@ func find_segment_at(position: Vector2, max_distance: float, elevation_layer := 
 func find_lane_position(position: Vector2, max_distance: float, elevation_layer := 0) -> Dictionary:
 	var best := {}
 	var best_distance := max_distance
-	for lane: Lane in lanes.values():
-		if lane.is_connector() or segments[lane.segment_id].elevation_layer != elevation_layer:
+	for segment: RoadSegment in segments.values():
+		if segment.elevation_layer != elevation_layer:
 			continue
-		var distance := lane.curve.get_closest_point(position).distance_to(position)
-		if distance <= best_distance:
-			best_distance = distance
-			best = { "lane_id": lane.id, "distance": lane.curve.get_closest_offset(position) }
+		# Skip roads too far away to have a lane in reach (most of them).
+		var reach := max_distance + segment.road_type.get_total_width() * 0.5
+		if not segment.get_bounds().grow(reach).has_point(position):
+			continue
+		for lane_id in segment.lane_ids:
+			var lane := lanes[lane_id]
+			var distance := lane.curve.get_closest_point(position).distance_to(position)
+			if distance <= best_distance:
+				best_distance = distance
+				best = { "lane_id": lane.id, "distance": lane.curve.get_closest_offset(position) }
 	return best
 
 

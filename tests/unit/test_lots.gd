@@ -150,3 +150,16 @@ func test_a_corner_lots_driveway_is_set_back_from_the_junction() -> void:
 		var lane := roads.lanes[point.lane_id]
 		assert_gte(point.distance, LotSystem.DRIVEWAY_SETBACK - 0.01, "clear of the junction it starts at")
 		assert_lte(point.distance, lane.length - LotSystem.DRIVEWAY_SETBACK + 0.01, "clear of the junction it ends at")
+
+
+func test_a_road_edit_only_refits_lots_near_it() -> void:
+	_road(Vector2(0, 4), Vector2(10, 4))
+	_road(Vector2(0, 20), Vector2(10, 20))  # Another street, far away.
+	var near := lots.add_lot(Vector2i(3, 3), Lot.Type.RESIDENTIAL)
+	var far := lots.add_lot(Vector2i(5, 19), Lot.Type.RESIDENTIAL)
+	var far_access := lots.get_access(far)
+	# A side street right next to the near lot takes some of its land.
+	_road(Vector2(3, 0), Vector2(3, 4))
+	assert_lt(lots.lots[near].plot.size.x, Grid.CELL_SIZE - LotSystem.ROAD_CLEARANCE, "near lot refitted")
+	assert_eq(lots.get_access(far), far_access, "far lot keeps its access")
+	assert_true(roads.lanes.has(lots.get_access(near).lane_id))

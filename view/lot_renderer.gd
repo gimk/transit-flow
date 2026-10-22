@@ -27,11 +27,16 @@ const STALL_WIDTH := 8.0
 const BUILDING_MARGIN := 2.0
 ## Parked cars come and go: redraw them this often (frames).
 const REDRAW_FRAMES := 10
+## Lots are drawn in square regions of this many cells, each its own canvas item, so a
+## change only redraws the regions it touches (the city changes all the time as it grows).
+const REGION_CELLS := 8
 
 ## Per lot, what to draw: see layout().
 var _layouts: Array[Dictionary] = []
 ## Lots or roads changed: lay out again (once, next frame: changes come in bursts).
 var _dirty := true
+## Region (Vector2i) -> { "node": the Node2D drawing it, "entries": its lots' layouts }.
+var _regions: Dictionary = {}
 ## Draws the parked cars, over the lots, like VehicleRenderer draws moving ones.
 var _parked_layer := MultiMeshInstance2D.new()
 
@@ -115,6 +120,7 @@ func _mark_dirty() -> void:
 ## Re-lays out every lot (on lot or road changes; reads the simulation, so not per frame).
 func _rebuild() -> void:
 	_layouts.clear()
+	var by_region: Dictionary = {}
 	var lots := Game.simulation.lots
 	var roads := Game.simulation.roads
 	for lot: Lot in lots.lots.values():
@@ -127,30 +133,52 @@ func _rebuild() -> void:
 			entry.door = roads.lanes[access.lane_id].curve.sample_baked(access.distance)
 			entry.merge(layout(lot.plot, entry.door, stall_count))
 		_layouts.append(entry)
-	queue_redraw()
+		(by_region.get_or_add(Vector2i((Vector2(lot.cell) / REGION_CELLS).floor()), []) as Array).append(entry)
+	# Redraw only the regions whose lots look different now.
+	for key: Vector2i in by_region:
+		var region: Dictionary = _regions.get(key, {})
+		if region.is_empty():
+			var node := Node2D.new()
+			node.name = "Region%d_%d" % [key.x, key.y]
+			add_child(node)
+			move_child(node, 0)  # Under the parked cars.
+			node.draw.connect(_draw_region.bind(key))
+			region = { "node": node, "entries": [] }
+			_regions[key] = region
+		if region.entries != by_region[key]:
+			region.entries = by_region[key]
+			(region.node as Node2D).queue_redraw()
+	for key: Vector2i in _regions.keys():
+		if not by_region.has(key):
+			(_regions[key].node as Node2D).queue_free()
+			_regions.erase(key)
 	_update_parked()
 
 
-func _draw() -> void:
-	for entry in _layouts:
+func _draw_region(key: Vector2i) -> void:
+	var region: Dictionary = _regions.get(key, {})
+	if region.is_empty():
+		return
+	var canvas: Node2D = region.node
+	for entry: Dictionary in region.entries:
 		var building: Rect2 = entry.building
 		if entry.door == Vector2.INF:
-			BuildingPainter.paint(self, entry.type, building, entry.front, entry.seed)
-			draw_rect(building, NO_ACCESS_DIM)
-			draw_rect(building, NO_ACCESS_COLOR, false, 2.0)
+			BuildingPainter.paint(canvas, entry.type, building, entry.front, entry.seed)
+			canvas.draw_rect(building, NO_ACCESS_DIM)
+			canvas.draw_rect(building, NO_ACCESS_COLOR, false, 2.0)
 			continue
 		var parking: Rect2 = entry.parking
 		if parking.has_area():
-			draw_rect(parking, PAVEMENT_COLOR)
+			canvas.draw_rect(parking, PAVEMENT_COLOR)
 		var stalls: Array[Rect2] = entry.stalls
 		var horizontal: bool = entry.front.x != 0.0
 		for stall in stalls:
 			# Stall dividers run front to back, between neighbours.
 			if horizontal:
-				draw_line(stall.position, stall.position + Vector2(stall.size.x, 0), STALL_LINE_COLOR, 1.0)
+				canvas.draw_line(stall.position, stall.position + Vector2(stall.size.x, 0), STALL_LINE_COLOR, 1.0)
 			else:
-				draw_line(stall.position, stall.position + Vector2(0, stall.size.y), STALL_LINE_COLOR, 1.0)
-		BuildingPainter.paint(self, entry.type, building, entry.front, entry.seed)
+				canvas.draw_line(stall.position, stall.position + Vector2(0, stall.size.y), STALL_LINE_COLOR, 1.0)
+		BuildingPainter.paint(canvas, entry.type, building, entry.front, entry.seed)
 
 
 ## Puts the citizens' parked cars in their stalls (every REDRAW_FRAMES: cars come and go).

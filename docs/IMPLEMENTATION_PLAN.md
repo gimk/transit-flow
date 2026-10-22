@@ -419,6 +419,8 @@ The simulation is ahead of how the game looks and plays: everything is drawn wit
 
 *Fixed along the way (2026-10-22):* right-turners at the Avenue × Main Street lights stood in their turn for 4-5 s behind a driver stopped to turn into a corner shop whose driveway was 4 px past the junction (a lot's access point was simply the nearest point on the lane). Driveways now keep `LotSystem.DRIVEWAY_SETBACK` (a truck length and a bit) from both ends of their lane. The other cause of right-turn waits on green, anyone on a crosswalk holding the turn even on its far half, is left as it is for now.
 
+*Fixed along the way (2026-10-22):* adding a road froze the game for about half a second (Town: ~400 ms in one frame). Now about 20 ms, one long frame: the tree layout is redone only for cells near the changed roads (`NatureRenderer` indexes which cells each segment passes near), and its batch is joined from cached per-cell data, per 8×8-cell region, redoing only regions a road edit or a zone / lot change touches; `LotRenderer` draws buildings per 8×8-cell region and redraws only regions whose lots look different; `LotSystem` re-fits plots and clears driveway access only for lots near the changed roads (it keeps each segment's bounds, so it knows where removed roads were); `RoadSegment` caches its polyline and bounds, which `compute_plot` and `find_lane_position` use to skip far-away roads. Left: re-placing every street lamp (~3 ms) and recomputing every junction corner (~5 ms) per edit.
+
 **Transit visuals**
 - [ ] Bus stop shelters (and bays) drawn as objects, with a line-colour badge per line serving the stop.
 - [ ] Line paths drawn as clean offset ribbons beside the road (one per line where several share a road), not a band over the lanes.
