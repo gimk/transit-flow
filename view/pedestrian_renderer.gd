@@ -30,25 +30,11 @@ func _ready() -> void:
 	multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	multimesh.use_colors = true
-	multimesh.mesh = _make_quad()
+	multimesh.mesh = VehicleRenderer.make_quad_around(Vector2(-0.5, -0.5), Vector2(0.5, 0.5))
 	var shader_material := ShaderMaterial.new()
 	shader_material.shader = preload("res://view/pedestrian.gdshader")
 	material = shader_material
 	Events.simulation_reset.connect(_on_simulation_reset)
-
-
-## A unit quad with UV equal to the position (-0.5..0.5), for the shader.
-static func _make_quad() -> ArrayMesh:
-	var a := Vector2(-0.5, -0.5)
-	var b := Vector2(0.5, 0.5)
-	var vertices := PackedVector2Array([a, Vector2(b.x, a.y), b, a, b, Vector2(a.x, b.y)])
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_TEX_UV] = vertices
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
 
 
 func _on_simulation_reset() -> void:

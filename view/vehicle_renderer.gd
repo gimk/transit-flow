@@ -56,6 +56,12 @@ func _ready() -> void:
 static func make_quad() -> ArrayMesh:
 	var a := Vector2(-0.5 - QUAD_REAR, -0.5 - QUAD_SIDE)
 	var b := Vector2(0.5 + QUAD_FRONT, 0.5 + QUAD_SIDE)
+	return make_quad_around(a, b)
+
+
+## A quad from corner `a` to corner `b` with UV equal to the position, for sprites drawn
+## by a shader from where they are on it (vehicles, people, trees).
+static func make_quad_around(a: Vector2, b: Vector2) -> ArrayMesh:
 	var vertices := PackedVector2Array([a, Vector2(b.x, a.y), b, a, b, Vector2(a.x, b.y)])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)

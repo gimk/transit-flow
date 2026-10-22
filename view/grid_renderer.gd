@@ -1,7 +1,8 @@
 class_name GridRenderer
 extends Node2D
-## Draws the map background and the building grid, limited to the visible area.
-## Minor lines are hidden when zoomed out far enough that they would turn into noise.
+## Draws the map's ground (ground.gdshader: varied grass in `map_color`) and, over it on
+## a child layer, the building grid, limited to the visible area. Minor lines are hidden
+## when zoomed out far enough that they would turn into noise.
 
 const MAJOR_EVERY := 8
 const MIN_MINOR_SPACING_PX := 12.0
@@ -12,19 +13,32 @@ const MIN_MINOR_SPACING_PX := 12.0
 @export var border_color := Color(1, 1, 1, 0.35)
 
 var _visible_rect := Rect2()
+## The grid lines, drawn without the ground shader.
+var _lines := Node2D.new()
+
+
+func _ready() -> void:
+	var ground := ShaderMaterial.new()
+	ground.shader = preload("res://view/ground.gdshader")
+	material = ground
+	_lines.name = "Lines"
+	add_child(_lines)
+	_lines.draw.connect(_draw_lines)
 
 
 func _process(_delta: float) -> void:
 	var rect := _compute_visible_rect()
 	if rect != _visible_rect:
 		_visible_rect = rect
-		queue_redraw()
+		_lines.queue_redraw()
 
 
 func _draw() -> void:
-	var map := Grid.map_rect()
-	draw_rect(map, map_color)
+	draw_rect(Grid.map_rect(), map_color)
 
+
+func _draw_lines() -> void:
+	var map := Grid.map_rect()
 	var view := _visible_rect.intersection(map)
 	if view.has_area():
 		var cell := Grid.CELL_SIZE
@@ -53,11 +67,11 @@ func _draw() -> void:
 				minor.append(to)
 
 		if not minor.is_empty():
-			draw_multiline(minor, minor_color)
+			_lines.draw_multiline(minor, minor_color)
 		if not major.is_empty():
-			draw_multiline(major, major_color)
+			_lines.draw_multiline(major, major_color)
 
-	draw_rect(map, border_color, false)
+	_lines.draw_rect(map, border_color, false)
 
 
 func _compute_visible_rect() -> Rect2:

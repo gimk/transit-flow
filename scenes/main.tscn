@@ -21,6 +21,7 @@
 [ext_resource type="Script" uid="uid://blpje5h1ldfb1" path="res://view/heatmap_overlay.gd" id="14_heatmap"]
 [ext_resource type="Script" uid="uid://b22w3mj2x3c0k" path="res://tools/signal_tool.gd" id="15_signal_tool"]
 [ext_resource type="Script" path="res://tools/bus_line_tool.gd" id="32_bus_tool"]
+[ext_resource type="Script" path="res://view/nature_renderer.gd" id="33_nature"]
 
 [node name="Main" type="Node2D" unique_id=1531639300]
 
@@ -28,10 +29,13 @@
 
 [node name="GridRenderer" type="Node2D" parent="World" unique_id=1275227272]
 script = ExtResource("1_grid")
-map_color = Color(0.17898983, 0.1531992, 0.098189585, 1)
+map_color = Color(0.3, 0.36, 0.2, 1)
 
 [node name="ZoneRenderer" type="Node2D" parent="World"]
 script = ExtResource("16_zones")
+
+[node name="NatureRenderer" type="Node2D" parent="World"]
+script = ExtResource("33_nature")
 
 [node name="RoadRenderer" type="Node2D" parent="World" unique_id=311894543]
 script = ExtResource("4_roads")

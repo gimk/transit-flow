@@ -172,7 +172,7 @@ func test_zone_tools_paint_areas_that_develop_next_to_roads() -> void:
 
 
 func test_main_scene_has_its_key_nodes() -> void:
-	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
+	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/NatureRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
 			"World/VehicleRenderer", "World/PedestrianRenderer", "World/TransitRenderer", "World/HeatmapOverlay", "World/DayNight", "World/ExternalRenderer",
 			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD", "HUD/ToolPalette"]:
 		assert_not_null(_main.get_node_or_null(path), path)
