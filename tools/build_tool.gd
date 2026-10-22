@@ -24,6 +24,11 @@ func deactivate() -> void:
 	Events.tool_hint_changed.emit("")
 
 
+## Whether the building grid is shown while this tool is active (tools that snap to it).
+func shows_grid() -> bool:
+	return false
+
+
 ## Return true if the event was consumed.
 func handle_input(_event: InputEvent) -> bool:
 	return false

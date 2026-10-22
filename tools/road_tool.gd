@@ -38,6 +38,10 @@ func _ready() -> void:
 	super()
 
 
+func shows_grid() -> bool:
+	return true
+
+
 func get_variants() -> Array[StringName]:
 	var ids: Array[StringName] = []
 	for type in RoadType.list_all():

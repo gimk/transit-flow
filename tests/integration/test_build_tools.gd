@@ -392,3 +392,14 @@ func test_debug_menu_folds_away() -> void:
 	assert_false(body.visible)
 	await _press_action(&"toggle_debug_menu")
 	assert_true(body.visible)
+
+
+func test_the_grid_shows_only_with_tools_that_snap_to_it() -> void:
+	var grid := _main.get_node("World/GridRenderer") as GridRenderer
+	assert_eq(grid._grid_target, 0.0, "hidden with no tool")
+	await _press_action(&"tool_road")
+	assert_eq(grid._grid_target, 1.0, "roads snap to it")
+	await _press_action(&"tool_bulldoze")
+	assert_eq(grid._grid_target, 0.0, "bulldozing doesn't")
+	await _press_action(&"tool_residential")
+	assert_eq(grid._grid_target, 1.0, "zoning does")

@@ -30,6 +30,10 @@ func _process(_delta: float) -> void:
 		queue_redraw()
 
 
+func shows_grid() -> bool:
+	return true
+
+
 func handle_input(event: InputEvent) -> bool:
 	var mouse_button := event as InputEventMouseButton
 	if mouse_button == null:
