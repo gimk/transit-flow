@@ -2,12 +2,12 @@ class_name LotRenderer
 extends Node2D
 ## Draws each lot on its plot (the part of its cell the roads leave free, Lot.plot): the
 ## building at the back (BuildingPainter: a style per zone, varied per lot), a marked
-## parking strip at the front, along the side facing the road it is reached from, with a
-## driveway to its access point. Stalls: one per resident's car at homes, the lot's spaces
-## at shops and factories (Parking.CAPACITY); the citizens' cars parked there are drawn in
-## them on a layer of their own (from the tick snapshot, so they come and go as people
-## drive, without redrawing the buildings). Lots without road access are dimmed with a
-## red outline.
+## parking strip at the front, along the side facing the road it is reached from. Stalls:
+## one per resident's car at homes, the lot's spaces at shops and factories
+## (Parking.CAPACITY); the citizens' cars parked there are drawn in them, nose in, with the
+## vehicle sprite (vehicle.gdshader), on a layer of their own (from the tick snapshot, so
+## they come and go as people drive, without redrawing the buildings). Lots without road
+## access are dimmed with a red outline.
 
 ## Zone colours, for the zone tint and tools (buildings have their own styles).
 const COLORS := {
@@ -25,7 +25,6 @@ const MIN_BUILDING := 8.0
 ## Width of a stall (a car is 6 px wide), and the gap around buildings.
 const STALL_WIDTH := 8.0
 const BUILDING_MARGIN := 2.0
-const DRIVEWAY_WIDTH := 4.0
 ## Parked cars come and go: redraw them this often (frames).
 const REDRAW_FRAMES := 10
 
@@ -33,14 +32,23 @@ const REDRAW_FRAMES := 10
 var _layouts: Array[Dictionary] = []
 ## Lots or roads changed: lay out again (once, next frame: changes come in bursts).
 var _dirty := true
-## Draws the parked cars, over the lots.
-var _parked_layer := Node2D.new()
+## Draws the parked cars, over the lots, like VehicleRenderer draws moving ones.
+var _parked_layer := MultiMeshInstance2D.new()
 
 
 func _ready() -> void:
 	_parked_layer.name = "ParkedCars"
+	var cars := MultiMesh.new()
+	cars.transform_format = MultiMesh.TRANSFORM_2D
+	cars.use_colors = true
+	cars.use_custom_data = true
+	cars.mesh = VehicleRenderer.make_quad()
+	_parked_layer.multimesh = cars
+	# Its own material: parked cars keep their headlights off at night.
+	var sprite := ShaderMaterial.new()
+	sprite.shader = preload("res://view/vehicle.gdshader")
+	_parked_layer.material = sprite
 	add_child(_parked_layer)
-	_parked_layer.draw.connect(_draw_parked)
 	Events.simulation_reset.connect(_mark_dirty)
 	Events.lots_changed.connect(_mark_dirty)
 	Events.road_network_changed.connect(func(_nodes: Array, _segments: Array) -> void: _mark_dirty())
@@ -91,7 +99,7 @@ func _process(_delta: float) -> void:
 		_dirty = false
 		_rebuild()
 	elif Engine.get_process_frames() % REDRAW_FRAMES == 0:
-		_parked_layer.queue_redraw()
+		_update_parked()
 
 
 func _mark_dirty() -> void:
@@ -114,7 +122,7 @@ func _rebuild() -> void:
 			entry.merge(layout(lot.plot, entry.door, stall_count))
 		_layouts.append(entry)
 	queue_redraw()
-	_parked_layer.queue_redraw()
+	_update_parked()
 
 
 func _draw() -> void:
@@ -127,10 +135,7 @@ func _draw() -> void:
 			continue
 		var parking: Rect2 = entry.parking
 		if parking.has_area():
-			draw_line(parking.get_center(), entry.door, PAVEMENT_COLOR, DRIVEWAY_WIDTH)
 			draw_rect(parking, PAVEMENT_COLOR)
-		else:
-			draw_line(building.get_center(), entry.door, PAVEMENT_COLOR, DRIVEWAY_WIDTH)
 		var stalls: Array[Rect2] = entry.stalls
 		var horizontal: bool = entry.front.x != 0.0
 		for stall in stalls:
@@ -142,14 +147,28 @@ func _draw() -> void:
 		BuildingPainter.paint(self, entry.type, building, entry.front, entry.seed)
 
 
-func _draw_parked() -> void:
+## Puts the citizens' parked cars in their stalls (every REDRAW_FRAMES: cars come and go).
+func _update_parked() -> void:
 	var parked := Game.view_to.parked
+	var cars := _parked_layer.multimesh
+	var count := 0
 	for entry in _layouts:
-		var cars: int = parked.get(entry.id, 0)
-		if cars == 0 or entry.door == Vector2.INF:
+		if entry.door != Vector2.INF:
+			count += mini(parked.get(entry.id, 0), (entry.stalls as Array).size())
+	if cars.instance_count < count:
+		cars.instance_count = maxi(count, cars.instance_count * 2)
+	var size := Vector2(Vehicle.CAR_LENGTH, Vehicle.CAR_WIDTH)
+	var lamps_off := Color(Vehicle.Kind.CAR, 0, size.x, size.y)
+	var n := 0
+	for entry in _layouts:
+		if entry.door == Vector2.INF:
 			continue
 		var stalls: Array[Rect2] = entry.stalls
-		var horizontal: bool = entry.front.x != 0.0
-		var car := Vector2(Vehicle.CAR_LENGTH, Vehicle.CAR_WIDTH) if horizontal else Vector2(Vehicle.CAR_WIDTH, Vehicle.CAR_LENGTH)
-		for i in mini(cars, stalls.size()):
-			_parked_layer.draw_rect(Rect2(stalls[i].get_center() - car * 0.5, car), VehicleRenderer.CAR_COLOR)
+		# Parked nose in, facing the building.
+		var heading := (-(entry.front as Vector2)).angle()
+		for i in mini(parked.get(entry.id, 0), stalls.size()):
+			cars.set_instance_transform_2d(n, Transform2D(heading, size, 0.0, stalls[i].get_center()))
+			cars.set_instance_color(n, VehicleRenderer.car_color(entry.id * 7 + i))
+			cars.set_instance_custom_data(n, lamps_off)
+			n += 1
+	cars.visible_instance_count = n

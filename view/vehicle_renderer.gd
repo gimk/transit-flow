@@ -43,7 +43,7 @@ func _ready() -> void:
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	multimesh.use_colors = true
 	multimesh.use_custom_data = true
-	multimesh.mesh = _make_quad()
+	multimesh.mesh = make_quad()
 	var shader_material := ShaderMaterial.new()
 	shader_material.shader = preload("res://view/vehicle.gdshader")
 	material = shader_material
@@ -53,7 +53,7 @@ func _ready() -> void:
 
 ## A quad in body units (the body spans -0.5..0.5 both ways), with UV equal to the
 ## position so the shader knows where on the body it is.
-static func _make_quad() -> ArrayMesh:
+static func make_quad() -> ArrayMesh:
 	var a := Vector2(-0.5 - QUAD_REAR, -0.5 - QUAD_SIDE)
 	var b := Vector2(0.5 + QUAD_FRONT, 0.5 + QUAD_SIDE)
 	var vertices := PackedVector2Array([a, Vector2(b.x, a.y), b, a, b, Vector2(a.x, b.y)])
@@ -130,7 +130,12 @@ static func night_amount(hours: float) -> float:
 static func color_for_vehicle(vehicle: Vehicle) -> Color:
 	if vehicle.kind == Vehicle.Kind.TRUCK:
 		return TRUCK_COLOR
-	var shade := hash(vehicle.id)
+	return car_color(vehicle.id)
+
+
+## A car's colour, a shade of green picked by `seed`.
+static func car_color(seed: int) -> Color:
+	var shade := hash(seed)
 	var hue := CAR_COLOR.h + ((shade % 64) / 63.0 - 0.5) * 0.08
 	var value := CAR_COLOR.v * (0.75 + ((shade >> 6) % 64) / 63.0 * 0.35)
 	return Color.from_hsv(hue, CAR_COLOR.s * 0.9, clampf(value, 0.0, 1.0))
