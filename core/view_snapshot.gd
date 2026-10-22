@@ -14,6 +14,11 @@ var rotations := PackedFloat32Array()
 ## Length x width per vehicle.
 var sizes := PackedVector2Array()
 var colors := PackedColorArray()
+## Vehicle.Kind per vehicle, its speed (px/s; the renderer tells braking from the change
+## between snapshots) and its indicator (VehicleRenderer.LAMP_LEFT / LAMP_RIGHT, or 0).
+var kinds := PackedByteArray()
+var speeds := PackedFloat32Array()
+var indicators := PackedByteArray()
 ## How late each vehicle is, from 0 (within its ideal trip time) to 1 (late enough for its
 ## driver to turn impatient, VehicleSystem.IMPATIENT_FACTOR), for the lateness view.
 var lateness := PackedFloat32Array()
@@ -69,6 +74,9 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 	snapshot.sizes.resize(count)
 	snapshot.colors.resize(count)
 	snapshot.lateness.resize(count)
+	snapshot.kinds.resize(count)
+	snapshot.speeds.resize(count)
+	snapshot.indicators.resize(count)
 	var i := 0
 	var stuck := 0
 	var drawn: Array = vehicles.values()
@@ -80,6 +88,9 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 		snapshot.sizes[i] = Vector2(vehicle.length, vehicle.width)
 		snapshot.colors[i] = sim.transit.get_bus_color(vehicle.id) if vehicle.kind == Vehicle.Kind.BUS \
 				else VehicleRenderer.color_for_vehicle(vehicle)
+		snapshot.kinds[i] = vehicle.kind
+		snapshot.speeds[i] = vehicle.speed
+		snapshot.indicators[i] = VehicleRenderer.indicator_for(vehicle)
 		var late_after := vehicle.ideal_trip_time * (VehicleSystem.IMPATIENT_FACTOR - 1.0) + VehicleSystem.IMPATIENT_GRACE
 		var late_by := snapshot.time - vehicle.trip_start_time - vehicle.ideal_trip_time
 		snapshot.lateness[i] = clampf(late_by / late_after, 0.0, 1.0)

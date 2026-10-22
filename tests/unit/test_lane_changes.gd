@@ -125,3 +125,29 @@ func test_lane_changes_and_offsets_survive_rerouting() -> void:
 	for i in 400:
 		sim.vehicles.step(DT)
 	assert_false(sim.vehicles.vehicles.has(vehicle.id))
+
+
+func test_a_lane_change_is_steered_not_strafed() -> void:
+	_build_avenue_with_side_street()
+	var vehicle := _car_needing_to_change()
+	var start_lane := vehicle.lane
+	var steered := 0.0
+	var last_offset := INF
+	var last_distance := 0.0
+	for i in 400:
+		sim.vehicles.step(DT)
+		if not sim.vehicles.vehicles.has(vehicle.id) or vehicle.lane == start_lane:
+			continue
+		if vehicle.lateral_offset == 0.0:
+			break
+		# The nose points toward the new lane (offset > 0: right of it, so steering left).
+		assert_true(vehicle.slide_yaw * vehicle.lateral_offset <= 0.0, "steering into the lane")
+		steered = maxf(steered, absf(vehicle.slide_yaw))
+		if last_offset != INF:
+			var across := absf(last_offset) - absf(vehicle.lateral_offset)
+			var along := vehicle.distance - last_distance
+			assert_true(across <= along * 0.35 + 0.01, "moves across no faster than a car can steer")
+		last_offset = vehicle.lateral_offset
+		last_distance = vehicle.distance
+	assert_gt(steered, 0.1, "turned its nose noticeably")
+	assert_lt(steered, VehicleSystem.LANE_CHANGE_MAX_YAW + 0.001)

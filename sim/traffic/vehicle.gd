@@ -72,8 +72,13 @@ var leader_gap := INF
 var leader_speed := 0.0
 var stop_gap := INF
 ## After a lane change: how far the vehicle still is from its new lane's center (px,
-## positive to the right). It slides across over a moment; drawing only.
+## positive to the right). It steers across as it drives on (VehicleSystem._slide);
+## drawing only. The slide started `slide_from` px out and is `slide_progress` (0..1) done.
 var lateral_offset := 0.0
+var slide_from := 0.0
+var slide_progress := 1.0
+## Yaw from steering across (radians, positive to the right), added to the lane heading.
+var slide_yaw := 0.0
 ## Waiting to change lanes and running out of road: vehicles on the target lane make room.
 var merging := false
 ## Driveways (VehicleSystem.depart). Before it pulls out, the vehicle waits off the road:

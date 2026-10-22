@@ -88,8 +88,14 @@ const MERGE_DISTANCE := 60.0
 ## A merging vehicle stopped at the end of its lane this long gives up the lane change,
 ## goes on from the lane it's in, and re-routes (sim seconds).
 const MISSED_LANE_WAIT := 2.0
-## How fast a vehicle that changed lanes is drawn sliding across (px per sim second).
-const LANE_CHANGE_SLIDE_SPEED := 20.0
+## A vehicle that changed lanes is drawn steering across, along an S-curve as long as
+## this many times the distance across (as it drives: no strafing), with a nose angle
+## that follows the curve. Slow or stopped vehicles still finish within
+## LANE_CHANGE_MAX_TIME (sim seconds), so they don't sit across two lanes.
+const LANE_CHANGE_LENGTH_RATIO := 5.0
+const LANE_CHANGE_MIN_LENGTH := 20.0
+const LANE_CHANGE_MAX_TIME := 2.0
+const LANE_CHANGE_MAX_YAW := 0.45
 ## Gap acceptance (_gap_accepted): how far away, in seconds, approaching conflicting
 ## traffic must be before a driver enters, by turn. (Vehicles here drive about 2.5x
 ## faster in car lengths per second than real ones, so these are below real-world gaps.)
@@ -237,7 +243,7 @@ func pull_into_bay(vehicle: Vehicle) -> void:
 		return
 	_dequeue(vehicle)
 	vehicle.in_bay = true
-	vehicle.lateral_offset = BAY_OFFSET
+	_start_slide(vehicle, BAY_OFFSET)
 	_update_pose(vehicle)
 
 
@@ -359,14 +365,14 @@ func step(dt: float) -> void:
 	for vehicle: Vehicle in vehicles.values():
 		vehicle.previous_position = vehicle.position
 		vehicle.previous_rotation = vehicle.rotation
-		vehicle.lateral_offset = move_toward(vehicle.lateral_offset, 0.0, LANE_CHANGE_SLIDE_SPEED * dt)
 		if vehicle.dwelling:
 			# A bus at its stop, holding up the lane until it is sent on (or off it, in a
 			# bay, drawn beside the lane).
 			vehicle.speed = 0.0
 			if vehicle.in_bay:
-				vehicle.lateral_offset = BAY_OFFSET
+				_start_slide(vehicle, BAY_OFFSET)
 			continue
+		_slide(vehicle, dt)
 		_update_speed(vehicle, dt)
 		if _advance(vehicle, dt):
 			arrived.append(vehicle)
@@ -871,8 +877,33 @@ func _move_across(vehicle: Vehicle, target: Lane, at: float) -> void:
 	_enqueue(vehicle)
 	# Drawn where it was, sliding over to the new lane's center.
 	var pose := target.sample_pose(at)
-	vehicle.lateral_offset = (old_position - pose.origin).dot(_right_of(pose.x))
+	_start_slide(vehicle, (old_position - pose.origin).dot(_right_of(pose.x)))
 	_update_pose(vehicle)
+
+
+## Starts drawing the vehicle `offset` px right of its lane, to steer back onto it.
+func _start_slide(vehicle: Vehicle, offset: float) -> void:
+	vehicle.lateral_offset = offset
+	vehicle.slide_from = offset
+	vehicle.slide_progress = 0.0 if offset != 0.0 else 1.0
+	vehicle.slide_yaw = 0.0
+
+
+## Steers a vehicle a tick further across into its lane: the offset follows a smoothstep
+## over the distance driven, and the nose points along it.
+func _slide(vehicle: Vehicle, dt: float) -> void:
+	if vehicle.slide_progress >= 1.0:
+		vehicle.lateral_offset = 0.0
+		vehicle.slide_yaw = 0.0
+		return
+	var length := maxf(LANE_CHANGE_MIN_LENGTH, absf(vehicle.slide_from) * LANE_CHANGE_LENGTH_RATIO)
+	var step := maxf(vehicle.speed * dt / length, dt / LANE_CHANGE_MAX_TIME)
+	var p := minf(vehicle.slide_progress + step, 1.0)
+	vehicle.slide_progress = p
+	vehicle.lateral_offset = vehicle.slide_from * (1.0 - p * p * (3.0 - 2.0 * p))
+	# d(offset)/d(distance): smoothstep's slope is 6p(1 - p).
+	var slope := -vehicle.slide_from * 6.0 * p * (1.0 - p) / length
+	vehicle.slide_yaw = clampf(atan(slope), -LANE_CHANGE_MAX_YAW, LANE_CHANGE_MAX_YAW)
 
 
 ## A vehicle on the target lane coming up behind a merging vehicle holds back to let it
@@ -1384,6 +1415,7 @@ func _update_pose(vehicle: Vehicle) -> void:
 	vehicle.rotation = pose.get_rotation()
 	if vehicle.lateral_offset != 0.0:
 		vehicle.position += _right_of(pose.x) * vehicle.lateral_offset
+		vehicle.rotation += vehicle.slide_yaw
 
 
 ## Unit vector to the right of a direction (y grows downward).
