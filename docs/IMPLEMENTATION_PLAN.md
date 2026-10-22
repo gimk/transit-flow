@@ -3,7 +3,7 @@
 Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Next: Phase 10+ (toward the full game).
+**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Next: the polish track (graphics and gameplay, a checklist before Phase 10+).
 
 ---
 
@@ -402,6 +402,65 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 *Phase 9 done (2026-10-21).* Curved roads are dense polylines (a quadratic Bézier sampled every 8 px, `RoadNetwork.curve_path`), so everything built on polylines works unchanged: lanes, junctions and connectors, splitting where other roads cross (both ways), sidewalks and crosswalks, saves. Road planning works on paths (`plan_path`, `add_path_pieces`, `add_curved_road`; straight roads are two-point paths). Curves tighter than a 56 px radius are refused (a quarter turn within one grid square is too tight, within two fine), and each lane's speed limit drops round a bend so sideways acceleration stays under 80 px/s² (v = sqrt(a r): a 2-square quarter turn is taken at ~80-88 px/s). Lot plots keep clear of diagonal and curved roads. Road tool: V toggles curved mode (drag from the start to the bend point, release, click the end). The Town's ring road has two curved corners.
 - Measured: Bottleneck Flow with no bypass 50%, a straight bypass 50%, the same bypass with curved corners 51% ("done when" met); traffic round a loop of curves never exceeds a lane's limit, no overlaps or conflicts.
 - Found along the way: at a permissive light on a busy avenue, a left-turning truck could wait 32 s for a gap. Turners who have waited 5 s may now go up to 2 s after their light turns red, if the junction is clear (a 2 s amber for everyone did it too, but cost every light capacity). Dashed lines now stay dashed round curves.
+
+### Polish track — graphics and gameplay (from 2026-10-22, before new systems)
+The simulation is ahead of how the game looks and plays: everything is drawn with flat rectangles, lines and dots, and the only way to understand what happens is the debug panel. This track makes the existing systems readable and pleasant to play, without adding new ones. Order within each group is a suggested priority.
+
+**World visuals**
+- [ ] Buildings with a look per zone and size (roof shapes, a few house / shop / factory styles; shadows), instead of flat coloured rectangles.
+- [ ] Vehicles as small top-down sprites (car, truck, bus) with a slight per-car tint; brake lights when slowing, indicators when turning or changing lanes, headlights at night.
+- [ ] People as tiny figures (or at least a darker outline) so they read against sidewalks; riders visible boarding and getting off.
+- [ ] Roads: asphalt texture or subtle noise, kerbs and sidewalks drawn (sidewalks exist in the sim but aren't drawn), cleaner junction corners on avenues and curves.
+- [ ] Ground: terrain colour variation, trees and small parks on unzoned land, so the map isn't a flat brown grid.
+- [ ] Grid: fainter, and hidden outside the build tools.
+- [ ] Day / night: lit windows, street lights, headlights; a softer night tint.
+- [ ] Map edges and highway connections drawn as real roads leaving the map, not a sign.
+- [ ] Zoom levels of detail: markings, people and parked cars fade out when zoomed far out; simpler shapes for thousands of vehicles.
+
+**Transit visuals**
+- [ ] Bus stop shelters (and bays) drawn as objects, with a line-colour badge per line serving the stop.
+- [ ] Line paths drawn as clean offset ribbons beside the road (one per line where several share a road), not a band over the lanes.
+- [ ] Buses with a destination / line number label when zoomed in; a rider-load indicator.
+
+**HUD and UI**
+- [ ] Icons on the build palette (roads, zones, transit, signals, bulldoze) with text tooltips, instead of text buttons.
+- [ ] A cleaner top bar: clock, period, Flow with a mini trend, speed buttons; the debug stats (vehicles, tick ms) moved to the debug panel.
+- [ ] A city panel: population, jobs, mode share (with a 24 h chart), Flow history, worst trips.
+- [ ] "Why is Flow low?": the Flow breakdown by cause (jams, failed trips, long walks, waiting for buses) with buttons that jump the camera to the worst spots.
+- [ ] Notifications that point somewhere (click to locate): gridlock forming, trips failing, a stop with stranded riders, a zone waiting for a road.
+- [ ] Keyboard speed controls (space pause, 1-3 speeds) shown on the buttons.
+- [ ] A consistent theme (font, panel style, colours) across HUD, palette and panels.
+
+**Inspecting things (click to see)**
+- [ ] Click a building: its type, residents or workers, where they work or live, their last trips, its parking use.
+- [ ] Click a vehicle or person: where they're going, by which mode, how late; follow them with the camera.
+- [ ] Click a junction: control type, light phases and timings, queues per approach, what's blocking.
+- [ ] Click a road: type, speed limit, volume and congestion, lanes.
+- [ ] Click a bus line or stop: stops, buses, headway, riders waiting and carried, loop time.
+
+**Building and editing tools**
+- [ ] Undo / redo for every build action.
+- [ ] Road tool: show length, junctions and what will be removed before building; a clear direction arrow for one-ways; a button to flip a one-way.
+- [ ] Bulldoze: drag a rectangle; remove bus stops and lines too (now only by right-click in the bus tool); confirm before removing buildings.
+- [ ] Bus lines: edit a line (add, move or remove stops), rename and recolour it, set its number of buses; a line list panel.
+- [ ] Traffic lights: show the phases when the junction is selected; per-junction light timing.
+- [ ] Zoning: brush and fill shapes; show which cells will develop and which wait for a road or for room.
+- [ ] Palette state remembered (last road type, curve mode) and shown on its button.
+
+**Game flow**
+- [ ] Main menu: new game, load, scenarios (Bottleneck, Town, ...), settings, quit.
+- [ ] Save / load with named slots and a menu (now only F5 / F9 quicksave).
+- [ ] Settings: fullscreen, vsync, UI scale, key bindings, day / night on or off.
+- [ ] Pause menu (Esc when no tool is active).
+- [ ] First-time hints: a short guided start (build a road, zone, watch the commute, read Flow).
+- [ ] Scenarios as challenges with a goal (e.g. "get the Bottleneck above 70% Flow") and a result screen.
+
+**Gameplay tuning**
+- [ ] Time scale: a game day passes in under five minutes while a car crosses town in a game hour and a walk takes hours; rebalance the clock against travel times so trips feel right in game hours.
+- [ ] Flow: make the number understandable and stable (what 80% means, how it moves day to day).
+- [ ] Bus usefulness: tune waits, walks and service so buses matter in typical player cities (left for later on purpose: see 8c and "Bus reach").
+- [ ] Difficulty curve of the scenarios; sensible defaults (new map start, first zones).
+- [ ] Performance budget for large player cities (thousands of vehicles plus pedestrians) with the new visuals.
 
 ### Phase 10+ — Toward the full game (order to be revisited)
 - More road types (6-lane, bus lanes, truck-only roads), lane-turn rules UI.
