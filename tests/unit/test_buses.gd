@@ -353,3 +353,33 @@ func test_stops_get_a_crosswalk_that_cars_give_way_at() -> void:
 	assert_eq(both, 0, "never a car on it with someone crossing")
 	assert_gt(walked.n, 40, "people get across")
 	assert_eq(sim.vehicles.get_stuck_count(30.0), 0, "and cars get past")
+
+
+func test_riders_get_on_and_off_at_the_bus_door() -> void:
+	_street_line()
+	var home := sim.lots.add_lot(Vector2i(3, 4), Lot.Type.RESIDENTIAL)
+	sim.lots.add_lot(Vector2i(21, 4), Lot.Type.COMMERCIAL)
+	sim.step()
+	var citizen: Citizen = sim.citizens.citizens.values()[0]
+	citizen.has_car = false
+	citizen.leave_now = true
+	var rode := false
+	var stepped_off_at := Vector2.INF
+	var bus_at := Vector2.INF
+	for i in Simulation.TICK_RATE * 60:
+		sim.step()
+		rode = rode or citizen.on_bus
+		if rode and not citizen.on_bus and citizen.pedestrian_id != -1:
+			var walker: Pedestrian = sim.pedestrians.pedestrians[citizen.pedestrian_id]
+			stepped_off_at = walker.points[0]
+			for bus: TransitSystem.Bus in sim.transit.buses.values():
+				if bus.vehicle.dwelling:
+					bus_at = bus.vehicle.position
+			break
+	assert_true(rode, "rode the bus")
+	var boarded := 0
+	for stop: BusStop in sim.transit.stops.values():
+		boarded += stop.boarded
+	assert_gte(boarded, 1, "counted getting on, for drawing")
+	assert_lt(stepped_off_at.distance_to(bus_at), Vehicle.BUS_LENGTH * 0.5 + Vehicle.BUS_WIDTH, "walks on from beside the bus")
+	assert_gt(stepped_off_at.distance_to(bus_at), Vehicle.BUS_WIDTH * 0.5, "outside it, at the curb side")

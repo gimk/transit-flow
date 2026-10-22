@@ -78,6 +78,19 @@ func walk_between(from: Vector2, to: Vector2, owner_id: int, max_distance := INF
 	return pedestrian
 
 
+## Makes a pedestrian who has just set off start from `point` instead (e.g. a bus door
+## beside the curb), stepping across to where their walk began.
+func start_from(pedestrian_id: int, point: Vector2) -> void:
+	var pedestrian: Pedestrian = pedestrians.get(pedestrian_id)
+	if pedestrian == null or pedestrian.leg != 0 or pedestrian.leg_progress != 0.0:
+		return
+	var points := pedestrian.points
+	points.insert(0, point)
+	pedestrian.points = points
+	pedestrian.crossings.insert(0, Crosswalks.NONE)
+	pedestrian.position = point
+
+
 ## Removes a pedestrian without reporting an arrival (e.g. their home is gone).
 func remove(pedestrian_id: int) -> void:
 	var pedestrian: Pedestrian = pedestrians.get(pedestrian_id)

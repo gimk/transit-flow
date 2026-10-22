@@ -17,7 +17,8 @@ extends RefCounted
 ##   times), ride (the times buses really take), change lines at the same stop or one a
 ##   short walk away (a penalty each, at most MAX_TRANSFERS), walk from the last stop.
 
-signal rider_arrived(citizen_id: int)
+## `door`: where they step off, beside the bus's front door (they walk on from there).
+signal rider_arrived(citizen_id: int, door: Vector2)
 signal rider_stranded(citizen_id: int)
 
 const OWNER_ID := -4
@@ -25,6 +26,8 @@ const CAPACITY := 40
 ## Dwell at a stop: opening and closing the doors, plus per rider getting off or on.
 const DWELL_BASE := 1.0
 const BOARD_TIME := 0.2
+## How far behind the bus's front the door is (px).
+const DOOR_SETBACK := 3.0
 ## Buses per line: one for each TARGET_HEADWAY of a trip round the line, up to a cap.
 const TARGET_HEADWAY := 10.0
 const MAX_BUSES_PER_LINE := 12
@@ -246,6 +249,13 @@ func get_bus_color(vehicle_id: int) -> Color:
 	var bus: Bus = buses.get(vehicle_id)
 	var line: BusLine = lines.get(bus.line_id) if bus != null else null
 	return line.color if line != null else Color.WHITE
+
+
+## The curb side of a bus's front door (riders step off and on here).
+static func get_door_position(vehicle: Vehicle) -> Vector2:
+	var heading := Vector2.from_angle(vehicle.rotation)
+	var right := Vector2(-heading.y, heading.x)
+	return vehicle.position + heading * (vehicle.length * 0.5 - DOOR_SETBACK) + right * (vehicle.width * 0.5 + 1.0)
 
 
 # --- Riders -------------------------------------------------------------------------
@@ -563,11 +573,12 @@ func _on_vehicle_arrived(vehicle: Vehicle) -> void:
 		if rider.to_stop_id == stop_id:
 			alighting.append(rider)
 	bus.dwell_until = _time + DWELL_BASE + BOARD_TIME * alighting.size()
-	for rider in alighting:
-		_detach_rider(rider)
-		rider_arrived.emit(rider.citizen_id)
 	if stops[stop_id].bay:
 		_vehicles.pull_into_bay(vehicle)
+	var door := get_door_position(vehicle)
+	for rider in alighting:
+		_detach_rider(rider)
+		rider_arrived.emit(rider.citizen_id, door)
 	_board(bus)
 
 
@@ -588,6 +599,7 @@ func _board(bus: Bus) -> void:
 		rider.stop_id = -1
 		rider.bus_id = bus.vehicle.id
 		bus.riders.append(rider)
+		stop.boarded += 1
 		bus.dwell_until += BOARD_TIME
 
 

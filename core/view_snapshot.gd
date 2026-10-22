@@ -29,11 +29,14 @@ var pedestrian_index: Dictionary[int, int] = {}
 var pedestrian_positions := PackedVector2Array()
 ## Light-controlled junction node id -> light (TrafficLights.Light) per phase.
 var lights: Dictionary[int, PackedInt32Array] = {}
-## Bus stops: where, the direction of the traffic they serve, riders waiting, bay or not.
+## Bus stops: where, the direction of the traffic they serve, riders waiting, bay or not,
+## id, and how many riders have boarded there so far (to draw them getting on).
 var stop_positions := PackedVector2Array()
 var stop_directions := PackedVector2Array()
 var stop_waiting := PackedInt32Array()
 var stop_bays := PackedByteArray()
+var stop_ids := PackedInt32Array()
+var stop_boarded := PackedInt32Array()
 ## Bus lines: { "color": Color, "path": PackedVector2Array } each (paths are replaced,
 ## never edited, so sharing them is safe).
 var bus_lines: Array[Dictionary] = []
@@ -116,6 +119,8 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 			snapshot.stop_directions.append(stop.direction)
 			snapshot.stop_waiting.append(stop.waiting.size())
 			snapshot.stop_bays.append(1 if stop.bay else 0)
+			snapshot.stop_ids.append(stop.id)
+			snapshot.stop_boarded.append(stop.boarded)
 	snapshot.stop_crossings = sim.crosswalks.mid_block
 	for line: BusLine in sim.transit.lines.values():
 		snapshot.bus_lines.append({ "color": line.color, "path": line.path })

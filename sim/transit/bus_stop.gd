@@ -16,6 +16,8 @@ var distance := 0.0
 var bay := false
 ## Riders waiting here (TransitSystem.Rider), first come first.
 var waiting: Array = []
+## Riders who got on a bus here so far (for drawing them boarding).
+var boarded := 0
 
 
 func _init(p_id: int, p_position: Vector2, p_direction: Vector2) -> void:

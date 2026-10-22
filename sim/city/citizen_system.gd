@@ -328,10 +328,13 @@ func _on_pedestrian_arrived(pedestrian: Pedestrian) -> void:
 		_next_leg(citizen)
 
 
-func _on_rider_arrived(citizen_id: int) -> void:
+func _on_rider_arrived(citizen_id: int, door: Vector2) -> void:
 	var citizen: Citizen = citizens.get(citizen_id)
 	if citizen != null and citizen.on_bus:
 		_next_leg(citizen)
+		# Walking on: from the bus door, across to the sidewalk.
+		if citizen.pedestrian_id != -1:
+			_pedestrians.start_from(citizen.pedestrian_id, door)
 
 
 ## Their stop or line went, or no bus came: the trip fails.
