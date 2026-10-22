@@ -137,3 +137,16 @@ func test_an_avenue_too_close_removes_the_lots_between() -> void:
 	assert_eq(sim.lots.get_lot_at_cell(Vector2i(3, 4)), -1)
 	assert_eq(sim.lots.add_lot(Vector2i(5, 4), Lot.Type.COMMERCIAL), -1, "nor can one be placed there")
 	sim.dispose()
+
+
+func test_a_corner_lots_driveway_is_set_back_from_the_junction() -> void:
+	# Crossroads at (4, 4); the lot in the cell north-west of it.
+	_road(Vector2(0, 4), Vector2(8, 4))
+	_road(Vector2(4, 0), Vector2(4, 8))
+	var id := lots.add_lot(Vector2i(3, 3), Lot.Type.COMMERCIAL)
+	var points := lots.get_access_points(id)
+	assert_gt(points.size(), 0)
+	for point in points:
+		var lane := roads.lanes[point.lane_id]
+		assert_gte(point.distance, LotSystem.DRIVEWAY_SETBACK - 0.01, "clear of the junction it starts at")
+		assert_lte(point.distance, lane.length - LotSystem.DRIVEWAY_SETBACK + 0.01, "clear of the junction it ends at")

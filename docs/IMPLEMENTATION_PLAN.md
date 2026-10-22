@@ -417,6 +417,8 @@ The simulation is ahead of how the game looks and plays: everything is drawn wit
 - [ ] Map edges and highway connections drawn as real roads leaving the map, not a sign.
 - [ ] Zoom levels of detail: markings, people and parked cars fade out when zoomed far out; simpler shapes for thousands of vehicles.
 
+*Fixed along the way (2026-10-22):* right-turners at the Avenue × Main Street lights stood in their turn for 4-5 s behind a driver stopped to turn into a corner shop whose driveway was 4 px past the junction (a lot's access point was simply the nearest point on the lane). Driveways now keep `LotSystem.DRIVEWAY_SETBACK` (a truck length and a bit) from both ends of their lane. The other cause of right-turn waits on green, anyone on a crosswalk holding the turn even on its far half, is left as it is for now.
+
 **Transit visuals**
 - [ ] Bus stop shelters (and bays) drawn as objects, with a line-colour badge per line serving the stop.
 - [ ] Line paths drawn as clean offset ribbons beside the road (one per line where several share a road), not a band over the lanes.

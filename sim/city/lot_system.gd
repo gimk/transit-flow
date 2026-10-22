@@ -16,6 +16,10 @@ const ACCESS_DISTANCE := 48.0
 ## Expected extra time (sim seconds) to turn across the road into or out of a driveway,
 ## counted when choosing between the two sides (Router.find_best_route).
 const FAR_SIDE_PENALTY := 4.0
+## Driveways keep this far (px) from either end of their lane: a driver stopping to turn
+## in, or waiting to pull out, stands clear of the junction instead of blocking its exit
+## (corner lots would otherwise get one right at the junction).
+const DRIVEWAY_SETBACK := Vehicle.MAX_LENGTH + 4.0
 ## Room a road takes beyond its half width: the sidewalk, and a little verge.
 const ROAD_CLEARANCE := WalkNetwork.SIDEWALK_OFFSET + 2.0
 ## A plot narrower than this (px) holds no building.
@@ -182,8 +186,9 @@ func _find_access_points(center: Vector2) -> Array[Dictionary]:
 	var near := _roads.find_lane_position(center, ACCESS_DISTANCE)
 	if near.is_empty():
 		return points
-	points.append(near)
 	var near_lane := _roads.lanes[near.lane_id]
+	near.distance = _set_back(near_lane, near.distance)
+	points.append(near)
 	# Across the road, only the lane next to the center line: turning left into or out of
 	# the driveway, as drivers do.
 	for lane_id in _roads.segments[near_lane.segment_id].lane_ids:
@@ -191,8 +196,17 @@ func _find_access_points(center: Vector2) -> Array[Dictionary]:
 		if lane.from_node_id != near_lane.from_node_id and lane.index_from_center == 0:
 			# Turning left across the road takes waiting for a gap: drivers avoid it when
 			# the near side isn't much further.
-			points.append({ "lane_id": lane_id, "distance": lane.curve.get_closest_offset(center), "penalty": FAR_SIDE_PENALTY })
+			points.append({ "lane_id": lane_id, "distance": _set_back(lane, lane.curve.get_closest_offset(center)),
+				"penalty": FAR_SIDE_PENALTY })
 	return points
+
+
+## `distance` along `lane`, kept DRIVEWAY_SETBACK from its ends (the middle, on a lane too
+## short for that).
+static func _set_back(lane: Lane, distance: float) -> float:
+	if lane.length < DRIVEWAY_SETBACK * 2.0:
+		return lane.length * 0.5
+	return clampf(distance, DRIVEWAY_SETBACK, lane.length - DRIVEWAY_SETBACK)
 
 
 func _on_roads_changed(_node_ids: Array, _segment_ids: Array) -> void:
