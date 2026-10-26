@@ -3,6 +3,7 @@ extends Node2D
 ## Draws traffic lights: a bar at each stop line of a light-controlled junction, coloured
 ## by the best light any of that lane's turns has (with protected left turns, the left
 ## lane of a road can be green for going straight and red for turning).
+## At least a dot cell thick under the dot display, so they read at any zoom.
 
 const LIGHT_COLORS := {
 	TrafficLights.Light.GREEN: Color("43a047"),
@@ -48,7 +49,7 @@ func _draw() -> void:
 				var color: Color = LIGHT_COLORS[_lane_light(node, lane)]
 				var pose := lane.sample_pose(lane.length)
 				var across := pose.y.normalized() * segment.road_type.lane_width * 0.5
-				draw_line(pose.origin - across, pose.origin + across, color, BAR_WIDTH)
+				draw_line(pose.origin - across, pose.origin + across, color, maxf(BAR_WIDTH, DotDisplay.current_cell))
 
 
 func _lane_light(node: RoadNode, lane: Lane) -> TrafficLights.Light:

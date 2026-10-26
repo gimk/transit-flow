@@ -3,7 +3,9 @@ extends Node2D
 ## Paint on one road segment: the center line between directions (dashed on local
 ## streets, solid on wider roads), dashed lines between lanes going the same way,
 ## arrows along one-way roads, bus lanes tinted behind a solid line, and zebra crossings
-## at junctions. Stops short of junctions, where the connectors are.
+## at junctions. Stops short of junctions, where the connectors are. The bus lane tint is
+## a RoadMarkings of its own (bus_lanes_only), on RoadRenderer's BusLanes layer, so the
+## dot display can mark bus lanes in their own style (DotDisplay).
 
 const LINE_COLOR := Color(1, 1, 1, 0.45)
 const CENTER_COLOR := Color(1.0, 0.85, 0.35, 0.6)
@@ -25,6 +27,8 @@ var _end_trim := 0.0
 ## Crosswalks (at junctions) across the road at its start / end.
 var _zebra_at_start := false
 var _zebra_at_end := false
+## Draws only the bus lane tint, and the other markings leave it out.
+var bus_lanes_only := false
 
 
 func setup(points: PackedVector2Array, road_type: RoadType, start_trim: float, end_trim: float,
@@ -39,6 +43,9 @@ func setup(points: PackedVector2Array, road_type: RoadType, start_trim: float, e
 
 
 func _draw() -> void:
+	if bus_lanes_only:
+		_draw_bus_lanes()
+		return
 	if _zebra_at_start:
 		_draw_zebra(_points, _start_trim)
 	if _zebra_at_end:
@@ -58,13 +65,6 @@ func _draw() -> void:
 		_dashed(center, CENTER_COLOR)
 	elif center.size() >= 2:
 		draw_polyline(center, CENTER_COLOR, LINE_WIDTH)
-	if _road_type.bus_lanes:
-		# The curb lane each way: tinted, behind a solid line.
-		var curb := (_road_type.lanes_per_direction - 0.5) * lane_width
-		for side in [-1.0, 1.0]:
-			var lane := _line_at(side * curb)
-			if lane.size() >= 2:
-				draw_polyline(lane, BUS_LANE_COLOR, lane_width - 2.0)
 	for k in range(1, _road_type.lanes_per_direction):
 		var solid: bool = _road_type.bus_lanes and k == _road_type.lanes_per_direction - 1
 		for side in [-1.0, 1.0]:
@@ -73,6 +73,19 @@ func _draw() -> void:
 				draw_polyline(line, LINE_COLOR, LINE_WIDTH)
 			elif not solid:
 				_dashed(line, LINE_COLOR)
+
+
+## The curb lane each way, on roads with bus lanes: tinted (behind a solid line, drawn
+## with the other markings).
+func _draw_bus_lanes() -> void:
+	if _road_type.one_way or not _road_type.bus_lanes:
+		return
+	var lane_width := _road_type.lane_width
+	var curb := (_road_type.lanes_per_direction - 0.5) * lane_width
+	for side in [-1.0, 1.0]:
+		var lane := _line_at(side * curb)
+		if lane.size() >= 2:
+			draw_polyline(lane, BUS_LANE_COLOR, lane_width - 2.0)
 
 
 ## Zebra stripes across the road, `at` along `points` from its first point (where

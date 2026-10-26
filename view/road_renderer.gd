@@ -3,7 +3,8 @@ extends Node2D
 ## Draws each road segment as Line2D strips built from its centerline, in layers so
 ## segments meeting at a node blend into one clean junction: sidewalks (where people
 ## walk, WalkNetwork), the kerb, the gutter (the road type's edge colour), the asphalt,
-## then lane markings (RoadMarkings). Where roads meet, the inside corners are rounded
+## then bus lanes (a RoadMarkings each, BusLanes: their own layer in the dot display) and
+## lane markings (RoadMarkings). Where roads meet, the inside corners are rounded
 ## (corner_fillets): the kerb curves round, and the back of the sidewalk with it. Paving
 ## gets a soft grain (surface_grain.gdshader).
 
@@ -23,8 +24,10 @@ var _sidewalk_corners := _CornerLayer.new()
 var _edges := Node2D.new()
 var _surfaces := Node2D.new()
 var _corners := _CornerLayer.new()
+var _bus_lanes := Node2D.new()
 var _markings := Node2D.new()
-## Segment id -> [sidewalk, kerb, gutter, surface Line2D, RoadMarkings].
+## Segment id -> [sidewalk, kerb, gutter, surface Line2D, RoadMarkings, and the bus lane
+## RoadMarkings on roads with bus lanes].
 var _lines: Dictionary[int, Array] = {}
 
 
@@ -53,7 +56,8 @@ func _ready() -> void:
 	sidewalk_grain.set_shader_parameter("scale", 0.6)
 	sidewalk_grain.set_shader_parameter("strength", 0.06)
 	for layer: Array in [[_sidewalks, "Sidewalks", sidewalk_grain], [_sidewalk_corners, "SidewalkCorners", sidewalk_grain],
-			[_edges, "Edges", null], [_surfaces, "Surfaces", grain], [_corners, "Corners", grain], [_markings, "Markings", null]]:
+			[_edges, "Edges", null], [_surfaces, "Surfaces", grain], [_corners, "Corners", grain], [_bus_lanes, "BusLanes", null],
+			[_markings, "Markings", null]]:
 		var node: Node2D = layer[0]
 		node.name = layer[1]
 		node.material = layer[2]
@@ -99,6 +103,12 @@ func _add_segment(segment_id: int) -> void:
 		roads.nodes[segment.start_node_id].get_degree() >= 3, roads.nodes[segment.end_node_id].get_degree() >= 3)
 	_markings.add_child(markings)
 	_lines[segment_id] = [sidewalk, kerb, gutter, surface, markings]
+	if road_type.bus_lanes and not road_type.one_way:
+		var bus_lanes := RoadMarkings.new()
+		bus_lanes.bus_lanes_only = true
+		bus_lanes.setup(points, road_type, roads.get_junction_radius(segment.start_node_id), roads.get_junction_radius(segment.end_node_id))
+		_bus_lanes.add_child(bus_lanes)
+		_lines[segment_id].append(bus_lanes)
 
 
 func _remove_segment(segment_id: int) -> void:

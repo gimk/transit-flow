@@ -188,7 +188,14 @@ func test_every_world_renderer_has_a_display_layer() -> void:
 	for child in world.get_children():
 		if child is CanvasItem and not child is CanvasModulate:
 			assert_true(DotDisplay.ROUTES.has(NodePath(child.name)), "%s is in a display layer" % child.name)
-			assert_eq((child as CanvasItem).visibility_layer, DotDisplay.ROUTES.get(NodePath(child.name), -1), child.name)
+			var bits: int = DotDisplay.ROUTES.get(NodePath(child.name), 0)
+			assert_eq((child as CanvasItem).visibility_layer & bits, bits, child.name)
+	# Deeper routes (bus lanes, transit lines and stops) name real layers, and win.
+	for path: NodePath in DotDisplay.ROUTES:
+		var item := world.get_node_or_null(path) as CanvasItem
+		assert_not_null(item, str(path))
+		if item != null and path.get_name_count() > 1:
+			assert_eq(item.visibility_layer, DotDisplay.ROUTES[path], str(path))
 
 
 func test_signal_tool_cycles_junction_control() -> void:
