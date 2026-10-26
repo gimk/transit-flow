@@ -33,6 +33,7 @@ func _ready() -> void:
 	_add_overlay_toggle(HeatmapOverlay.OVERLAY_ID, "Congestion heatmap", "F4")
 	_add_overlay_toggle(VehicleRenderer.OVERLAY_ID, "Lateness colours", "F2")
 	_add_overlay_toggle(DayNight.OVERLAY_ID, "Day / night lighting", "")
+	_add_overlay_toggle(DotDisplay.OVERLAY_ID, "Dot display", "")
 	_add_section("Game")
 	_add_button("Quicksave", "F5", Game.quick_save)
 	_add_button("Quickload", "F9", Game.quick_load)
@@ -47,8 +48,9 @@ func _ready() -> void:
 	_add_button("Town", "F8", Game.load_town_scenario)
 
 	Events.debug_overlay_changed.connect(_on_overlay_changed)
-	# Lighting starts on.
+	# Lighting and the dot display start on.
 	_overlay_buttons[DayNight.OVERLAY_ID].set_pressed_no_signal(true)
+	_overlay_buttons[DotDisplay.OVERLAY_ID].set_pressed_no_signal(true)
 	_refresh_stress_label()
 
 

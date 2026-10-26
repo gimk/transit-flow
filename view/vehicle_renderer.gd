@@ -36,6 +36,11 @@ const QUAD_SIDE := 1.0
 var show_lateness := false
 ## Day / night lighting is on (headlights only then).
 var _day_night := true
+## The light vehicles throw on the road and their lit lamps (vehicle_light.gdshader):
+## the same instances, in a sibling drawn just before this node, so behind all the
+## bodies (one car's beam never lights another car). A sibling, not a child, so the dot
+## display can put it in its light layer (DotDisplay).
+var light_pools := MultiMeshInstance2D.new()
 
 
 func _ready() -> void:
@@ -47,8 +52,20 @@ func _ready() -> void:
 	var shader_material := ShaderMaterial.new()
 	shader_material.shader = preload("res://view/vehicle.gdshader")
 	material = shader_material
+	light_pools.name = "VehicleLights"
+	light_pools.multimesh = multimesh
+	var light_material := ShaderMaterial.new()
+	light_material.shader = preload("res://view/vehicle_light.gdshader")
+	light_pools.material = light_material
+	# The parent is still adding its children.
+	_add_light_pools.call_deferred()
 	Events.debug_overlay_toggle_requested.connect(_on_toggle_requested)
 	Events.debug_overlay_changed.connect(_on_overlay_changed)
+
+
+func _add_light_pools() -> void:
+	get_parent().add_child(light_pools)
+	get_parent().move_child(light_pools, get_index())
 
 
 ## A quad in body units (the body spans -0.5..0.5 both ways), with UV equal to the
@@ -105,7 +122,11 @@ func _process(_delta: float) -> void:
 		multimesh.instance_count = maxi(count, maxi(multimesh.instance_count * 2, MIN_CAPACITY))
 	multimesh.visible_instance_count = count
 	var dt := to.time - from.time
-	(material as ShaderMaterial).set_shader_parameter("night", DayNight.night_amount(to.hours) if _day_night else 0.0)
+	var night := DayNight.night_amount(to.hours) if _day_night else 0.0
+	var tint := DayNight.applied_tint
+	for shaded: ShaderMaterial in [material, light_pools.material]:
+		shaded.set_shader_parameter("night", night)
+		shaded.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
 	for vehicle_id: int in to.vehicle_index:
 		var i: int = to.vehicle_index[vehicle_id]
 		var position_now := to.positions[i]

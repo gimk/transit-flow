@@ -1,9 +1,10 @@
 class_name NightLights
-extends CanvasLayer
+extends Node2D
 ## Light at night: street lamps along every road and lit windows on the street side of
-## buildings, as soft additive glows (light_glow.gdshader). On a canvas layer of its own
-## that follows the camera, so DayNight's tint, which darkens the world, doesn't darken
-## the lights: they brighten what's under them instead. They fade in with the dusk and are
+## buildings, as soft additive glows (light_glow.gdshader), drawn over the world. They
+## divide by the night tint (DayNight.applied_tint), so the tint that darkens the world
+## doesn't darken them: they brighten what's under them instead. In the dot display's
+## light layer (DotDisplay). They fade in with the dusk and are
 ## out soon after 6:00 (light_amount), and are off when day / night lighting is.
 ##
 ## Windows switch on and off through the evening, each at its own time (seeded per
@@ -35,7 +36,6 @@ var _lit_for := -1
 
 
 func _ready() -> void:
-	follow_viewport_enabled = true
 	_glow.shader = preload("res://view/light_glow.gdshader")
 	for layer: MultiMeshInstance2D in [_lamps, _windows]:
 		var multimesh := MultiMesh.new()
@@ -72,6 +72,8 @@ func _process(_delta: float) -> void:
 	var night := light_amount(hours) if _day_night else 0.0
 	visible = night > 0.0
 	_glow.set_shader_parameter("night", night)
+	var tint := DayNight.applied_tint
+	_glow.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
 	if _roads_dirty:
 		_roads_dirty = false
 		_place_lamps()

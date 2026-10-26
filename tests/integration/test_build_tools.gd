@@ -174,10 +174,21 @@ func test_zone_tools_paint_areas_that_develop_next_to_roads() -> void:
 func test_main_scene_has_its_key_nodes() -> void:
 	for path in ["World/GridRenderer", "World/ZoneRenderer", "World/NatureRenderer", "World/RoadRenderer", "World/IntersectionRenderer", "World/LotRenderer",
 			"World/VehicleRenderer", "World/PedestrianRenderer", "World/TransitRenderer", "World/HeatmapOverlay", "World/DayNight", "World/NightLights", "World/ExternalRenderer",
-			"World/LaneOverlay", "World/Tools", "MapCamera", "HUD", "HUD/ToolPalette"]:
+			"World/LaneOverlay", "World/Tools", "MapCamera", "DotDisplay", "HUD", "HUD/ToolPalette"]:
 		assert_not_null(_main.get_node_or_null(path), path)
 	for tool_id: StringName in ToolManager.TOOL_SHORTCUTS.values():
 		assert_not_null(_main.get_node_or_null("World/Tools/" + tool_id), "tool " + tool_id)
+
+
+func test_every_world_renderer_has_a_display_layer() -> void:
+	# Routing waits for VehicleRenderer to add its light layer.
+	await wait_process_frames(1)
+	var world := _main.get_node("World")
+	assert_not_null(world.get_node_or_null("VehicleLights"), "vehicle lights beside the vehicles")
+	for child in world.get_children():
+		if child is CanvasItem and not child is CanvasModulate:
+			assert_true(DotDisplay.ROUTES.has(NodePath(child.name)), "%s is in a display layer" % child.name)
+			assert_eq((child as CanvasItem).visibility_layer, DotDisplay.ROUTES.get(NodePath(child.name), -1), child.name)
 
 
 func test_signal_tool_cycles_junction_control() -> void:

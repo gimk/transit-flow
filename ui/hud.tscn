@@ -5,6 +5,7 @@
 [ext_resource type="Script" path="res://ui/tool_palette.gd" id="3_tool_palette"]
 
 [node name="HUD" type="CanvasLayer"]
+layer = 10
 script = ExtResource("1_hud")
 
 [node name="TopBar" type="PanelContainer" parent="."]
