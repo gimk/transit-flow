@@ -9,7 +9,8 @@ shader_type canvas_item;
 // - actors (vehicles, people): lit by the ambient light only, plus their own lamps, so
 //   the beam of the car behind never shows on them; buses keep their line's colour;
 // - information drawn as marks on the ground, under the actors: square dots (bus lanes,
-//   stop signs) and hollow rings on every other cell (zones);
+//   stop signs; as big and as coloured as the mark is opaque) and hollow rings on every
+//   other cell (zones);
 // - the map (ground, roads, buildings): dimmed, lit by ambient light and by the light
 //   layer (lamps, windows, beams).
 // The layers are drawn unlit and premultiplied (transparent viewports); light adds up.
@@ -126,6 +127,7 @@ void fragment() {
 	float level;
 	vec3 color;
 	int shape = ROUND;
+	float strength = 1.0;
 	if (info.cover > INFO_COVER) {
 		level = 0.85 * info_ambient;
 		color = vivid(info.color, level);
@@ -134,8 +136,11 @@ void fragment() {
 		level = clamp(map_sum / 9.0 * MAP_GAIN * ambient + lum(light), 0.0, 1.0);
 		color = saturation(light) > 0.5 ? vivid(light, level) : (lum(light_peak) > LAMP ? WHITE : mix(AMBER_DIM, AMBER_BRIGHT, ceil(level * LEVELS) / LEVELS));
 	} else if (!on_actor && square.cover > MARK_COVER) {
-		level = clamp(max(lum(square.color), 0.45) * info_ambient + lum(light) * 0.5, 0.0, 1.0);
-		color = vivid(square.color, level);
+		// As strong as the mark is opaque: a bus lane's faint tint gives small, muted
+		// squares leaning to amber; a stop sign full, bright ones.
+		strength = square.cover;
+		level = clamp((0.2 + 0.65 * strength) * info_ambient + lum(light) * 0.5, 0.0, 1.0);
+		color = mix(mix(AMBER_DIM, AMBER_BRIGHT, level), vivid(square.color, level), strength);
 		shape = SQUARE;
 	} else if (!on_actor && ring.cover > MARK_COVER && mod(cell_index.x + cell_index.y, 2.0) < 0.5) {
 		level = 0.7 * info_ambient;
@@ -161,7 +166,7 @@ void fragment() {
 	float d = length(offset);
 	float lit;
 	if (shape == SQUARE) {
-		float half_size = pitch * 0.36;
+		float half_size = pitch * (0.2 + 0.16 * strength);
 		float edge = max(abs(offset.x), abs(offset.y));
 		lit = 1.0 - smoothstep(half_size - 0.5, half_size + 0.25, edge);
 	} else if (shape == RING) {
