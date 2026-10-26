@@ -14,8 +14,15 @@ extends CanvasLayer
 ##
 ## The grid's cell is a power of two in world px (1 to 16), picked by the zoom so dots
 ## stay 3-4 screen px apart (MapCamera zooms in matching steps); information renderers
-## read it (current_cell) to keep their marks at least a cell wide. Under the HUD (layer
+## read it (current_cell) to keep their marks at least a cell wide. The zoom also sets a
+## level of detail (Band, current_band, Events.dot_band_changed): close up renderers
+## draw objects, far out the system. Problems (jams, stuck vehicles, crowded stops,
+## zones waiting) are information too, blinking (AlertRenderer). The composite reads at
+## most six layers: a seventh texture was not reliably bound (D3D12). Under the HUD (layer
 ## 10). Toggle from the debug menu (overlay id &"dot_display"): off shows the old look.
+
+## Levels of detail, from close up to far out (see the plan, Phase D-LOD).
+enum Band { DETAIL, STREET, DISTRICT, CITY }
 
 const OVERLAY_ID := &"dot_display"
 ## Above the world, under the HUD.
@@ -28,6 +35,8 @@ const INFO := 1 << 4
 const SQUARE_MARKS := 1 << 5
 const RING_MARKS := 1 << 6
 const ALL_LAYERS := 0xFFFFF
+## The lowest camera zoom of each band (DETAIL, STREET, DISTRICT; below: CITY).
+const BAND_ZOOMS: Array[float] = [2.0, 1.0, 0.5]
 ## Which display layer each renderer under World draws into (with all its children). A
 ## deeper path overrides its parent's layer for that branch.
 const ROUTES: Dictionary[NodePath, int] = {
@@ -49,6 +58,8 @@ const ROUTES: Dictionary[NodePath, int] = {
 	^"TransitRenderer/Stops": SQUARE_MARKS,
 	^"LaneOverlay": INFO,
 	^"Tools": INFO,
+	^"AlertRenderer": INFO,
+	^"AlertRenderer/Marks": SQUARE_MARKS,
 }
 ## Screen px between dots (before UI scaling): the grid's cell is the largest power of
 ## two in world px that keeps the gap at most this.
@@ -62,6 +73,8 @@ const LAYER_UNIFORMS: Dictionary[int, String] = {
 
 ## The grid's cell (world px) right now, or 0 when the dot display is off.
 static var current_cell := 0.0
+## The level of detail right now (DETAIL when the dot display is off).
+static var current_band := Band.DETAIL
 
 var _viewports: Dictionary[int, SubViewport] = {}
 var _screen := ColorRect.new()
@@ -153,15 +166,31 @@ func _process(_delta: float) -> void:
 	var ui_scale := viewport.get_final_transform().get_scale().x
 	_material.set_shader_parameter("world_origin", to_world * Vector2.ZERO)
 	_material.set_shader_parameter("world_per_px", world_per_px)
-	current_cell = cell_size(1.0 / world_per_px / ui_scale)
+	var zoom := 1.0 / world_per_px / ui_scale
+	current_cell = cell_size(zoom)
 	_material.set_shader_parameter("cell", current_cell)
 	_material.set_shader_parameter("night", DayNight.night_amount(Game.view_to.hours) if _day_night else 0.0)
+	_set_band(band_for(zoom))
 
 
 ## The grid's cell (world px) at camera `zoom`: the largest power of two that keeps dots
 ## at most MAX_PITCH screen px apart.
 static func cell_size(zoom: float) -> float:
 	return clampf(pow(2.0, floorf(log(MAX_PITCH / zoom) / log(2.0) + 0.001)), 1.0, MAX_CELL)
+
+
+## The level of detail at camera `zoom`.
+static func band_for(zoom: float) -> Band:
+	for band in BAND_ZOOMS.size():
+		if zoom >= BAND_ZOOMS[band] - 0.001:
+			return band as Band
+	return Band.CITY
+
+
+func _set_band(band: Band) -> void:
+	if band != current_band:
+		current_band = band
+		Events.dot_band_changed.emit(band)
 
 
 func _on_toggle_requested(overlay_id: StringName) -> void:
@@ -177,6 +206,7 @@ func _apply_visibility() -> void:
 	get_viewport().canvas_cull_mask = 1 if visible else ALL_LAYERS
 	if not visible:
 		current_cell = 0.0
+		_set_band(Band.DETAIL)
 	for layer_viewport: SubViewport in _viewports.values():
 		layer_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if visible else SubViewport.UPDATE_DISABLED
 
@@ -188,3 +218,4 @@ func _on_overlay_changed(overlay_id: StringName, shown: bool) -> void:
 
 func _exit_tree() -> void:
 	current_cell = 0.0
+	current_band = Band.DETAIL

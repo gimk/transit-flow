@@ -2,8 +2,8 @@ shader_type canvas_item;
 // The dot display's composite (DotDisplay): turns the display layers into an amber LED
 // dot matrix on a grid fixed to the world. Each grid cell becomes one dot, sized by its
 // brightness and coloured by what's in it, by priority:
-// - information drawn as solid dots (transit lines, signals, overlays, tool previews):
-//   a round dot in its own colour, over everything;
+// - information drawn as solid dots (transit lines, signals, alerts, overlays, tool
+//   previews): a round dot in its own colour, as bright as drawn, over everything;
 // - light: strong light keeps its colour (white headlamps, red brake lights, orange
 //   indicators);
 // - actors (vehicles, people): lit by the ambient light only, plus their own lamps, so
@@ -129,7 +129,8 @@ void fragment() {
 	int shape = ROUND;
 	float strength = 1.0;
 	if (info.cover > INFO_COVER) {
-		level = 0.85 * info_ambient;
+		// As bright as drawn: alerts blink by dimming (AlertRenderer).
+		level = 0.85 * info_ambient * max(info.color.r, max(info.color.g, info.color.b));
 		color = vivid(info.color, level);
 	} else if (!on_actor && lum(light) > 0.5 && square.cover <= MARK_COVER) {
 		// Light on the ground, brighter than any mark under it.

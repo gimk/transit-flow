@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://view/nature_renderer.gd" id="33_nature"]
 [ext_resource type="Script" path="res://view/night_lights.gd" id="34_night_lights"]
 [ext_resource type="Script" path="res://view/dot_display.gd" id="35_dot_display"]
+[ext_resource type="Script" path="res://view/alert_renderer.gd" id="36_alerts"]
 
 [node name="Main" type="Node2D" unique_id=1531639300]
 
@@ -65,6 +66,9 @@ script = ExtResource("30_pedestrians")
 
 [node name="LaneOverlay" type="Node2D" parent="World" unique_id=2125858775]
 script = ExtResource("5_lanes")
+
+[node name="AlertRenderer" type="Node2D" parent="World"]
+script = ExtResource("36_alerts")
 
 [node name="Tools" type="Node2D" parent="World" unique_id=424843082]
 script = ExtResource("6_tools")

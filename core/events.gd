@@ -40,3 +40,6 @@ signal camera_focus_requested(world_position: Vector2)
 
 ## Short message shown briefly to the player (e.g. "Game saved").
 signal notification_posted(text: String)
+
+## The dot display switched level of detail (DotDisplay.Band), with the zoom.
+signal dot_band_changed(band: int)

@@ -99,15 +99,21 @@ func _draw_stops() -> void:
 	var view := Game.view_to
 	var size := SIGN_SIZE.max(Vector2.ONE * DotDisplay.current_cell * 1.5)
 	for i in view.stop_positions.size():
-		var along := view.stop_directions[i]
-		# Toward the curb: right of the traffic's direction (y grows downward).
-		var out := Vector2(-along.y, along.x)
-		var beyond := BAY_SIGN_SHIFT if view.stop_bays[i] == 1 else 0.0
-		_stops.draw_set_transform(view.stop_positions[i] + out * (SIGN_OFFSET + beyond), along.angle())
+		_stops.draw_set_transform(sign_spot(view, i), view.stop_directions[i].angle())
 		_stops.draw_rect(Rect2(-size * 0.5, size), SIGN_COLOR)
 		_stops.draw_rect(Rect2(-size * 0.5, size), Color.BLACK, false, 1.0)
 		# (Its waiting riders are drawn by PedestrianRenderer, as people.)
 	_stops.draw_set_transform(Vector2.ZERO)
+
+
+## Where the sign of stop `i` of a snapshot stands: at the curb, beyond its pull-in for a
+## bus bay.
+static func sign_spot(view: ViewSnapshot, i: int) -> Vector2:
+	var along := view.stop_directions[i]
+	# Toward the curb: right of the traffic's direction (y grows downward).
+	var out := Vector2(-along.y, along.x)
+	var beyond := BAY_SIGN_SHIFT if view.stop_bays[i] == 1 else 0.0
+	return view.stop_positions[i] + out * (SIGN_OFFSET + beyond)
 
 
 ## Zebra stripes across the road at a stop's crosswalk (like RoadMarkings' at junctions).

@@ -55,6 +55,8 @@ var vehicle_count := 0
 ## Vehicles waiting in driveways to pull out.
 var waiting_count := 0
 var stuck_count := 0
+## Where those stuck vehicles are (the dot display's alerts, AlertRenderer).
+var stuck_positions := PackedVector2Array()
 var population := 0
 var employed := 0
 var jobs := 0
@@ -99,6 +101,7 @@ static func capture(sim: Simulation) -> ViewSnapshot:
 		snapshot.lateness[i] = clampf(late_by / late_after, 0.0, 1.0)
 		if vehicle.stopped_time >= STUCK_SECONDS:
 			stuck += 1
+			snapshot.stuck_positions.append(vehicle.position)
 		i += 1
 	for node: RoadNode in sim.roads.nodes.values():
 		if node.has_lights():
