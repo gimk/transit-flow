@@ -85,14 +85,17 @@ Ported for the road fuzz test: Godot's `RandomPCG::random(from, to)`, PCG32's un
 
 The router doesn't hold the network: every query takes `&RoadNetwork`. Congestion costs live on `Router::congestion` (one map for both graphs; GDScript copied `graph.congestion` into the bus graph at each query, which amounts to the same thing). `CongestionMonitor` (M4.6) replaces it every 5 s. Access points are `LanePoint { lane_id, distance, penalty }` (the GDScript dictionaries; `penalty` 0 when absent).
 
+### Lots and parking (M3.1)
+
+`Grid` (`core/grid.gd`) moved into `tf_sim::grid`: the sim uses it. `LotSystem` and `Parking` take the road network (and lots) as parameters. `Parking::find_space` takes the walking distance as a closure (`PedestrianSystem.get_walking_distance`, M5.2). Access points are `LanePoint`s. `Lot.Type` is `LotType`, with Godot's integer values (saved).
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
 
 | GUT test | Rust stub | Needs |
 |---|---|---|
-| `test_road_types.gd` `test_dragging_another_type_over_a_road_upgrades_it_in_place` | `road_type.rs` | M3.1 |
-| `test_curves.gd` `test_lots_keep_clear_of_curves` | `curves.rs` | M3.1 |
+| `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
 | `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
 | `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` | `road_type.rs` | M4.2 |
 | `test_road_types.gd` the three `test_stress_grid_*` | `road_type.rs` | M4.4 |

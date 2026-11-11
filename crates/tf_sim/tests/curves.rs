@@ -153,9 +153,38 @@ fn traffic_drives_round_curves() {
 }
 
 #[test]
-#[ignore = "needs lots (M3.1): test_lots_keep_clear_of_curves"]
 fn lots_keep_clear_of_curves() {
-    unimplemented!("port with M3.1");
+    use tf_sim::city::LotSystem;
+    use tf_sim::grid;
+    use tf_sim::roads::lane_builder;
+    let mut roads = RoadNetwork::new();
+    quarter_turn(&mut roads, 2.0, 2.0, 3.0, local());
+    let path = RoadNetwork::curve_path(v(2.0, 2.0) * G, v(5.0, 2.0) * G, v(5.0, 5.0) * G);
+    let full = (grid::CELL_SIZE * grid::CELL_SIZE) as f32;
+    let (mut under, mut beside) = (0, 0);
+    for x in 1..7 {
+        for y in 1..7 {
+            let cell = glam::IVec2::new(x, y);
+            let gap = lane_builder::distance_to_polyline(grid::cell_center(cell), &path);
+            let plot = LotSystem::compute_plot(&roads, cell);
+            if gap < 16.0 {
+                assert!(
+                    !plot.has_area(),
+                    "no building on the road itself, cell {cell}"
+                );
+                under += 1;
+            } else if plot.has_area() && plot.area() < full {
+                beside += 1;
+                // The plot keeps clear of the road (its center no closer than the road's edge).
+                assert!(
+                    lane_builder::distance_to_polyline(plot.center(), &path)
+                        > local().total_width() * 0.5
+                );
+            }
+        }
+    }
+    assert!(under > 0);
+    assert!(beside > 0, "cells beside the curve keep a smaller plot");
 }
 
 #[test]

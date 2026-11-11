@@ -105,7 +105,7 @@ impl Simulation {
         match event {
             SimEvent::RoadsChanged(change) => {
                 self.call(|sim, out| sim.router.on_roads_changed(change, out));
-                self.call(|sim, out| sim.lots.on_roads_changed(change, out));
+                self.call(|sim, out| sim.lots.on_roads_changed(&sim.roads, change, out));
                 self.call(|sim, out| sim.zones.on_roads_changed(change, out));
                 self.call(|sim, out| sim.signals.on_roads_changed(change, out));
                 self.call(|sim, out| sim.vehicles.on_roads_changed(change, out));

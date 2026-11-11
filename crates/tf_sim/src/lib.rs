@@ -13,6 +13,7 @@ pub mod clock;
 pub mod debug;
 pub mod events;
 pub mod geom;
+pub mod grid;
 pub mod ids;
 pub mod rng;
 pub mod roads;

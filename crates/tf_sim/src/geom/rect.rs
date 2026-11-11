@@ -42,6 +42,24 @@ impl Rect2 {
             && point.y < self.position.y + self.size.y
     }
 
+    /// `Rect2.get_center()`.
+    pub fn center(&self) -> Vec2 {
+        self.position + self.size * 0.5
+    }
+
+    /// `Rect2.get_area()`.
+    pub fn area(&self) -> f32 {
+        self.size.x * self.size.y
+    }
+
+    /// `Rect2.intersects(other)`: overlapping, touching edges not counted.
+    pub fn intersects(&self, other: &Rect2) -> bool {
+        !(self.position.x >= other.position.x + other.size.x
+            || self.position.x + self.size.x <= other.position.x
+            || self.position.y >= other.position.y + other.size.y
+            || self.position.y + self.size.y <= other.position.y)
+    }
+
     /// `Rect2.has_area()`.
     pub fn has_area(&self) -> bool {
         self.size.x > 0.0 && self.size.y > 0.0

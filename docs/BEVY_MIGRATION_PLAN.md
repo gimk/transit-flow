@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0, M1 and M2 done. Next work packages: **M3.1** (lots) and **M4.1** (vehicle data, traffic lights), which can run in parallel; **M8.1** (game shell) can too.
+**Status:** M0–M2 and M3.1 done. Next work packages: **M3.2** (zones, external connections) and **M4.1** (vehicle data, traffic lights); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -196,7 +196,8 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M3: City foundations · parallel-safe with M4.1–M4.3 once M2 is in
 
-- [ ] **M3.1 Lot, LotSystem, Parking** · Sonnet · M2.1
+- [x] **M3.1 Lot, LotSystem, Parking** · Sonnet · M2.1
+  - *Done (2026-11-11):* every lot of the six golden layouts, restored from its save, has Godot's plot and access points (lanes, set-back distances, far-side penalty; `tests/lots_golden.rs`). `test_lots.gd` is ported (12; the avenue test needs zones and citizens, M7.1), and so are the two lot tests deferred from M1. `Grid` (and `test_grid.gd`) moved into the sim. `Parking` is ported; its tests come with citizens (M7.1).
   - *Read:* `sim/city/lot.gd`, `lot_system.gd`, `parking.gd`, `test_lots.gd`.
   - *Done when:* `test_lots` is ported and passes; plots and access points match the golden files.
 - [ ] **M3.2 ZoneSystem, ExternalConnections** · Sonnet · M3.1

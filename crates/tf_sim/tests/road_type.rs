@@ -195,9 +195,68 @@ fn one_way_roads_are_never_driven_the_wrong_way() {
 }
 
 #[test]
-#[ignore = "needs lots (M3.1)"]
 fn dragging_another_type_over_a_road_upgrades_it_in_place() {
-    unimplemented!("port with M3.1");
+    use tf_sim::Simulation;
+    use tf_sim::city::LotType;
+    let mut sim = Simulation::new();
+    let road = |sim: &mut Simulation, from: Vec2, to: Vec2, type_id: &str| {
+        let mut ids = Vec::new();
+        sim.call(|sim, out| {
+            ids = sim
+                .roads
+                .add_road_pieces(from * G, to * G, road_type(type_id), 0, out)
+        });
+        ids
+    };
+    road(&mut sim, v(1.0, 2.0), v(6.0, 2.0), "local_2lane");
+    road(&mut sim, v(3.0, 0.0), v(3.0, 2.0), "local_2lane"); // A side street meeting it.
+    let mut lot = None;
+    sim.call(|sim, out| {
+        lot = sim.lots.add_lot(
+            &sim.roads,
+            glam::IVec2::new(2, 2),
+            LotType::Residential,
+            out,
+        )
+    });
+    let lot = lot.unwrap();
+    let nodes_before = sim.roads.nodes.len();
+    let segments_before = sim.roads.segments.len();
+    let pieces = road(&mut sim, v(1.0, 2.0), v(6.0, 2.0), "avenue_4lane");
+    assert_eq!(
+        pieces.len(),
+        2,
+        "both pieces along it (it was split by the side street)"
+    );
+    for segment_id in &pieces {
+        assert_eq!(sim.roads.segments[segment_id].road_type.id, "avenue_4lane");
+        assert_eq!(lanes_of(&sim.roads, *segment_id).len(), 4);
+    }
+    assert_eq!(
+        sim.roads.segments.len(),
+        segments_before,
+        "no new segments: the same ones, retyped"
+    );
+    assert_eq!(sim.roads.nodes.len(), nodes_before, "no new nodes");
+    assert!(
+        sim.lots.access(&sim.roads, lot).is_some(),
+        "lots along it keep their access"
+    );
+    assert_eq!(
+        sim.roads.validate_road(v(1.0, 2.0) * G, v(6.0, 2.0) * G, 0),
+        "Road already exists"
+    );
+    assert_eq!(
+        sim.roads
+            .plan_road(
+                v(1.0, 2.0) * G,
+                v(6.0, 2.0) * G,
+                0,
+                Some(road_type("avenue_4lane"))
+            )
+            .error,
+        "Road already exists"
+    );
 }
 
 #[test]
