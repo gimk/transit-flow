@@ -152,6 +152,12 @@ The system doesn't hold the roads, router, vehicles, pedestrians or crosswalks: 
 - **Result: the Town is Godot's, tick for tick.** `migration/probes/town_trace.gd` → `golden/town_trace.json` (5760 ticks): 2577 events, Flow every 240 ticks (to 1e-6 %), vehicle / pedestrian / departure / rider / stuck counts every 120 ticks, the stats of `baseline.md`, and the end state of 176 citizens and 165 vehicles all equal Godot's (`tests/town.rs`). The crosswalk rule holds on every tick too (a Rust-only check: Godot's Town test doesn't run it). Every number in `migration/baseline.md` is reproduced exactly by `bin/run_baseline.rs`, which also prints Godot's value and the band and exits 1 outside it.
 - The probe's vehicle events carry `Vehicle.Kind` and the destination lot (not in `citizen_trace`'s format); `tests/town.rs` re-implements the recorder instead of sharing `citizen_trace.rs`'s, since the two formats differ.
 
+### Function map (R3)
+
+Every `func` in `sim/**/*.gd` (420) has a Rust `fn` of the same name, less any `_` or `get_` prefix, except:
+- renamed: `SimClock.period_for_hour` → `Period::for_hour`; `VehicleSystem.get_lane_queue` → `queue`; `_entry_speed` → `entry_speed_cached`; `FlowMetric._on_arrived` / `_on_failed` → `on_vehicle_arrived` / `on_vehicle_failed`;
+- inlined (one-liners): `CitizenSystem._walk_leg` (a `Leg` literal), `VehicleSystem._consider_leader`, `_increment` / `_decrement`, `_to_lanes` (Rust keeps lane ids), and `LaneGraph._compute_cost` / `_estimate_cost` (the cost hooks of Godot's `AStar2D`, called directly by `routing::astar`).
+
 ## Tests waiting for a later work package
 
 None: every ignored stub is ported. (M7.3 ported the eight: zones, freight and commute saves; Flow after cutting the road; the curved bypass; the bus save test, the bus line and the bus lanes on the Bottleneck.) Godot's printed numbers are asserted in `flow.rs`, `curves.rs`, `buses.rs` and `bus_lanes.rs`.
