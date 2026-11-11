@@ -25,6 +25,23 @@ impl Rect2 {
         Rect2::new(begin, end - begin)
     }
 
+    /// `Rect2.grow(by)`: grown by `by` on every side.
+    pub fn grow(&self, by: f32) -> Rect2 {
+        Rect2::new(
+            self.position - Vec2::splat(by),
+            self.size + Vec2::splat(by * 2.0),
+        )
+    }
+
+    /// `Rect2.has_point(point)`: the left and top edges are inside, the right and
+    /// bottom ones are not.
+    pub fn has_point(&self, point: Vec2) -> bool {
+        point.x >= self.position.x
+            && point.y >= self.position.y
+            && point.x < self.position.x + self.size.x
+            && point.y < self.position.y + self.size.y
+    }
+
     /// `Rect2.has_area()`.
     pub fn has_area(&self) -> bool {
         self.size.x > 0.0 && self.size.y > 0.0

@@ -4,6 +4,7 @@ pub mod congestion_monitor;
 pub mod freight_system;
 pub mod stress_traffic;
 pub mod traffic_lights;
+pub mod vehicle;
 pub mod vehicle_system;
 
 pub use congestion_monitor::CongestionMonitor;

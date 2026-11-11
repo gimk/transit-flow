@@ -204,6 +204,31 @@ impl Curve2D {
         }
     }
 
+    /// `get_closest_point(point)`: the point on the curve closest to `to_point`.
+    pub fn closest_point(&self, to_point: Vec2) -> Vec2 {
+        let points = &self.baked_points;
+        match points.len() {
+            0 => return Vec2::ZERO,
+            1 => return points[0],
+            _ => {}
+        }
+        let mut nearest = Vec2::ZERO;
+        let mut nearest_distance = -1.0;
+        for i in 0..points.len() - 1 {
+            let interval = self.baked_distances[i + 1] - self.baked_distances[i];
+            let origin = points[i];
+            let direction = (points[i + 1] - origin) / interval;
+            let d = (to_point - origin).dot(direction).clamp(0.0, interval);
+            let projection = origin + direction * d;
+            let distance = projection.distance_squared(to_point);
+            if nearest_distance < 0.0 || distance < nearest_distance {
+                nearest = projection;
+                nearest_distance = distance;
+            }
+        }
+        nearest
+    }
+
     /// `get_closest_offset(point)`: the offset of the point on the curve closest to
     /// `point` (the first one, if several are as close).
     pub fn closest_offset(&self, to_point: Vec2) -> f32 {

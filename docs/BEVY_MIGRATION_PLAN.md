@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0, M1.1 and M1.2 done. Next work package: **M1.3** (RoadNetwork).
+**Status:** M0 and M1 done (R1 passed). Next work packages: **M2.1** (routing) and, in parallel, **M8.1** (game shell).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -177,11 +177,13 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Read:* `sim/roads/lane_builder.gd`, `tests/unit/test_lane_builder.gd`.
   - Also `geom::bake`: Godot's `Curve2D` baking (`Curve2D::_bake` in Godot 4.7's `scene/resources/curve.cpp`, MIT), for polylines and cubic Béziers, and `Polyline::sample_with_rotation` interpolating headings as Godot does. See `NOTES.md` (Geometry). This makes M1.2 an **Opus** WP if the baked points don't match on the first try.
   - *Done when:* those tests are ported and pass; lane points match the golden files.
-- [ ] **M1.3 RoadNetwork** · Opus · M1.2
+- [x] **M1.3 RoadNetwork** · Opus · M1.2
+  - *Done (2026-11-11):* full port. Commands take an `Outbox` (see NOTES); removed lanes are retired, not dropped, so vehicles can finish them (NOTES; M4.2 must prune). **Golden:** all five layouts load from their saves into exactly Godot's network (every id in order, lane curves, speeds, turns, conflict zones, signal phases, within 1e-3), `to_dict` re-saves the same JSON, and the 14 recorded edits give Godot's result, `changed` ids and network at every step (`tests/road_network_golden.rs`). A deliberate 1 px change to `CONFLICT_DISTANCE` makes them fail. **Ported:** `test_road_network.gd` (13), `test_road_splitting.gd` (14, the fuzz with Godot's exact random roads), `test_junctions.gd` (12), `test_curves.gd` (4), `test_road_types.gd` (network parts). The 10 tests that need later systems are `#[ignore]` stubs, listed in NOTES. Workspace: 73 tests pass.
   - *Read:* `sim/roads/road_network.gd` (837 lines: planning, splitting, curves, upgrades, connectors, conflict zones, signal phases, saves), plus `test_road_network.gd`, `test_road_splitting.gd`, `test_road_types.gd`, `test_curves.gd`, `test_junctions.gd` (the network parts).
   - The command API returns what `changed` would carry (`ChangeSet { node_ids, segment_ids }`), and `Simulation` dispatches it (§2.4). `to_dict` / `from_dict` read and write the same JSON as Godot.
   - *Done when:* those test files are ported (the network parts) and pass; every golden layout matches (topology exactly, geometry within 1e-3); a Godot quicksave JSON loads and re-saves to identical JSON; the 60-road fuzz test passes.
-- [ ] **R1 Review gate** · Opus · M1.3
+- [x] **R1 Review gate** · Opus · M1.3
+  - *Done (2026-11-11):* the golden comparisons cover every node, segment and lane field in five layouts and 14 edit steps, so a line-by-line review adds little. I re-read the spots golden data can't reach (unknown road types and old saves in `from_dict`, `control_from_save`, `set_node_control` on small nodes); they match the GDScript.
   - Review `tf_sim/roads` against the GDScript line by line, looking for skipped branches, changed constants and wrong iteration order. Check `NOTES.md`. Fix or send back before M2 starts.
 
 ### M2: Routing

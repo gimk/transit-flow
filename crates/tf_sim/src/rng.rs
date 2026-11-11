@@ -56,6 +56,27 @@ impl SimRng {
         significand as f32 * 2f32.powi(exponent)
     }
 
+    /// GDScript `randi_range(from, to)`: an integer in [from, to], both included (PCG32's
+    /// unbiased bounded draw, as Godot does).
+    pub fn randi_range(&mut self, from: i64, to: i64) -> i64 {
+        if from == to {
+            return from;
+        }
+        let (min, max) = (from.min(to), from.max(to));
+        let diff = (max - min) as u32;
+        if diff == u32::MAX {
+            return i64::from(self.next_u32()) + min;
+        }
+        let bound = diff + 1;
+        let threshold = bound.wrapping_neg() % bound;
+        loop {
+            let r = self.next_u32();
+            if r >= threshold {
+                return i64::from(r % bound) + min;
+            }
+        }
+    }
+
     /// GDScript `randf_range(from, to)`.
     pub fn randf_range(&mut self, from: f32, to: f32) -> f32 {
         self.randf() * (to - from) + from
@@ -68,8 +89,8 @@ impl SimRng {
 mod tests {
     use super::SimRng;
 
-    /// Godot 4.7.2: four `randi()`, four `randf()`, then `randf_range(2, 10)`.
-    fn check(seed: u64, ints: [i64; 4], floats: [f32; 4], ranged: f32) {
+    /// Godot 4.7.2: four `randi()`, four `randf()`, then `randf_range(2, 10)` and `randi_range(0, 9)`.
+    fn check(seed: u64, ints: [i64; 4], floats: [f32; 4], ranged: f32, ranged_int: i64) {
         let mut rng = SimRng::new(seed);
         for expected in ints {
             assert_eq!(rng.randi(), expected, "seed {seed}");
@@ -81,6 +102,7 @@ mod tests {
             );
         }
         assert!((rng.randf_range(2.0, 10.0) - ranged).abs() < 1e-6);
+        assert_eq!(rng.randi_range(0, 9), ranged_int, "seed {seed}");
     }
 
     #[test]
@@ -90,30 +112,35 @@ mod tests {
             [881477183, 1327520283, 692503688, 2153658078],
             [0.358580858, 0.168866158, 0.859284401, 0.472052306],
             7.669811249,
+            1,
         );
         check(
             7,
             [1352667803, 3706616521, 2188350268, 3036842621],
             [0.900402844, 0.670574307, 0.800319552, 0.755683362],
             2.384271145,
+            1,
         );
         check(
             11,
             [3351202525, 1402821896, 1385530632, 1371404858],
             [0.295134485, 0.020639274, 0.094243959, 0.477473915],
             8.654043198,
+            9,
         );
         check(
             23,
             [2759913527, 1681500467, 55096380, 4252518940],
             [0.828000546, 0.653066754, 0.807484806, 0.902796388],
             9.023698807,
+            5,
         );
         check(
             123456789,
             [1712221112, 557107306, 1131688667, 13764607],
             [0.830873191, 0.886955142, 0.241405994, 0.803440750],
             7.185671806,
+            0,
         );
     }
 }

@@ -25,7 +25,7 @@ Where each emit site's events are delivered, and whether that differs from Godot
 | Emit site (GDScript) | Rust | Same as Godot? |
 |---|---|---|
 | `SimClock.advance` | delivered after `clock.advance` | Yes (views only) |
-| `RoadNetwork` commands (`road_network.gd:118, 134, 145, 163`) | the command returns its `ChangeSet`; the `Simulation` command wrapper pushes `RoadsChanged` and delivers it | Yes |
+| `RoadNetwork` commands (`road_network.gd:118, 134, 145, 163`) | the command takes an `Outbox` and pushes `RoadsChanged` where Godot emits; the game and scenarios run commands through `Simulation::call(|sim, out| sim.roads.add_road(.., out))`, which delivers it | Yes |
 | `LotSystem.add_lot` / `remove_lot` / `restore` (`lot_system.gd:62, 131, 190`) | delivered after the calling command, or after `zones.step` when zones develop lots | Nearly. `zones.step` can add several lots in one tick, each emitting `changed`, and in Godot citizens sync after each one. Here all of them are delivered after `zones.step`: the first sync sees every new lot and the later ones find nothing new. New lots are processed in the same order, so the same citizens are created with the same RNG draws. Vehicles only set a flag, and freight rebuilds its lists. |
 | `LotSystem._on_roads_changed` (`lot_system.gd:252`) | inside the `RoadsChanged` delivery (depth first) | Yes |
 | `ZoneSystem` (`zone_system.gd:54, 65, 99, 137`) | after the call | Yes (views only) |
@@ -64,3 +64,30 @@ None yet.
 ## Left behind
 
 By the user's decision (plan §1): generated art and visual effects, the dot display, and the UI beyond basic commands. The files are listed under M9 in the plan.
+
+### Removed lanes are retired, not dropped (M1.3)
+
+Godot vehicles hold `Lane` objects and keep driving a lane the network has dropped: a replaced connector is finished, then the vehicle continues from the lane it fed, and re-snapping reads the old lane's curve. Rust vehicles hold ids, so `RoadNetwork` moves removed lanes to `retired_lanes` (with their `outgoing_lane_ids`, which Godot also keeps) instead of deleting them. `lane_any(id)` finds a lane live or retired. `lanes` holds live lanes only, so `lanes.contains_key` means what Godot's `lanes.has` means. M4.2 must call `prune_retired_lanes` with "is any vehicle on it" each tick, or retired lanes pile up.
+
+### Road types are `&'static` (M1.1)
+
+`RoadType::list_all()` builds the registry once from the embedded `.ron` files. Segments hold `&'static RoadType` and compare them by identity (`std::ptr::eq`), as Godot compares `Resource` objects. Tests that need a type outside the data files leak one (`tests/common/roads.rs`, `custom`).
+
+### `randi_range` (M1.3)
+
+Ported for the road fuzz test: Godot's `RandomPCG::random(from, to)`, PCG32's unbiased bounded draw. It matches Godot's output for 5 seeds.
+
+## Tests waiting for a later work package
+
+Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
+
+| GUT test | Rust stub | Needs |
+|---|---|---|
+| `test_road_splitting.gd` `test_routing_goes_straight_through_a_created_crossing` | `road_splitting.rs` | M2.1 |
+| `test_road_types.gd` `test_one_way_roads_are_never_driven_the_wrong_way` | `road_type.rs` | M2.1 |
+| `test_road_types.gd` `test_dragging_another_type_over_a_road_upgrades_it_in_place` | `road_type.rs` | M3.1 |
+| `test_curves.gd` `test_lots_keep_clear_of_curves` | `curves.rs` | M3.1 |
+| `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
+| `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` | `road_type.rs` | M4.2 |
+| `test_road_types.gd` the three `test_stress_grid_*` | `road_type.rs` | M4.4 |
+| `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |
