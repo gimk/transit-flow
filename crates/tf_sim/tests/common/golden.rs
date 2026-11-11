@@ -78,10 +78,32 @@ pub struct GoldenWalkPath {
     pub length: f64,
 }
 
-/// The part of `transit` the walk network needs: the mid-block crosswalks.
+/// `transit` of a layout: the stops, lines and mid-block crosswalks of the reloaded save.
 #[derive(Deserialize)]
 pub struct Transit {
+    pub stops: Vec<Stop>,
+    pub lines: Vec<Line>,
     pub mid_block: indexmap::IndexMap<String, MidBlock>,
+}
+
+#[derive(Deserialize)]
+pub struct Stop {
+    pub id: i32,
+    pub position: [f32; 2],
+    pub direction: [f32; 2],
+    pub lane_id: i32,
+    pub distance: f64,
+    pub bay: bool,
+}
+
+#[derive(Deserialize)]
+pub struct Line {
+    pub id: i32,
+    pub stop_ids: Vec<i32>,
+    pub color: [f32; 4],
+    pub path: Vec<[f32; 2]>,
+    pub free_flow_times: Vec<f64>,
+    pub routes: Vec<Option<GoldenRoute>>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +174,8 @@ pub struct GoldenRoute {
     pub start_distance: f64,
     pub end_distance: f64,
     pub travel_time: f64,
+    /// Not in the routes of a bus line's dump.
+    #[serde(default)]
     pub free_flow_time: f64,
 }
 

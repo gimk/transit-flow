@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) done. Next: **M6** (transit); **M8.1** (game shell) can run in parallel.
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. Next: **M7** (citizens, Flow, scenarios, saves); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -256,9 +256,10 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 - [x] **M6.1 BusStop, BusLine** · Haiku · M2.1
   - *Read:* `sim/transit/bus_stop.gd`, `bus_line.gd`. Data classes only.
   - *Done (2026-11-11):* `transit/bus_stop.rs` and `bus_line.rs`. Lane ids are `Option` (Godot -1), the line's timings are `f32` like `PackedFloat32Array`, `routes` is `Vec<Option<Route>>`, riders waiting at a stop are citizen ids (TransitSystem holds the `Rider`s, M6.2). Unit tests for `is_active`, loop time, headway and `next_index`; mutation-checked (a wrong wrap-round in `next_index` fails).
-- [ ] **M6.2 TransitSystem and buses in VehicleSystem** · Opus · M6.1, M5.2
+- [x] **M6.2 TransitSystem and buses in VehicleSystem** · Opus · M6.1, M5.2
   - *Read:* `transit_system.gd` (810 lines), the bus parts of `vehicle_system.gd` (dwelling, `set_route`, bays, `_leave_bays`, `_let_buses_out`, `_pass_stopped_buses`), `test_buses.gd`, `test_bus_lanes.gd`.
   - *Done when:* both test files are ported and pass; mid-block crosswalks match the golden files.
+  - *Done (2026-11-11):* `TransitSystem` ported whole (stops, lines, buses, riders, `plan_ride`, saves; the vehicle side of buses came with M4) and wired into `Simulation` (`transit_ctx()`, arrival and failure listeners, step order unchanged). `tests/transit_golden.rs`: for all six layouts the stops (lane, distance, bay, position, direction), lines (stop ids, colour, path, free-flow times, routes lane for lane) and mid-block crosswalks (keys in order, centres, lanes) are Godot's. New probe `migration/probes/bus_trace.gd` → `golden/bus_trace.json`, checked by `tests/bus_trace.rs`: two traffic scenarios (bays and curbside stops under 40 cars; a grid with two lines under 80 cars through a road added, retyped, a stop removed, a block cut) agree on every event tick (arrivals, failures, bus state changes, riders getting off at the same door, strandings) and on the end state, and 200 `plan_ride` queries agree on cost and legs. `bus_lanes.rs` ports `test_bus_lanes` (79% of avenue samples in the bus lane, as Godot prints) and `buses.rs` ports `test_buses`; 8 tests that need citizens, Flow, Scenarios or `Simulation` saves are `#[ignore]` stubs (NOTES). Mutation-checked: dwell time, skipping the timing of a passed stop, boarding time, the bay pull-in, the crosswalk setback, the transfer penalty and the transfer wait each fail a test. Deviation (NOTES, event dispatch): rider events are delivered when `on_vehicle_arrived` returns, not between riders; no effect found. `plan_ride` takes the `Outbox`.
 
 ### M7: Citizens, Flow, scenarios, saves: the sim is complete
 

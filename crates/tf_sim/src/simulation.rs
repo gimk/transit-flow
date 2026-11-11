@@ -15,7 +15,7 @@ use crate::traffic::vehicle_system::TrafficCtx;
 use crate::traffic::{
     CongestionMonitor, FreightSystem, StressTraffic, TrafficLights, VehicleSystem,
 };
-use crate::transit::TransitSystem;
+use crate::transit::{TransitCtx, TransitSystem};
 use crate::walking::{Crosswalks, PedestrianSystem, WalkCtx};
 
 #[derive(Debug, Default)]
@@ -106,7 +106,10 @@ impl Simulation {
             let (pedestrians, mut ctx) = sim.walking();
             pedestrians.step(time, dt, &mut ctx, out);
         });
-        self.call(|sim, out| sim.transit.step(time, out));
+        self.call(|sim, out| {
+            let (transit, mut ctx) = sim.transit_ctx();
+            transit.step(time, &mut ctx, out);
+        });
         self.call(|sim, out| {
             let (vehicles, mut ctx) = sim.traffic();
             vehicles.step_begin(dt, &mut ctx, out);
@@ -154,6 +157,19 @@ impl Simulation {
         (&mut self.pedestrians, ctx)
     }
 
+    /// The transit system and what it works with, borrowed apart (`TransitSystem` takes a
+    /// `TransitCtx` where the GDScript class holds references to the other systems).
+    pub fn transit_ctx(&mut self) -> (&mut TransitSystem, TransitCtx<'_>) {
+        let ctx = TransitCtx {
+            roads: &self.roads,
+            router: &mut self.router,
+            vehicles: &mut self.vehicles,
+            pedestrians: &mut self.pedestrians,
+            crosswalks: &mut self.crosswalks,
+        };
+        (&mut self.transit, ctx)
+    }
+
     /// The events delivered since the last call, oldest first, for the views.
     pub fn take_view_events(&mut self) -> Vec<SimEvent> {
         std::mem::take(&mut self.view_events)
@@ -196,7 +212,10 @@ impl Simulation {
                 self.call(|sim, out| sim.freight.on_lots_changed(&sim.lots, out));
             }
             &SimEvent::VehicleArrived(id) => {
-                self.call(|sim, out| sim.transit.on_vehicle_arrived(id, out));
+                self.call(|sim, out| {
+                    let (transit, mut ctx) = sim.transit_ctx();
+                    transit.on_vehicle_arrived(id, &mut ctx, out);
+                });
                 self.call(|sim, out| sim.citizens.on_vehicle_arrived(id, out));
                 self.call(|sim, out| {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
@@ -205,7 +224,10 @@ impl Simulation {
                 self.call(|sim, out| sim.flow.on_vehicle_arrived(id, out));
             }
             &SimEvent::VehicleFailed(id) => {
-                self.call(|sim, out| sim.transit.on_vehicle_failed(id, out));
+                self.call(|sim, out| {
+                    let (transit, mut ctx) = sim.transit_ctx();
+                    transit.on_vehicle_failed(id, &mut ctx, out);
+                });
                 self.call(|sim, out| sim.citizens.on_vehicle_failed(id, out));
                 self.call(|sim, out| {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
