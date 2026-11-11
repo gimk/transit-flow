@@ -5116,6 +5116,10 @@ name = "tf_game"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "glam",
+ "indexmap",
+ "serde",
+ "serde_json",
  "tf_sim",
 ]
 

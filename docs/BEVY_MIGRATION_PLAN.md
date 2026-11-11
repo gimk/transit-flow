@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. Next: **M8.1** (game shell).
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. Next: **M8.2** (camera and input).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -338,7 +338,7 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
     | `test_vehicles.gd` (7) | `tests/vehicles.rs` (7) | ported |
     | `test_walking.gd` (5) | `tests/walking.rs` (5) | ported |
     | `test_zones.gd` (6) | `tests/zones.rs` (8) | ported |
-    | `test_view_snapshot.gd` (3: lateness, parked cars, indicators) | none yet | view data (`ViewSnapshot`): ported with the snapshot in M8.1 |
+    | `test_view_snapshot.gd` (3: lateness, parked cars, indicators) | `crates/tf_game/tests/view_snapshot.rs` (6) | ported (M8.1) |
     | `test_alert_renderer.gd`, `test_dot_display.gd`, `test_nature.gd`, `test_night_lights.gd`, `test_road_corners.gd` | none | view, not migrated (§1: dot display, nature, night lights, alerts, corner fillets) |
     | `tests/integration/test_build_tools.gd` | `tf_game/tests` | tools, M10 |
 - [x] **R3 Sim parity gate** · Opus · M7.3
@@ -353,10 +353,11 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M8: Game shell · can start after R1 and run in parallel with M2–M7 (only `tf_game`)
 
-- [ ] **M8.1 Runner, snapshot, events** · Opus · R1 (use stub systems until M7 lands)
+- [x] **M8.1 Runner, snapshot, events** · Opus · R1 (use stub systems until M7 lands)
   - *Read:* `core/game.gd`, `core/view_snapshot.gd`, `core/events.gd`, `core/grid.gd`, `test_view_snapshot.gd`, `test_grid.gd`.
   - The threaded runner of §2.3, `ViewSnapshot::capture`, the Bevy events, `Grid`, speed controls, quicksave / quickload (F5 / F9, same JSON, to the platform data dir), headless inline stepping for tests.
   - *Done when:* ported snapshot and grid tests pass; a test steps a stub sim through the runner on a thread and gets interpolated snapshots; F5 then F9 round-trips.
+  - *Done (2026-11-11):* `tf_game` is now a lib plus the binary. `runner::SimHandle` (the threaded runner; `get_mut()`, `roads() -> Arc<RoadsView>`, `view_from/view_to/view_alpha`, `advance(delta)`, speeds 0/1/2/4, `LEAD_TICKS` 2, lag detection), `snapshot::ViewSnapshot::capture`, `events` (17 Bevy `Message` types, one per `Events` signal except `dot_band_changed`), `game` (quicksave/load, new map, scenarios, stress), `plugin::GamePlugin` (keys: space, 1–3, F5 save, F9 load, F6 stress, F7 Bottleneck, F8 Town; the sim runs in the background and logs once per game hour). Tests: `view_snapshot.rs` (the 3 GUT tests plus colour, heading and pose interpolation) and `runner.rs` (threaded and inline runs with interpolated snapshots, inline equals plain stepping, relays, replace, save/load round trip, keys through a Bevy app). Decisions in NOTES ("Game shell (M8.1)"). 265 tests pass.
 - [ ] **M8.2 Camera and input** · Sonnet · M8.1
   - *Read:* `view/map_camera.gd`, the `[input]` section of `project.godot`, `tools/tool_manager.gd` (`TOOL_SHORTCUTS`).
   - Stepped zoom (`ZOOM_LEVELS`), pan (WASD / arrows / middle drag / trackpad), `KeyBindings` from physical keys, F11 fullscreen, `Pointer` resource.
