@@ -15,6 +15,7 @@ The game is being ported to Rust + Bevy, on branch `bevy-migration`, following [
 - `cargo run -p tf_game` runs the game (`--features dev` for faster incremental builds).
 - Godot on this Mac: `/Applications/Godot.app/Contents/MacOS/Godot` (4.7.2). One GUT test, `test_quick_save_and_load_restores_roads`, fails here only because of a case-mismatch warning on the user-data folder (`~/Library/Application Support/godot` vs `Godot`); it's not a code failure.
 - `crates/.gdignore` and `target/.gdignore` keep Godot out of the Rust folders; `cargo clean` deletes the second one, so recreate it.
+- Keys of the Bevy build (`tf_game::input::KeyBindings`, physical keys, so WASD = ZQSD on AZERTY): WASD / arrows pan, wheel zooms toward the cursor (9 steps), middle-drag and trackpad pan, pinch zooms; space pause, 1-3 speed; tools R B H C I X L U T V and Esc (bound, tools come in M10); F2 lateness, F3 lanes, F4 heatmap (overlay toggle messages), F5 save, F9 load, F6 stress traffic, F7 Bottleneck, F8 Town, F11 fullscreen; new for functions that only had a debug button: F10 rush hour now, F12 new empty map, 0 Bottleneck with bus lanes. Systems read `ActionInput` and the `Pointer` resource (world / snapped position, buttons), never raw keys or the window. Camera state is in sim coordinates (y down); the Bevy world is y up (`camera::sim_to_bevy`: y negated).
 
 ## Git rules
 

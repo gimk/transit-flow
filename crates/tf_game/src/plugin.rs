@@ -4,19 +4,11 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use crate::camera::MapCameraPlugin;
 use crate::events::*;
 use crate::game::{self, Announce};
+use crate::input::{Action, ActionInput, GameInputPlugin};
 use crate::runner::{RunnerEvent, SimHandle};
-
-/// Keys (physical, as in `project.godot`'s `[input]`: `KeyCode` is the physical key).
-/// M8.2 folds these into `KeyBindings`.
-pub const KEY_PAUSE: KeyCode = KeyCode::Space;
-pub const KEYS_SPEED: [KeyCode; 3] = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3];
-pub const KEY_QUICK_SAVE: KeyCode = KeyCode::F5;
-pub const KEY_QUICK_LOAD: KeyCode = KeyCode::F9;
-pub const KEY_STRESS_TRAFFIC: KeyCode = KeyCode::F6;
-pub const KEY_BOTTLENECK: KeyCode = KeyCode::F7;
-pub const KEY_TOWN: KeyCode = KeyCode::F8;
 
 pub struct GamePlugin {
     /// Step the sim on a worker thread (see `SimHandle::new`).
@@ -35,7 +27,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         // A new game starts on an empty map with its highway (`Game._ready`).
         app.insert_resource(SimHandle::new(game::empty_map(), self.threaded))
-            .add_plugins(EventsPlugin)
+            .add_plugins((EventsPlugin, GameInputPlugin, MapCameraPlugin))
             .add_systems(PreUpdate, advance_sim)
             .add_systems(Update, (sim_keys, log_hours));
     }
@@ -100,31 +92,52 @@ fn advance_sim(time: Res<Time<Real>>, mut handle: ResMut<SimHandle>, mut relay: 
 
 /// `Game._unhandled_input`'s sim keys.
 fn sim_keys(
-    keys: Res<ButtonInput<KeyCode>>,
+    actions: ActionInput,
     mut handle: ResMut<SimHandle>,
     mut announce: Announce,
+    mut overlays: MessageWriter<DebugOverlayToggleRequested>,
 ) {
-    if keys.just_pressed(KEY_PAUSE) {
+    use Action::*;
+    if actions.just_pressed(SimTogglePause) {
         handle.toggle_pause();
     }
-    for (i, &key) in KEYS_SPEED.iter().enumerate() {
-        if keys.just_pressed(key) {
+    for (i, action) in [SimSpeed1, SimSpeed2, SimSpeed3].into_iter().enumerate() {
+        if actions.just_pressed(action) {
             handle.set_speed(i + 1);
         }
     }
-    if keys.just_pressed(KEY_QUICK_SAVE) {
+    // The overlays answer these with `DebugOverlayChanged` (M9).
+    for (action, id) in [
+        (ToggleLateness, "lateness"),
+        (ToggleLaneOverlay, "lanes"),
+        (ToggleHeatmap, "heatmap"),
+    ] {
+        if actions.just_pressed(action) {
+            overlays.write(DebugOverlayToggleRequested(id.into()));
+        }
+    }
+    if actions.just_pressed(QuickSave) {
         game::quick_save(&mut handle, &mut announce);
     }
-    if keys.just_pressed(KEY_QUICK_LOAD) {
+    if actions.just_pressed(QuickLoad) {
         game::quick_load(&mut handle, &mut announce);
     }
-    if keys.just_pressed(KEY_BOTTLENECK) {
+    if actions.just_pressed(DebugLoadScenario) {
         game::load_bottleneck_scenario(&mut handle, &mut announce);
     }
-    if keys.just_pressed(KEY_TOWN) {
+    if actions.just_pressed(DebugLoadBusLanesScenario) {
+        game::load_bottleneck_bus_lanes_scenario(&mut handle, &mut announce);
+    }
+    if actions.just_pressed(DebugLoadTown) {
         game::load_town_scenario(&mut handle, &mut announce);
     }
-    if keys.just_pressed(KEY_STRESS_TRAFFIC) {
+    if actions.just_pressed(DebugNewEmptyMap) {
+        game::new_empty_game(&mut handle, &mut announce);
+    }
+    if actions.just_pressed(DebugRushHour) {
+        game::rush_hour_now(&mut handle, &mut announce);
+    }
+    if actions.just_pressed(DebugStressTraffic) {
         game::cycle_stress_traffic(&mut handle, &mut announce);
     }
 }

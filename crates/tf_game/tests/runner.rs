@@ -9,7 +9,7 @@ use tf_game::events::{
     HourChanged, NotificationPosted, RoadNetworkChanged, SimulationReset, SpeedChanged,
 };
 use tf_game::game::{self, QUICKSAVE_FILE};
-use tf_game::plugin::{GamePlugin, KEY_PAUSE, KEY_QUICK_LOAD, KEY_QUICK_SAVE, KEYS_SPEED};
+use tf_game::plugin::GamePlugin;
 use tf_game::runner::{RunnerEvent, SimHandle};
 use tf_sim::Simulation;
 use tf_sim::debug::scenarios;
@@ -226,9 +226,9 @@ fn keys_drive_the_game_through_the_plugin() {
         }
     };
 
-    press(&mut app, KEYS_SPEED[2]);
+    press(&mut app, KeyCode::Digit3);
     assert_eq!(app.world().resource::<SimHandle>().multiplier(), 4);
-    press(&mut app, KEY_PAUSE);
+    press(&mut app, KeyCode::Space);
     assert!(app.world().resource::<SimHandle>().is_paused());
     assert_eq!(
         app.world_mut()
@@ -264,7 +264,7 @@ fn keys_drive_the_game_through_the_plugin() {
         .resource_mut::<SimHandle>()
         .get_mut()
         .to_dict();
-    press(&mut app, KEY_QUICK_SAVE);
+    press(&mut app, KeyCode::F5);
     assert!(dir.join(QUICKSAVE_FILE).exists());
     app.world_mut()
         .resource_mut::<SimHandle>()
@@ -277,7 +277,7 @@ fn keys_drive_the_game_through_the_plugin() {
             .to_dict(),
         saved
     );
-    press(&mut app, KEY_QUICK_LOAD);
+    press(&mut app, KeyCode::F9);
     assert_eq!(
         app.world_mut()
             .resource_mut::<SimHandle>()

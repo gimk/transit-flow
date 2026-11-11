@@ -62,6 +62,14 @@ GDScript `float` is 64-bit, while `Vector2` and `Curve2D` distances are 32-bit. 
 - **Saves:** same JSON (sorted keys, tab indent) written to `~/Library/Application Support/transit-flow/quicksave.json` (macOS; `%APPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` elsewhere; `TRANSIT_FLOW_DATA_DIR` overrides, used by tests). No new crate. A save made in Godot's `user://` folder can be copied there. Round trip: `to_dict` after load equals before.
 - **Keys** are hard-coded constants in `plugin.rs` (`KeyCode` is the physical key); M8.2 folds them into `KeyBindings`. F6 stress, F7 Bottleneck, F8 Town are wired; rush hour, new empty map and the bus-lanes Bottleneck exist in `game.rs` and wait for keys (M10).
 
+### Camera and input (M8.2)
+
+- **Coordinates:** `MapCamera` keeps `center` in sim coordinates (y down, as Godot), `zoom`, and the viewport size; `apply_camera` writes the Bevy `Transform` (y negated, `sim_to_bevy` / `bevy_to_sim`) and orthographic `scale = 1 / zoom`. Views (M9) must draw sim position `p` at Bevy `(p.x, -p.y)`. `Pointer.world` is in sim coordinates; it is computed from the camera state and the window cursor (`MapCamera::screen_to_world`), not `viewport_to_world_2d`, so tests need no window.
+- **Zoom steps** are Godot's `ZOOM_LEVELS` unchanged (they only existed for dot spacing, but are a fine progression). Pan 900 screen px/s, pinch step 1.15, `PanGesture` x16, as in Godot.
+- **Wheel:** `MouseScrollUnit::Line` (a mouse wheel notch) zooms one level; `Pixel` (macOS trackpad two-finger scroll) pans. Middle-drag uses `MouseMotion`. Gestures are only delivered by winit on some platforms.
+- **Keys** are `Action` -> `Vec<KeyCode>` in `KeyBindings` (rebindable, `actions_for(key)`); `ActionInput` is the system param. Overlay keys F2-F4 write `DebugOverlayToggleRequested("lateness"|"lanes"|"heatmap")`. Tool keys and Esc are bound; `Action::TOOL_SHORTCUTS` maps the tool actions to Godot's tool ids for M10 (no `ActiveTool` yet). New keys: F10, F12, 0. F1 (debug menu) is bound but unused.
+- **Pointer** updates in `PreUpdate` after input; without a primary window only the buttons update, tests call `Pointer::set_world`. Camera input runs in `Update`, so the pointer lags the camera by at most a frame.
+
 ## Deviations
 
 None yet.

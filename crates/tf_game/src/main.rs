@@ -1,9 +1,10 @@
 //! Transit Flow: the Bevy app. Renders the simulation (`tf_sim`) with simple shapes and
-//! turns keyboard and mouse input into sim commands. So far (M8.1) it opens a window
-//! with a 2D camera and runs the simulation in the background; the views come in M9.
+//! turns keyboard and mouse input into sim commands. So far (M8.2) it opens a window
+//! with the map camera and runs the simulation in the background; the views come in M9.
 //! See `docs/BEVY_MIGRATION_PLAN.md`.
 
 use bevy::prelude::*;
+use tf_game::camera::MapCamera;
 use tf_game::plugin::GamePlugin;
 
 /// Behind everything the map doesn't cover.
@@ -25,5 +26,5 @@ fn main() {
 }
 
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    commands.spawn(MapCamera::default());
 }
