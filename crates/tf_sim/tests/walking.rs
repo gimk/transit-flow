@@ -293,6 +293,15 @@ fn people_and_cars_never_share_a_crosswalk() {
         0,
         "and cars aren't stopped for good"
     );
+    assert_eq!(
+        (
+            walked,
+            sim.pedestrians.pedestrians.len(),
+            sim.vehicles.vehicles.len()
+        ),
+        (123, 117, 120),
+        "the same walks, pedestrians and vehicles as Godot"
+    );
 }
 
 #[test]
