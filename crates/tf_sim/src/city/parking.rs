@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 
 use super::lot::LotType;
 use super::lot_system::LotSystem;
+use crate::geom::sort::sort_custom;
 use crate::ids::LotId;
 
 #[derive(Clone, Debug, Default)]
@@ -97,11 +98,8 @@ impl Parking {
                     && f64::from(lot.center().distance(center)) <= max_walk
             })
             .collect();
-        // Godot's sort_custom isn't stable for long lists; ties in distance are rare here.
-        candidates.sort_by(|a, b| {
-            a.center()
-                .distance_squared(center)
-                .total_cmp(&b.center().distance_squared(center))
+        sort_custom(&mut candidates, |a, b| {
+            a.center().distance_squared(center) < b.center().distance_squared(center)
         });
         for lot in candidates {
             if walking_distance(lot.id, lot_id) <= max_walk {

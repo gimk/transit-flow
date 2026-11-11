@@ -6,6 +6,7 @@
 //! `Simulation._init` connected them, depth first (a listener's own events are
 //! delivered before the next listener runs), which is the order Godot runs them in.
 
+use crate::city::citizen_system::CitizenCtx;
 use crate::city::{CitizenSystem, ExternalConnections, FlowMetric, LotSystem, ZoneSystem};
 use crate::clock::SimClock;
 use crate::events::{Outbox, SimEvent};
@@ -82,7 +83,10 @@ impl Simulation {
         let dt = Self::TICK_DT;
         self.call(|sim, out| sim.clock.advance(dt, out));
         self.call(|sim, out| sim.zones.step(time, &sim.roads, &mut sim.lots, out));
-        self.call(|sim, out| sim.citizens.step(time, out));
+        self.call(|sim, out| {
+            let (citizens, mut ctx) = sim.citizens_ctx();
+            citizens.step(time, &mut ctx, out);
+        });
         self.call(|sim, out| {
             let ctx = &mut TrafficCtx {
                 roads: &sim.roads,
@@ -170,6 +174,23 @@ impl Simulation {
         (&mut self.transit, ctx)
     }
 
+    /// The citizen system and what it works with, borrowed apart (`CitizenSystem` takes
+    /// a `CitizenCtx` where the GDScript class holds references to the other systems).
+    pub fn citizens_ctx(&mut self) -> (&mut CitizenSystem, CitizenCtx<'_>) {
+        let ctx = CitizenCtx {
+            roads: &self.roads,
+            router: &mut self.router,
+            lots: &mut self.lots,
+            signals: &self.signals,
+            vehicles: &mut self.vehicles,
+            pedestrians: &mut self.pedestrians,
+            transit: &mut self.transit,
+            crosswalks: &mut self.crosswalks,
+            clock: &self.clock,
+        };
+        (&mut self.citizens, ctx)
+    }
+
     /// The events delivered since the last call, oldest first, for the views.
     pub fn take_view_events(&mut self) -> Vec<SimEvent> {
         std::mem::take(&mut self.view_events)
@@ -208,7 +229,10 @@ impl Simulation {
             }
             SimEvent::LotsChanged => {
                 self.call(|sim, out| sim.vehicles.request_reroute(out));
-                self.call(|sim, out| sim.citizens.sync_with_lots(out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.sync_with_lots(&mut ctx, out);
+                });
                 self.call(|sim, out| sim.freight.on_lots_changed(&sim.lots, out));
             }
             &SimEvent::VehicleArrived(id) => {
@@ -216,7 +240,10 @@ impl Simulation {
                     let (transit, mut ctx) = sim.transit_ctx();
                     transit.on_vehicle_arrived(id, &mut ctx, out);
                 });
-                self.call(|sim, out| sim.citizens.on_vehicle_arrived(id, out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.on_vehicle_arrived(id, &mut ctx, out);
+                });
                 self.call(|sim, out| {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
                     sim.stress.on_vehicle_gone(owner, out);
@@ -228,7 +255,10 @@ impl Simulation {
                     let (transit, mut ctx) = sim.transit_ctx();
                     transit.on_vehicle_failed(id, &mut ctx, out);
                 });
-                self.call(|sim, out| sim.citizens.on_vehicle_failed(id, out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.on_vehicle_failed(id, &mut ctx, out);
+                });
                 self.call(|sim, out| {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
                     sim.stress.on_vehicle_gone(owner, out);
@@ -236,13 +266,22 @@ impl Simulation {
                 self.call(|sim, out| sim.flow.on_vehicle_failed(id, out));
             }
             &SimEvent::PedestrianArrived(id) => {
-                self.call(|sim, out| sim.citizens.on_pedestrian_arrived(id, out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.on_pedestrian_arrived(id, &mut ctx, out);
+                });
             }
             &SimEvent::RiderArrived { citizen, door } => {
-                self.call(|sim, out| sim.citizens.on_rider_arrived(citizen, door, out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.on_rider_arrived(citizen, door, &mut ctx, out);
+                });
             }
             &SimEvent::RiderStranded(citizen) => {
-                self.call(|sim, out| sim.citizens.on_rider_stranded(citizen, out));
+                self.call(|sim, out| {
+                    let (citizens, mut ctx) = sim.citizens_ctx();
+                    citizens.on_rider_stranded(citizen, &mut ctx, out);
+                });
             }
             &SimEvent::TripEnded { citizen, completed } => {
                 self.call(|sim, out| sim.flow.on_trip_ended(citizen, completed, out));

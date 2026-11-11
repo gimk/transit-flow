@@ -279,6 +279,15 @@ impl VehicleSystem {
         self.vehicles.get(&id).or_else(|| self.finished.get(&id))
     }
 
+    /// A vehicle on the road or waiting in its driveway (`depart` returns the id of one
+    /// that's still waiting).
+    pub fn vehicle_or_departure_mut(&mut self, id: VehicleId) -> Option<&mut Vehicle> {
+        if let Some(vehicle) = self.vehicles.get_mut(&id) {
+            return Some(vehicle);
+        }
+        self.departures.iter_mut().find(|v| v.id == id)
+    }
+
     /// Vehicles on a lane, front-most first.
     pub fn queue(&self, lane_id: LaneId) -> &[VehicleId] {
         self.occupied

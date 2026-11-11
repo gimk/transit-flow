@@ -2,14 +2,15 @@
 
 mod common;
 
-use common::roads::{G, RoutedRoads, changes, end_direction, local};
+use common::roads::{G, RoutedRoads, changes, end_direction, local, road_type};
 use glam::{IVec2, Vec2};
+use tf_sim::Simulation;
 use tf_sim::city::{LotSystem, LotType, lot_system};
 use tf_sim::events::{Outbox, SimEvent};
 use tf_sim::geom::Rect2;
 use tf_sim::grid;
 use tf_sim::ids::SegmentId;
-use tf_sim::roads::RoadNetwork;
+use tf_sim::roads::{RoadNetwork, RoadType};
 
 /// A road network with a lot system listening to it (`LotSystem.new(roads)`), and a
 /// router for the tests that route.
@@ -240,9 +241,60 @@ fn plots_leave_room_for_the_road_and_sidewalk() {
 }
 
 #[test]
-#[ignore = "needs zones (M3.2) and citizens (M7.1): test_an_avenue_too_close_removes_the_lots_between"]
 fn an_avenue_too_close_removes_the_lots_between() {
-    unimplemented!("port with M7.1");
+    let mut sim = Simulation::new();
+    let road = |sim: &mut Simulation, from: Vec2, to: Vec2, road_type: &'static RoadType| {
+        sim.call(|sim, out| {
+            sim.roads.add_road(from * G, to * G, road_type, 0, out);
+        });
+    };
+    road(&mut sim, v(0.0, 4.0), v(12.0, 4.0), local());
+    road(&mut sim, v(0.0, 5.0), v(12.0, 5.0), local());
+    let cells = [cell(3, 4), cell(4, 4)];
+    sim.call(|sim, out| {
+        sim.zones
+            .paint(&mut sim.lots, &cells, LotType::Residential, out)
+    });
+    sim.call(|sim, out| sim.zones.develop_all_now(&sim.roads, &mut sim.lots, out));
+    let lot = sim.lots.lot_at_cell(cell(3, 4));
+    assert!(lot.is_some(), "room between two local streets");
+    assert!(
+        f64::from(sim.lots.lots[&lot.unwrap()].plot.size.y) > lot_system::MIN_PLOT,
+        "room between two local streets"
+    );
+    road(
+        &mut sim,
+        v(0.0, 5.0),
+        v(12.0, 5.0),
+        road_type("avenue_4lane"),
+    );
+    assert_eq!(
+        sim.lots.lot_at_cell(cell(3, 4)),
+        None,
+        "the avenue took the land"
+    );
+    assert_eq!(sim.lots.lot_at_cell(cell(4, 4)), None);
+    assert_eq!(
+        sim.citizens.citizens.len(),
+        0,
+        "and its residents moved out"
+    );
+    assert!(sim.zones.zones.contains_key(&cell(3, 4)), "the zone stays");
+    for _ in 0..100 {
+        sim.step();
+    }
+    assert!(
+        sim.zones.is_waiting_for_road(cell(3, 4)),
+        "waiting for room"
+    );
+    assert_eq!(sim.lots.lot_at_cell(cell(3, 4)), None);
+    let mut placed = None;
+    sim.call(|sim, out| {
+        placed = sim
+            .lots
+            .add_lot(&sim.roads, cell(5, 4), LotType::Commercial, out)
+    });
+    assert_eq!(placed, None, "nor can one be placed there");
 }
 
 #[test]

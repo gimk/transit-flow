@@ -189,5 +189,5 @@ fn cars_never_turn_through_bus_lanes() {
 }
 
 #[test]
-#[ignore = "needs citizens, Flow and Scenarios (M7.1, M7.3): test_bus_lanes_on_a_congested_corridor_raise_flow"]
+#[ignore = "needs Scenarios (M7.3): test_bus_lanes_on_a_congested_corridor_raise_flow"]
 fn bus_lanes_on_a_congested_corridor_raise_flow() {}

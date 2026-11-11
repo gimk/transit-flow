@@ -5,11 +5,13 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 
+use common::citizens::{add_lot, citizen, modes, nth, plan_trip, trips_ended};
 use common::roads::{G, road_type};
 use common::traffic::{min_queue_gap, road as add_road};
 use common::transit::{add_line, add_stop};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use tf_sim::Simulation;
+use tf_sim::city::citizen::{Mode, State};
 use tf_sim::city::lot::LotType;
 use tf_sim::events::SimEvent;
 use tf_sim::ids::{CitizenId, LaneId, LineId, StopId};
@@ -155,12 +157,81 @@ fn buses_run_round_the_line_stopping_only_where_needed() {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.1): test_a_citizen_without_a_car_rides_the_bus"]
-fn a_citizen_without_a_car_rides_the_bus() {}
+fn a_citizen_without_a_car_rides_the_bus() {
+    let mut sim = Simulation::new();
+    street_line(&mut sim);
+    let home = add_lot(&mut sim, IVec2::new(3, 4), LotType::Residential).unwrap();
+    add_lot(&mut sim, IVec2::new(21, 4), LotType::Commercial);
+    sim.step();
+    let id = nth(&sim, 0);
+    citizen(&mut sim, id).has_car = false;
+    let work = sim.citizens.citizens[&id].work_lot_id.unwrap();
+    let plan = plan_trip(&mut sim, id, home, work, false).unwrap();
+    assert_eq!(plan.mode, Mode::Bus);
+    assert_eq!(modes(&plan), vec![Mode::Walk, Mode::Bus, Mode::Walk]);
+    let mut trips = Vec::new();
+    trips_ended(&mut sim);
+    citizen(&mut sim, id).leave_now = true;
+    for _ in 0..Simulation::TICK_RATE * 60 {
+        sim.step();
+        for (who, completed) in trips_ended(&mut sim) {
+            if who == id && completed {
+                trips.push(sim.citizens.citizens[&id].trip_mode);
+            }
+        }
+        if sim.citizens.citizens[&id].state == State::AtWork {
+            break;
+        }
+    }
+    assert_eq!(sim.citizens.citizens[&id].state, State::AtWork);
+    assert_eq!(trips, vec![Mode::Bus]);
+}
 
+/// A driver takes the car on an empty street, the bus when the street is jammed (driving
+/// gets slower; the bus timetable doesn't, until buses get caught in it too), and the bus
+/// when the car is parked out of reach.
 #[test]
-#[ignore = "needs citizens (M7.1): test_the_bus_when_it_is_quicker_the_car_when_it_is_not"]
-fn the_bus_when_it_is_quicker_the_car_when_it_is_not() {}
+fn the_bus_when_it_is_quicker_the_car_when_it_is_not() {
+    let mut sim = Simulation::new();
+    street_line(&mut sim);
+    let home = add_lot(&mut sim, IVec2::new(3, 4), LotType::Residential).unwrap();
+    let work = add_lot(&mut sim, IVec2::new(21, 4), LotType::Commercial).unwrap();
+    sim.step();
+    let id = nth(&sim, 0);
+    citizen(&mut sim, id).has_car = true;
+    citizen(&mut sim, id).car_preference = 1.0;
+    let free = plan_trip(&mut sim, id, home, work, false).unwrap();
+    let lanes: Vec<LaneId> = sim.roads.lanes.keys().copied().collect();
+    for lane in lanes {
+        sim.router.congestion.insert(lane, 1.0); // Twice as slow.
+    }
+    sim.router.invalidate_cache();
+    let jammed = plan_trip(&mut sim, id, home, work, false).unwrap();
+    let drive_jammed = {
+        let (citizens, mut ctx) = sim.citizens_ctx();
+        citizens.plan_drive(&mut ctx, id, home, work).unwrap().cost
+    };
+    // Godot prints: car cost 22.8 on free roads, 35.6 jammed; bus 34.0
+    assert_eq!(
+        format!(
+            "car cost {:.1} on free roads, {:.1} jammed; bus {:.1}",
+            free.cost, drive_jammed, jammed.cost
+        ),
+        "car cost 22.8 on free roads, 35.6 jammed; bus 34.0",
+        "the same costs as Godot"
+    );
+    assert_eq!(free.mode, Mode::Car);
+    assert_eq!(jammed.mode, Mode::Bus);
+    sim.router.congestion.clear();
+    sim.router.invalidate_cache();
+    citizen(&mut sim, id).car_lot_id =
+        add_lot(&mut sim, IVec2::new(12, 4), LotType::Commercial).unwrap();
+    assert_eq!(
+        plan_trip(&mut sim, id, home, work, false).unwrap().mode,
+        Mode::Bus,
+        "the car is out of reach"
+    );
+}
 
 #[test]
 fn riders_change_lines_at_a_shared_stop() {
@@ -235,8 +306,46 @@ fn plan_to(leg: &RideLeg) -> StopId {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.1): test_removing_a_line_strands_its_riders"]
-fn removing_a_line_strands_its_riders() {}
+fn removing_a_line_strands_its_riders() {
+    let mut sim = Simulation::new();
+    let line_id = street_line(&mut sim);
+    let home = add_lot(&mut sim, IVec2::new(3, 4), LotType::Residential).unwrap();
+    add_lot(&mut sim, IVec2::new(21, 4), LotType::Commercial);
+    sim.step();
+    let id = nth(&sim, 0);
+    citizen(&mut sim, id).has_car = false;
+    citizen(&mut sim, id).leave_now = true;
+    trips_ended(&mut sim);
+    let mut outcome = None;
+    while !sim.citizens.citizens[&id].on_bus {
+        sim.step();
+    }
+    sim.call(|sim, out| {
+        let (transit, mut ctx) = sim.transit_ctx();
+        transit.remove_line(&mut ctx, line_id, out);
+    });
+    for (who, completed) in trips_ended(&mut sim) {
+        if who == id {
+            outcome = Some(completed);
+        }
+    }
+    assert_eq!(outcome, Some(false), "the trip failed");
+    assert_eq!(
+        sim.citizens.citizens[&id].state,
+        State::AtWork,
+        "but the day goes on"
+    );
+    assert_eq!(sim.transit.buses.len(), 0);
+    assert_eq!(
+        sim.vehicles
+            .vehicles
+            .values()
+            .filter(|v| v.in_service)
+            .count(),
+        0
+    );
+    assert!(sim.lots.lots.contains_key(&home));
+}
 
 #[test]
 fn stops_and_lines_survive_road_edits() {
@@ -313,11 +422,37 @@ fn stops_and_lines_round_trip_through_their_save() {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.1): test_no_trip_uses_more_than_three_modes"]
-fn no_trip_uses_more_than_three_modes() {}
+fn no_trip_uses_more_than_three_modes() {
+    let mut sim = Simulation::new();
+    street_line(&mut sim);
+    for x in (1..23).step_by(2) {
+        let lot_type = if x < 12 {
+            LotType::Residential
+        } else {
+            LotType::Commercial
+        };
+        add_lot(&mut sim, IVec2::new(x, 3), lot_type);
+    }
+    sim.step();
+    let ids: Vec<_> = sim.citizens.citizens.keys().copied().collect();
+    for id in ids {
+        let Some(work) = sim.citizens.citizens[&id].work_lot_id else {
+            continue;
+        };
+        let home = sim.citizens.citizens[&id].home_lot_id;
+        for has_car in [true, false] {
+            citizen(&mut sim, id).has_car = has_car;
+            let plan = plan_trip(&mut sim, id, home, work, false).unwrap();
+            let kinds: HashSet<_> = plan.legs.iter().map(|leg| leg.mode()).collect();
+            let buses = plan.legs.iter().filter(|l| l.mode() == Mode::Bus).count();
+            assert!(kinds.len() <= 3);
+            assert!(buses as i32 <= TransitSystem::MAX_TRANSFERS + 1);
+        }
+    }
+}
 
 #[test]
-#[ignore = "needs citizens and Scenarios (M7.1, M7.3): test_a_bus_line_speeds_up_trips_without_a_car"]
+#[ignore = "needs Scenarios (M7.3): test_a_bus_line_speeds_up_trips_without_a_car"]
 fn a_bus_line_speeds_up_trips_without_a_car() {}
 
 /// On a grid with many ways round, and traffic to tempt them off it, buses keep to the
@@ -481,8 +616,46 @@ fn stops_get_a_crosswalk_that_cars_give_way_at() {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.1): test_riders_get_on_and_off_at_the_bus_door"]
-fn riders_get_on_and_off_at_the_bus_door() {}
+fn riders_get_on_and_off_at_the_bus_door() {
+    let mut sim = Simulation::new();
+    street_line(&mut sim);
+    add_lot(&mut sim, IVec2::new(3, 4), LotType::Residential);
+    add_lot(&mut sim, IVec2::new(21, 4), LotType::Commercial);
+    sim.step();
+    let id = nth(&sim, 0);
+    citizen(&mut sim, id).has_car = false;
+    citizen(&mut sim, id).leave_now = true;
+    let mut rode = false;
+    let mut stepped_off_at = Vec2::INFINITY;
+    let mut bus_at = Vec2::INFINITY;
+    for _ in 0..Simulation::TICK_RATE * 60 {
+        sim.step();
+        let c = &sim.citizens.citizens[&id];
+        rode = rode || c.on_bus;
+        if let (true, false, Some(pedestrian)) = (rode, c.on_bus, c.pedestrian_id) {
+            let walker = &sim.pedestrians.pedestrians[&pedestrian];
+            stepped_off_at = walker.points[0];
+            for bus in sim.transit.buses.values() {
+                let vehicle = &sim.vehicles.vehicles[&bus.vehicle];
+                if vehicle.dwelling {
+                    bus_at = vehicle.position;
+                }
+            }
+            break;
+        }
+    }
+    assert!(rode, "rode the bus");
+    let boarded: i32 = sim.transit.stops.values().map(|stop| stop.boarded).sum();
+    assert!(boarded >= 1, "counted getting on, for drawing");
+    assert!(
+        f64::from(stepped_off_at.distance(bus_at)) < BUS_LENGTH * 0.5 + BUS_WIDTH,
+        "walks on from beside the bus"
+    );
+    assert!(
+        f64::from(stepped_off_at.distance(bus_at)) > BUS_WIDTH * 0.5,
+        "outside it, at the curb side"
+    );
+}
 
 /// Not in the GDScript tests: what `riders_get_on_and_off_at_the_bus_door` checks of
 /// `door_position`, without citizens. The door is beside the bus's front, outside it,

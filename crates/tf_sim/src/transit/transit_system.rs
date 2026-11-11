@@ -413,6 +413,11 @@ impl TransitSystem {
         true
     }
 
+    /// How many citizens wait at stops or ride buses.
+    pub fn rider_count(&self) -> usize {
+        self.riders.len()
+    }
+
     /// Takes a citizen off the network without reporting anything (e.g. their home is
     /// gone).
     pub fn remove_rider(&mut self, citizen: CitizenId) {

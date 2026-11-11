@@ -263,8 +263,9 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M7: Citizens, Flow, scenarios, saves: the sim is complete
 
-- [ ] **M7.1 Citizen, CitizenSystem** · Sonnet · M6.2, M4.7
+- [x] **M7.1 Citizen, CitizenSystem** · Sonnet · M6.2, M4.7
   - *Read:* `citizen.gd`, `citizen_system.gd`, `test_trips.gd`, `test_commute.gd`, `test_daily_pulse.gd`.
+  - *Done (2026-11-11):* `Citizen` and `CitizenSystem` ported whole (jobs, schedules, shopping, `plan_trip` with the car, bus and walk options, parking, the leg machine, `sync_with_lots`) and wired into `Simulation` (`citizens_ctx()` gives the `CitizenCtx`; listeners, order and step order unchanged; `TripEnded` goes to Flow's stub until M7.2). `tests/trips.rs`, `commute.rs` and `daily_pulse.rs` port `test_trips`, `test_commute` and `test_daily_pulse` (the save test waits for M7.3; the Flow assertions for M7.2), and the stubs waiting for citizens are ported: `citizens_walk_short_trips`, the five bus ones, `an_avenue_too_close_removes_the_lots_between`. New probe `migration/probes/citizen_trace.gd` → `golden/citizen_trace.json` (a day of 80 citizens with a bus line, parking, a road cut, a shop removed and a rush: 2083 events): `tests/citizen_trace.rs` agrees on every event tick, on every citizen's end state (schedule, taste, car, job) and on 320 planned trips, so the RNG draws are in Godot's order. The daily-pulse vehicle counts per period and the mode-choice costs `test_buses` prints are Godot's. `geom::sort::sort_custom` ports Godot's unstable sort (equally distant shops and parking lots); `Parking` uses it. Mutation-checked (shopping chance, car overhead: the trace and the bus test fail). See NOTES ("CitizenSystem").
 - [ ] **M7.2 FlowMetric** · Sonnet · M7.1
   - *Read:* `flow_metric.gd`, `test_flow.gd`.
 - [ ] **M7.3 Scenarios, Simulation save/load, Town** · Sonnet · M7.2

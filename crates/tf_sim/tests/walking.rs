@@ -305,5 +305,35 @@ fn people_and_cars_never_share_a_crosswalk() {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.1): test_citizens_walk_short_trips"]
-fn citizens_walk_short_trips() {}
+fn citizens_walk_short_trips() {
+    let mut sim = Simulation::new();
+    road(&mut sim, v(0.0, 4.0), v(12.0, 4.0));
+    add_lot(&mut sim, IVec2::new(2, 3), LotType::Residential);
+    add_lot(&mut sim, IVec2::new(4, 3), LotType::Commercial); // 2 cells away: walkable.
+    sim.step();
+    sim.citizens.depart_everyone_now(0.0);
+    for _ in 0..5 {
+        sim.step();
+    }
+    assert_eq!(
+        sim.pedestrians.pedestrians.len(),
+        2,
+        "both residents walk to work"
+    );
+    assert_eq!(
+        sim.vehicles.vehicles.len() + sim.vehicles.waiting_departures().len(),
+        0,
+        "nobody drives"
+    );
+    for _ in 0..400 {
+        sim.step();
+    }
+    let at_work = sim
+        .citizens
+        .citizens
+        .values()
+        .filter(|c| c.state == tf_sim::city::citizen::State::AtWork)
+        .count();
+    assert_eq!(at_work, 2);
+    // M7.2 adds: walks count in Flow (`flow.get_trip_count > 0`).
+}
