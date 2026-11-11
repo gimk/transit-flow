@@ -1,5 +1,6 @@
 //! Lane graph, routes and the router (`sim/routing/`).
 
+pub mod astar;
 pub mod lane_graph;
 pub mod route;
 pub mod router;

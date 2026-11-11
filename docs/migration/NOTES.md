@@ -105,6 +105,10 @@ The whole of `vehicle_system.gd` was ported at once (its four planned slices cal
 
 **Result: the Rust traffic is Godot's, tick for tick.** All five stress grids of `migration/baseline.md` give exactly Godot's numbers (arrivals 507 and 622 on the local grids, 491, 283 and 419 on the mixed ones; same vehicle counts, gaps, 0 stuck), and the benchmark gives the same arrivals per second at every size. R2 pinned the five grids in the tests and added `traffic_trace` (road edits under traffic, a day of freight), which also matches tick for tick.
 
+### WalkNetwork and the shared A* (M5.1)
+
+`WalkNetwork` extends `AStar2D` too, so the Godot search was moved from `LaneGraph` into `routing::astar::AStar` (dense point indices, neighbours in connection order, caller-supplied step cost and estimate as `f32`); `LaneGraph` and `WalkNetwork` both use it. Walk point ids are the GDScript's (1, 2, ... in build order), so point `id` is index `id - 1`. `WalkNetwork` doesn't hold the roads or the crosswalks: `find_path` / `distance` / `ensure_built` take them, and `PedestrianSystem` forwards `RoadsChanged` to `on_roads_changed`. `find_path` returns `Option<WalkPath>` (Godot: `{}`). Both `sort_custom` calls in `_build` (crossings by distance, arms by angle) are `sort_by`, which is stable where Godot's isn't; they only differ on exact ties (two roads leaving a node at the same angle, two crosswalks at the same distance), which the golden layouts don't have.
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:

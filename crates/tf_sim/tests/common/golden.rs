@@ -40,6 +40,92 @@ pub struct Layout {
     pub lots: Vec<Lot>,
     pub routes: Vec<RouteSample>,
     pub lot_routes: Vec<LotRouteSample>,
+    pub walk: Walk,
+    pub transit: Transit,
+}
+
+/// `walk` of a layout: the walk network after `_ensure_built`, and sampled paths.
+#[derive(Deserialize)]
+pub struct Walk {
+    pub points: Vec<WalkPoint>,
+    /// `"a,b"` → `[node id, segment id]`, in Godot's insertion order.
+    pub crosswalk_edges: indexmap::IndexMap<String, [i32; 2]>,
+    /// `"segment id,side"` → `[start point, end point]`.
+    pub sidewalks: indexmap::IndexMap<String, [i32; 2]>,
+    pub paths: Vec<WalkSample>,
+}
+
+#[derive(Deserialize)]
+pub struct WalkPoint {
+    pub id: i32,
+    pub position: [f32; 2],
+    pub connections: Vec<i32>,
+}
+
+#[derive(Deserialize)]
+pub struct WalkSample {
+    pub from: [f32; 2],
+    pub to: [f32; 2],
+    pub path: GoldenWalkPath,
+}
+
+/// A walking path, or all-empty when Godot found none (`{}`).
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct GoldenWalkPath {
+    pub points: Vec<[f32; 2]>,
+    pub crossings: Vec<[i32; 2]>,
+    pub length: f64,
+}
+
+/// The part of `transit` the walk network needs: the mid-block crosswalks.
+#[derive(Deserialize)]
+pub struct Transit {
+    pub mid_block: indexmap::IndexMap<String, MidBlock>,
+}
+
+#[derive(Deserialize)]
+pub struct MidBlock {
+    pub segment_id: i32,
+    pub distance: f64,
+    pub center: [f32; 2],
+    pub across: [f32; 2],
+    pub half_width: f64,
+    pub lanes: Vec<(i32, f64)>,
+}
+
+/// A `"x,y"` dictionary key.
+pub fn key(text: &str) -> glam::IVec2 {
+    let (x, y) = text.split_once(',').expect("an x,y key");
+    glam::IVec2::new(x.parse().expect("x"), y.parse().expect("y"))
+}
+
+impl Transit {
+    /// The crosswalks state a simulation of the layout has: its mid-block crosswalks.
+    pub fn crosswalks(&self) -> tf_sim::walking::Crosswalks {
+        use tf_sim::ids::{LaneId, SegmentId};
+        use tf_sim::walking::crosswalks::MidBlockCrossing;
+        let mut crosswalks = tf_sim::walking::Crosswalks::new();
+        crosswalks.set_mid_block(
+            self.mid_block
+                .iter()
+                .map(|(k, m)| {
+                    (
+                        key(k),
+                        MidBlockCrossing {
+                            segment_id: SegmentId(m.segment_id),
+                            distance: m.distance,
+                            center: v(m.center),
+                            across: v(m.across),
+                            half_width: m.half_width,
+                            lanes: m.lanes.iter().map(|&(l, d)| (LaneId(l), d)).collect(),
+                        },
+                    )
+                })
+                .collect(),
+        );
+        crosswalks
+    }
 }
 
 #[derive(Deserialize)]
