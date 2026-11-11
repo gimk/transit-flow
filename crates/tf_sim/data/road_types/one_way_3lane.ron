@@ -1,0 +1,14 @@
+// Ported from data/road_types/one_way_3lane.tres (same values).
+(
+    id: "one_way_3lane",
+    display_name: "One-way, 3 lanes",
+    palette_order: 5,
+    lanes_per_direction: 3,
+    one_way: true,
+    priority: 1,
+    bus_lanes: false,
+    lane_width: 14.0,
+    speed_limit: 100.0,
+    surface_color: (0.255, 0.294, 0.341, 1.0),
+    edge_color: (0.169, 0.196, 0.231, 1.0),
+)

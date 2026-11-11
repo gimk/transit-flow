@@ -1,0 +1,14 @@
+// Ported from data/road_types/avenue_4lane_bus.tres (same values).
+(
+    id: "avenue_4lane_bus",
+    display_name: "Avenue with Bus Lanes",
+    palette_order: 2,
+    lanes_per_direction: 2,
+    one_way: false,
+    priority: 1,
+    bus_lanes: true,
+    lane_width: 14.0,
+    speed_limit: 100.0,
+    surface_color: (0.255, 0.294, 0.341, 1.0),
+    edge_color: (0.169, 0.196, 0.231, 1.0),
+)

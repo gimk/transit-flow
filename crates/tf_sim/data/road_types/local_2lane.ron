@@ -1,0 +1,14 @@
+// Ported from data/road_types/local_2lane.tres (same values).
+(
+    id: "local_2lane",
+    display_name: "Local Street",
+    palette_order: 0,
+    lanes_per_direction: 1,
+    one_way: false,
+    priority: 0,
+    bus_lanes: false,
+    lane_width: 14.0,
+    speed_limit: 90.0,
+    surface_color: (0.29, 0.333, 0.384, 1.0),
+    edge_color: (0.169, 0.196, 0.231, 1.0),
+)

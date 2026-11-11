@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0 done (M0.1–M0.3). Next work package: **M1.1** (Haiku; the game shell M8 can start after R1).
+**Status:** M0, M1.1 and M1.2 done. Next work package: **M1.3** (RoadNetwork).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -167,11 +167,13 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M1: Roads (the foundation everything else stands on)
 
-- [ ] **M1.1 Road types and data classes** · Haiku · M0.2
+- [x] **M1.1 Road types and data classes** · Haiku · M0.2
+  - *Done (2026-11-11, with M1.2):* `RoadType` (6 `.ron` files, every field tested against the `.tres` values), `RoadNode` (`JunctionControl`), `RoadSegment`, `Lane` (`Turn`, straight-lane fast path; `segment_id` and `feeder_lane_id` are `Option`s; `outgoing_lanes` objects dropped, ids are enough). Road types are `&'static` (a registry built once).
   - *Read:* `sim/roads/road_type.gd`, `road_node.gd`, `road_segment.gd`, `lane.gd`, `data/road_types/*.tres`.
   - *Write:* `roads/road_type.rs` (struct, `list_all()` sorted like Godot, `load_by_id`, helpers), the 6 `.ron` files with identical values (colours as `[r, g, b, a]` floats), `roads/road_node.rs`, `roads/road_segment.rs`, `roads/lane.rs` (fields as in §2.2; `sample_pose` and the straight-lane fast path included).
   - *Done when:* a test loads all 6 types and checks every field against the `.tres` values; lane sampling tests pass.
-- [ ] **M1.2 LaneBuilder** · Sonnet · M1.1
+- [x] **M1.2 LaneBuilder** · Sonnet · M1.1
+  - *Done (2026-11-11):* `geom::Curve2D` ports Godot 4.7's `Curve2D` baking (control points plus recursive Bézier midpoints, a tangent per baked point, headings slerped when sampling). **All 1 893 golden curves** match, with a worst position error of 1.5e-5 px and the same headings (`tests/curve_baking.rs`). `geom::gd` has Godot's `Vector2` maths (`normalized`, `lerp`, `slerp`, Bézier). `lane_builder` is ported with its 4 tests, and every golden connector equals `build_connector_curve(feeder, exit)` (`tests/lane_builder.rs`). Road lanes against the golden files need the junction trims, so they are checked in M1.3. `geom::Polyline` was dropped: `Curve2D` replaces it.
   - *Read:* `sim/roads/lane_builder.gd`, `tests/unit/test_lane_builder.gd`.
   - Also `geom::bake`: Godot's `Curve2D` baking (`Curve2D::_bake` in Godot 4.7's `scene/resources/curve.cpp`, MIT), for polylines and cubic Béziers, and `Polyline::sample_with_rotation` interpolating headings as Godot does. See `NOTES.md` (Geometry). This makes M1.2 an **Opus** WP if the baked points don't match on the first try.
   - *Done when:* those tests are ported and pass; lane points match the golden files.
