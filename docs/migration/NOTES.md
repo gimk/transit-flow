@@ -70,6 +70,13 @@ GDScript `float` is 64-bit, while `Vector2` and `Curve2D` distances are 32-bit. 
 - **Keys** are `Action` -> `Vec<KeyCode>` in `KeyBindings` (rebindable, `actions_for(key)`); `ActionInput` is the system param. Overlay keys F2-F4 write `DebugOverlayToggleRequested("lateness"|"lanes"|"heatmap")`. Tool keys and Esc are bound; `Action::TOOL_SHORTCUTS` maps the tool actions to Godot's tool ids for M10 (no `ActiveTool` yet). New keys: F10, F12, 0. F1 (debug menu) is bound but unused.
 - **Pointer** updates in `PreUpdate` after input; without a primary window only the buttons update, tests call `Pointer::set_world`. Camera input runs in `Update`, so the pointer lags the camera by at most a frame.
 
+### Screenshot mode (M8.3)
+
+- `capture.rs`: hand-parsed args (`parse_args` -> `Cli::Play | Capture`), `CapturePlugin` (scenario via the `game` commands in `Startup`, `FrameCounter`, screenshot with `Screenshot::primary_window()` + `save_to_disk`, then `AppExit`; gives up after 600 frames). Time is `TimeUpdateStrategy::ManualDuration(1/60 s)` and the sim runs inline (`threaded = false`), so runs repeat. The window is 1280x720 with scale factor forced to 1 (PNG is 1280x720 even on Retina).
+- `--hour` takes the sim out of the handle, steps it to the hour (wrapping past midnight) and `replace`s it, so snapshots resync and views get `SimulationReset`.
+- `--overlay` writes `DebugOverlayToggleRequested("heatmap"|"lanes")` on frame 1, once. M9 overlay views only have to read that message.
+- Until M9 every screenshot is the clear colour: checked that all 921600 pixels equal `ClearColor` (28,31,36). The camera spawns in `main.rs` (zoom set there, before the first frame), `CapturePlugin` does not touch it.
+
 ## Deviations
 
 None yet.

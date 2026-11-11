@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. Next: **M8.3** (headless screenshot mode).
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. M8.3 (headless screenshot mode) done. Next: **M9**.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -362,9 +362,10 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Read:* `view/map_camera.gd`, the `[input]` section of `project.godot`, `tools/tool_manager.gd` (`TOOL_SHORTCUTS`).
   - Stepped zoom (`ZOOM_LEVELS`), pan (WASD / arrows / middle drag / trackpad), `KeyBindings` from physical keys, F11 fullscreen, `Pointer` resource.
   - *Done (2026-11-11):* `input.rs` (`Action`, `KeyBindings`, `ActionInput`, `Pointer`, F11 fullscreen) and `camera.rs` (`MapCamera`, `MapCameraPlugin`): Godot's zoom steps, cursor zoom, pan, middle-drag, wheel, trackpad, pinch, clamping, start position and `CameraFocusRequested`. `plugin.rs` uses the bindings; new keys F10 rush hour, F12 new empty map, 0 bus-lanes Bottleneck. 15 new tests (`tests/camera_input.rs`); 280 tests pass. Decisions in NOTES ("Camera and input (M8.2)").
-- [ ] **M8.3 Headless screenshot mode** · Sonnet · M8.2
+- [x] **M8.3 Headless screenshot mode** · Sonnet · M8.2
   - `--scenario <empty|bottleneck|bottleneck-bus|town> --frames N --screenshot path [--hour h] [--zoom z] [--overlay heatmap|lanes]`.
   - *Done when:* it writes a PNG of the Town; documented in `CLAUDE.md`'s migration section.
+  - *Done (2026-11-11):* `capture.rs` + `main.rs`: `transit-flow --scenario ... --frames N --screenshot path [--hour] [--zoom] [--overlay]` (fixed 1/60 s frames, inline sim, 1280x720 window, exits 0; bad args exit 2 with usage). `--overlay` sends `DebugOverlayToggleRequested` for M9. Documented in `CLAUDE.md`. Town PNG verified: 1280x720, all pixels the clear colour (no views yet). Decisions in NOTES ("Screenshot mode (M8.3)").
 
 ### M9: Simple-shape views · parallel-safe with each other once M8.3 is in (they need R3 only for real data; use a scenario from the stubs until then)
 

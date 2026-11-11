@@ -5,6 +5,7 @@
 //! See `docs/BEVY_MIGRATION_PLAN.md` §2.3.
 
 pub mod camera;
+pub mod capture;
 pub mod events;
 pub mod game;
 pub mod input;
