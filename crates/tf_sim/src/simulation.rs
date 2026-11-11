@@ -83,7 +83,17 @@ impl Simulation {
         self.call(|sim, out| sim.clock.advance(dt, out));
         self.call(|sim, out| sim.zones.step(time, &sim.roads, &mut sim.lots, out));
         self.call(|sim, out| sim.citizens.step(time, out));
-        self.call(|sim, out| sim.freight.step(dt, out));
+        self.call(|sim, out| {
+            let ctx = &mut TrafficCtx {
+                roads: &sim.roads,
+                router: &mut sim.router,
+                lots: &mut sim.lots,
+                signals: &sim.signals,
+                crosswalks: &sim.crosswalks,
+            };
+            sim.freight
+                .step(dt, &sim.clock, &sim.externals, &mut sim.vehicles, ctx, out);
+        });
         self.call(|sim, _out| {
             sim.stress
                 .step(&sim.roads, &mut sim.router, &mut sim.vehicles)
@@ -167,7 +177,7 @@ impl Simulation {
             SimEvent::LotsChanged => {
                 self.call(|sim, out| sim.vehicles.request_reroute(out));
                 self.call(|sim, out| sim.citizens.sync_with_lots(out));
-                self.call(|sim, out| sim.freight.on_lots_changed(out));
+                self.call(|sim, out| sim.freight.on_lots_changed(&sim.lots, out));
             }
             &SimEvent::VehicleArrived(id) => {
                 self.call(|sim, out| sim.transit.on_vehicle_arrived(id, out));

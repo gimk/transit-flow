@@ -113,4 +113,5 @@ Ported as `#[ignore]` stubs with the work package that brings what they need. Th
 |---|---|---|
 | `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
 | `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
+| `test_freight.gd` `test_saves_external_connections` | `freight.rs` | M7.3 (Simulation saves) |
 | `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |

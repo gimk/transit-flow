@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M3 and M4 done except M4.7 (freight) and R2; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **M4.7** (freight), then **R2**; **M5** (walking) and **M8.1** (game shell) can run in parallel.
+**Status:** M0–M3 and M4 done except R2; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **R2**; **M5** (walking) and **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -227,8 +227,9 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 - [x] **M4.6 StressTraffic, CongestionMonitor** · Sonnet · M4.3 (with M4.2; the congestion check on the Bottleneck comes with its citizens, M7.3)
   - *Read:* `stress_traffic.gd`, `congestion_monitor.gd`, `test_bottleneck.gd` (congestion parts).
   - *Done when:* congestion values on the Bottleneck fall within the baseline bands.
-- [ ] **M4.7 FreightSystem** · Sonnet · M4.5, M3.2
+- [x] **M4.7 FreightSystem** · Sonnet · M4.5, M3.2
   - *Read:* `freight_system.gd`, `test_freight.gd`.
+  - *Done (2026-11-11):* `test_freight.gd` ported (the save round-trip waits for M7.3). Same trucks as Godot: 25 in five midday game hours, 4 at night. `Scenarios.add_highway` ported early (`debug::scenarios`) for these tests.
 - [x] **M4.8 Benchmark** · Haiku · M4.6
   - *Done (2026-11-11):* `cargo run -p tf_sim --release --bin traffic_benchmark`, unoptimised, on this M1, against GDScript (`baseline.md`): 500 vehicles 0.45 ms per tick (GDScript 4.93), 1 000 0.86 (10.53), **2 000 1.65 ms (26.50): 16× faster**, 5 000 3.27 (48.91). Same arrivals per second at every size. Go.
   - Port `benchmarks/traffic_benchmark.gd` to `cargo run -p tf_sim --release --bin traffic_benchmark` (same 20×20 grid, 500 / 1k / 2k / 5k vehicles, the same columns). Add the results table under this WP next to Godot's from `baseline.md`.
