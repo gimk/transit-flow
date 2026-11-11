@@ -1,0 +1,18 @@
+[package]
+name = "tf_game"
+description = "Transit Flow: the Bevy app (rendering, input, tools)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "transit-flow"
+path = "src/main.rs"
+
+[dependencies]
+tf_sim = { workspace = true }
+bevy = { workspace = true }
+
+[features]
+# Faster incremental builds while developing: `cargo run -p tf_game --features dev`.
+dev = ["bevy/dynamic_linking"]

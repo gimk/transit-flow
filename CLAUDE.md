@@ -5,6 +5,17 @@
 - Game design: [game_design_godot_architecture_concept.md](game_design_godot_architecture_concept.md)
 - Architecture, roadmap, phase status: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — read it before starting a phase, and update its **Status** line and phase details when a phase is done or the design changes.
 
+## Migration to Rust + Bevy (in progress)
+
+The game is being ported to Rust + Bevy, on branch `bevy-migration`, following [docs/BEVY_MIGRATION_PLAN.md](docs/BEVY_MIGRATION_PLAN.md): one work package per session. Read its §2–§4 before any migration work. Until the cutover (M12), the Godot project below stays the reference implementation, and its files aren't edited.
+
+- Workspace: `crates/tf_sim` (pure sim library, no Bevy), `crates/tf_game` (Bevy app, binary `transit-flow`). Versions pinned in the root `Cargo.toml`; toolchain in `rust-toolchain.toml`.
+- Cargo lives in `~/.cargo/bin` (rustup was installed without editing shell profiles): `source "$HOME/.cargo/env"` first if `cargo` isn't found.
+- `scripts/check.sh`: fmt + clippy (`-D warnings`) + all tests. Every work package must pass it.
+- `cargo run -p tf_game` runs the game (`--features dev` for faster incremental builds).
+- Godot on this Mac: `/Applications/Godot.app/Contents/MacOS/Godot` (4.7.2). One GUT test, `test_quick_save_and_load_restores_roads`, fails here only because of a case-mismatch warning on the user-data folder (`~/Library/Application Support/godot` vs `Godot`); it's not a code failure.
+- `crates/.gdignore` and `target/.gdignore` keep Godot out of the Rust folders; `cargo clean` deletes the second one, so recreate it.
+
 ## Git rules
 
 - **Never add Claude as co-author.** No `Co-Authored-By: Claude …` trailer, no "Generated with Claude Code" line, in commits or PR descriptions. (Also enforced by `.claude/settings.json` → `attribution`.)

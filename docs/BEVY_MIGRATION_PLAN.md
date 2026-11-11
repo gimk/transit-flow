@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** not started. Next work package: **M0.1**.
+**Status:** M0.1 done. Next work packages: **M0.2** and **M0.3** (parallel).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -146,7 +146,8 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M0: Toolchain, conventions, reference data
 
-- [ ] **M0.1 Toolchain and workspace** · Opus · none
+- [x] **M0.1 Toolchain and workspace** · Opus · none
+  - *Done (2026-11-11):* Rust 1.99.1 via rustup (in `~/.cargo`, shell profiles not edited), Bevy `=0.20.1`, glam `=0.33.12` (Bevy's own; 0.34 exists but would give two `Vec2` types), every other dependency pinned exactly. The first full build takes ~7.5 min on this M1, and `check.sh` is fast after that. The window opens on Metal. Godot still imports, and GUT passes 251/252: the one failure is a pre-existing case-mismatch warning on this Mac's user-data folder (see `CLAUDE.md`), not caused by this WP.
   - Rust is not installed on this machine: ask the user to run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` (or approve it), then pin the current stable release in `rust-toolchain.toml`.
   - Create the workspace (§2.1): `tf_sim` (lib, empty modules), `tf_game` (Bevy binary opening a window with a 2D camera and a cleared background). Pin Bevy to the newest released 0.x (`=0.x.y`), `glam` to the version that Bevy release uses, and every other dependency in `[workspace.dependencies]`. Add `[profile.dev.package."*"] opt-level = 3` (Bevy is unusable at opt-level 0) and a `release-lto` profile.
   - `scripts/check.sh`; `.gdignore` in `crates/` and `target/`; `.gitignore` gets `target/`.

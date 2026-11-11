@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/tf_sim", "crates/tf_game"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+# Every dependency is pinned here; crates use `{ workspace = true }`.
+# Don't upgrade Bevy until the migration is done (docs/BEVY_MIGRATION_PLAN.md §8).
+[workspace.dependencies]
+tf_sim = { path = "crates/tf_sim" }
+bevy = "=0.20.1"
+# Must stay the glam version Bevy uses, so sim and game share one Vec2 type.
+glam = { version = "=0.33.12", features = ["serde"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+ron = "=0.12.3"
+indexmap = { version = "=2.14.2", features = ["serde"] }
+rand_pcg = "=0.10.2"
+rand_core = "=0.10.1"
+smallvec = "=1.16.5"
+approx = "=0.5.1"
+
+[profile.dev]
+opt-level = 1
+
+# Bevy and other dependencies are unusably slow at opt-level 0.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release-lto]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
