@@ -11,6 +11,7 @@ use crate::clock::SimClock;
 use crate::events::{Outbox, SimEvent};
 use crate::roads::RoadNetwork;
 use crate::routing::Router;
+use crate::traffic::vehicle_system::TrafficCtx;
 use crate::traffic::{
     CongestionMonitor, FreightSystem, StressTraffic, TrafficLights, VehicleSystem,
 };
@@ -53,12 +54,29 @@ impl Simulation {
         Self::default()
     }
 
+    /// `Simulation.new(roads)`: a simulation on an existing road network (loaded saves,
+    /// the benchmark). The systems that index the roads see them from the start.
+    pub fn with_roads(roads: RoadNetwork) -> Self {
+        let lots = LotSystem::new(&roads);
+        let signals = TrafficLights::new(&roads);
+        Self {
+            roads,
+            lots,
+            signals,
+            ..Self::default()
+        }
+    }
+
     /// Simulated seconds since the start of the game.
     pub fn sim_time(&self) -> f64 {
         self.tick_count as f64 * Self::TICK_DT
     }
 
     pub fn step(&mut self) {
+        // Vehicles and pedestrians that finished last tick stay readable until now (Godot
+        // keeps their objects for whoever holds them; tests and views read them).
+        self.vehicles.clear_finished();
+        self.pedestrians.clear_finished();
         self.tick_count += 1;
         let time = self.sim_time();
         let dt = Self::TICK_DT;
@@ -66,18 +84,48 @@ impl Simulation {
         self.call(|sim, out| sim.zones.step(time, &sim.roads, &mut sim.lots, out));
         self.call(|sim, out| sim.citizens.step(time, out));
         self.call(|sim, out| sim.freight.step(dt, out));
-        self.call(|sim, out| sim.stress.step(out));
+        self.call(|sim, _out| {
+            sim.stress
+                .step(&sim.roads, &mut sim.router, &mut sim.vehicles)
+        });
         self.call(|sim, _out| {
             sim.signals
-                .step(dt, &sim.roads, &sim.vehicles.vehicles, &sim.crosswalks)
+                .step(dt, &sim.roads, &sim.vehicles, &sim.crosswalks)
         });
         self.call(|sim, out| sim.pedestrians.step(time, dt, out));
         self.call(|sim, out| sim.transit.step(time, out));
-        self.call(|sim, out| sim.vehicles.step_begin(dt, out));
-        self.call(|sim, out| sim.vehicles.step_rest(dt, out));
-        self.call(|sim, out| sim.congestion.step(time, out));
-        self.vehicles.clear_finished();
-        self.pedestrians.clear_finished();
+        self.call(|sim, out| {
+            let (vehicles, mut ctx) = sim.traffic();
+            vehicles.step_begin(dt, &mut ctx, out);
+        });
+        self.call(|sim, out| {
+            let (vehicles, mut ctx) = sim.traffic();
+            vehicles.step_rest(dt, &mut ctx, out);
+        });
+        self.call(|sim, out| {
+            let mut ctx = TrafficCtx {
+                roads: &sim.roads,
+                router: &mut sim.router,
+                lots: &mut sim.lots,
+                signals: &sim.signals,
+                crosswalks: &sim.crosswalks,
+            };
+            sim.congestion.step(time, &mut sim.vehicles, &mut ctx, out);
+        });
+        self.vehicles.prune_retired_lanes(&mut self.roads);
+    }
+
+    /// The vehicle system and what it works with, borrowed apart (`VehicleSystem` takes a
+    /// `TrafficCtx` where the GDScript class holds references to the other systems).
+    pub fn traffic(&mut self) -> (&mut VehicleSystem, TrafficCtx<'_>) {
+        let ctx = TrafficCtx {
+            roads: &self.roads,
+            router: &mut self.router,
+            lots: &mut self.lots,
+            signals: &self.signals,
+            crosswalks: &self.crosswalks,
+        };
+        (&mut self.vehicles, ctx)
     }
 
     /// The events delivered since the last call, oldest first, for the views.
@@ -124,13 +172,19 @@ impl Simulation {
             &SimEvent::VehicleArrived(id) => {
                 self.call(|sim, out| sim.transit.on_vehicle_arrived(id, out));
                 self.call(|sim, out| sim.citizens.on_vehicle_arrived(id, out));
-                self.call(|sim, out| sim.stress.on_vehicle_arrived(id, out));
+                self.call(|sim, out| {
+                    let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
+                    sim.stress.on_vehicle_gone(owner, out);
+                });
                 self.call(|sim, out| sim.flow.on_vehicle_arrived(id, out));
             }
             &SimEvent::VehicleFailed(id) => {
                 self.call(|sim, out| sim.transit.on_vehicle_failed(id, out));
                 self.call(|sim, out| sim.citizens.on_vehicle_failed(id, out));
-                self.call(|sim, out| sim.stress.on_vehicle_failed(id, out));
+                self.call(|sim, out| {
+                    let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
+                    sim.stress.on_vehicle_gone(owner, out);
+                });
                 self.call(|sim, out| sim.flow.on_vehicle_failed(id, out));
             }
             &SimEvent::PedestrianArrived(id) => {

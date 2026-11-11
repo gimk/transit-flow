@@ -22,9 +22,9 @@ use glam::IVec2;
 use indexmap::IndexMap;
 
 use crate::events::Outbox;
-use crate::ids::{NodeId, SegmentId, VehicleId};
+use crate::ids::{NodeId, SegmentId};
 use crate::roads::{ChangeSet, RoadNetwork, RoadNode, lane_builder};
-use crate::traffic::vehicle::Vehicle;
+use crate::traffic::VehicleSystem;
 use crate::walking::Crosswalks;
 
 /// Godot's values (the snapshot stores them as ints).
@@ -116,7 +116,7 @@ impl TrafficLights {
         &mut self,
         dt: f64,
         roads: &RoadNetwork,
-        vehicles: &IndexMap<VehicleId, Vehicle>,
+        vehicles: &VehicleSystem,
         crosswalks: &Crosswalks,
     ) {
         let node_ids: Vec<NodeId> = self.states.keys().copied().collect();
@@ -218,7 +218,7 @@ impl TrafficLights {
         state: &mut LightState,
         dt: f64,
         roads: &RoadNetwork,
-        vehicles: &IndexMap<VehicleId, Vehicle>,
+        vehicles: &VehicleSystem,
         crosswalks: &Crosswalks,
     ) {
         state.elapsed += dt;
@@ -282,7 +282,7 @@ impl TrafficLights {
         node: &RoadNode,
         moving_only: bool,
         roads: &RoadNetwork,
-        vehicles: &IndexMap<VehicleId, Vehicle>,
+        vehicles: &VehicleSystem,
         crosswalks: &Crosswalks,
     ) -> Vec<bool> {
         // Pedestrians waiting at a crosswalk call its walk phase (they never extend a
@@ -295,13 +295,13 @@ impl TrafficLights {
         for segment_id in &node.segment_ids {
             for lane_id in &roads.segments[segment_id].lane_ids {
                 let lane = &roads.lanes[lane_id];
-                let Some(front_id) = lane.queue.first() else {
+                let Some(front_id) = vehicles.queue(lane.id).first() else {
                     continue;
                 };
                 if lane.to_node_id != node.id {
                     continue;
                 }
-                let front = &vehicles[front_id];
+                let front = &vehicles.vehicles[front_id];
                 if moving_only && front.stopped_time >= BLOCKED_TIME {
                     continue;
                 }

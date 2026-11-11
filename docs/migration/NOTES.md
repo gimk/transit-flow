@@ -59,7 +59,7 @@ None yet.
 
 ## GDScript bugs found (ported as they are)
 
-None yet.
+- `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` passes in Godot without testing what it says. The car's trip ends at a plain lane position, and upgrading the road in place gives its lanes new ids, so the destination lane is gone: the car fails at once (both builds, tick 0). The test passes anyway because it only checks `not vehicle.gave_up`, and a failure for lack of a route isn't a give-up. Ported as written. Real trips go to lots, whose access points are re-found, so they aren't affected; debug and stress trips to a lane position are.
 
 ## Left behind
 
@@ -93,6 +93,18 @@ The router doesn't hold the network: every query takes `&RoadNetwork`. Congestio
 
 `Vehicle` holds lane ids (`lane: Option<LaneId>`, `next_lanes`, `granted_connector` …) where Godot holds `Lane` objects; look them up with `RoadNetwork::lane_any`, which also finds retired lanes. GDScript `-1` and `INF` sentinels became `Option`s and `f64::INFINITY`. `VehicleSystem::vehicles` exists already (empty until M4.2) so `TrafficLights` can read the front vehicle of each queue. `Crosswalks` (planned for M5.1) was ported here because the lights read waiting pedestrians; its mid-block entries are a `MidBlockCrossing` struct.
 
+### VehicleSystem (M4.2–M4.6)
+
+The whole of `vehicle_system.gd` was ported at once (its four planned slices call into each other every tick), split into modules by GDScript section: `mod.rs` (state, public API, the tick, movement, bookkeeping, re-routing), `junctions.rs`, `lane_changes.rs`, `driveways.rs`, `buses.rs`, `crosswalks.rs`. Then each slice's GUT tests were ported. Layout decisions:
+- **Lane queues live in `VehicleSystem`** (`occupied`: the non-empty queues, by lane id, in the order lanes became occupied, which is Godot's `_occupied_lanes` order), not on `Lane`. The road network stays read-only during a tick, and `TrafficLights` reads queues through `VehicleSystem::queue`.
+- Systems the GDScript class held are passed as a `TrafficCtx` (roads, router, lots, lights, crosswalks), built by `Simulation::traffic()`.
+- Godot's `outgoing_lanes` (objects, emptied when a lane is removed) is `live_outgoing` (the ids, or none for a retired lane).
+- Vehicles waiting in driveways live in `departures` (owned), as in Godot, outside `vehicles`.
+- Finished vehicles (and pedestrians) now stay readable until the **start of the next tick** (`Simulation::step` clears them first): Godot keeps their objects for whoever holds them, and tests read them after the tick.
+- `StressTraffic` and `CongestionMonitor` (M4.6) were ported along with it: the stress tests need both.
+
+**Result: the Rust traffic is Godot's, tick for tick.** All five stress grids of `migration/baseline.md` give exactly Godot's numbers (arrivals 507 and 622 on the local grids, 491, 283 and 419 on the mixed ones; same vehicle counts, gaps, 0 stuck), and the benchmark gives the same arrivals per second at every size.
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
@@ -101,8 +113,4 @@ Ported as `#[ignore]` stubs with the work package that brings what they need. Th
 |---|---|---|
 | `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
 | `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
-| `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
-| `test_signals.gd` the four tests with moving vehicles | `signals.rs` | M4.3 |
-| `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` | `road_type.rs` | M4.2 |
-| `test_road_types.gd` the three `test_stress_grid_*` | `road_type.rs` | M4.4 |
 | `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |

@@ -1,5 +1,5 @@
 //! Port of `tests/unit/test_signals.gd` (traffic lights and junction control): the tests
-//! that don't need moving vehicles. The others come with junctions (M4.3). Then the
+//! that don't need moving vehicles, then those with traffic. Then the
 //! light controller on its own, with vehicles placed in queues by hand.
 
 mod common;
@@ -8,10 +8,9 @@ use common::roads::{G, changes, end_direction, local};
 use glam::Vec2;
 use tf_sim::Simulation;
 use tf_sim::events::Outbox;
-use tf_sim::ids::{LaneId, NodeId, VehicleId};
+use tf_sim::ids::{LaneId, NodeId};
 use tf_sim::roads::{JunctionControl, RoadNetwork};
 use tf_sim::traffic::traffic_lights::{self, Light};
-use tf_sim::traffic::vehicle::Vehicle;
 
 fn v(x: f32, y: f32) -> Vec2 {
     Vec2::new(x, y)
@@ -102,28 +101,140 @@ fn control_is_saved_and_dropped_when_the_junction_goes_away() {
     assert_eq!(sim.roads.nodes[&node_id].control, JunctionControl::None);
 }
 
+fn spawn(sim: &mut Simulation, from: Vec2, to: Vec2, owner: i32) -> Option<tf_sim::ids::VehicleId> {
+    common::traffic::spawn(sim, from, to, owner)
+}
+
+fn at(x: f32, y: f32, dx: f32, dy: f32) -> Vec2 {
+    v(x, y) + v(dx, dy) / G
+}
+
 #[test]
-#[ignore = "needs vehicles at junctions (M4.3)"]
 fn vehicle_sharing_the_green_does_not_stop() {
-    unimplemented!("port with M4.3");
+    use common::traffic::{lane_of, step_vehicles, vehicle};
+    let mut sim = Simulation::new();
+    let node_id = four_way(&mut sim);
+    set_control(&mut sim, node_id, JunctionControl::TrafficLight);
+    let east = spawn(&mut sim, at(1.0, 4.0, 0.0, 7.0), at(7.0, 4.0, 0.0, 7.0), 1).unwrap();
+    let mut entry_speed = -1.0;
+    for _ in 0..Simulation::TICK_RATE * 6 {
+        step_vehicles(&mut sim);
+        sim.tick_count += 1;
+        if entry_speed < 0.0
+            && sim.vehicles.vehicle_any(east).is_some()
+            && lane_of(&sim, east).is_connector()
+        {
+            entry_speed = vehicle(&sim, east).speed;
+        }
+    }
+    assert!(
+        entry_speed > 20.0,
+        "drove into the junction without stopping"
+    );
+}
+
+/// Steps the whole simulation (signals included) for `seconds`, calling `each_tick`.
+fn run(sim: &mut Simulation, seconds: f64, mut each_tick: impl FnMut(&mut Simulation)) {
+    for _ in 0..(seconds * f64::from(Simulation::TICK_RATE)) as i32 {
+        sim.step();
+        each_tick(sim);
+    }
+}
+
+fn spawn_eastbound_stream(sim: &mut Simulation, count: i32) {
+    for i in 0..count {
+        spawn(
+            sim,
+            at(0.3 + i as f32 * 0.4, 4.0, 0.0, 7.0),
+            at(7.5, 4.0, 0.0, 7.0),
+            100 + i,
+        );
+    }
 }
 
 #[test]
-#[ignore = "needs vehicles at junctions (M4.3)"]
 fn busy_approach_without_competition_keeps_its_green() {
-    unimplemented!("port with M4.3");
+    let mut sim = Simulation::new();
+    let node_id = four_way(&mut sim);
+    set_control(&mut sim, node_id, JunctionControl::TrafficLight);
+    spawn_eastbound_stream(&mut sim, 6);
+    let mut saw_red = false;
+    run(&mut sim, 20.0, |sim| {
+        saw_red = saw_red || sim.signals.light(&sim.roads.nodes[&node_id], 0) != Light::Green;
+    });
+    assert!(!saw_red, "nobody else waits, so east-west never turns red");
+    assert_eq!(
+        sim.vehicles.vehicles.len(),
+        0,
+        "the whole stream got through"
+    );
 }
 
 #[test]
-#[ignore = "needs vehicles at junctions (M4.3)"]
 fn light_turns_for_a_lone_waiting_vehicle() {
-    unimplemented!("port with M4.3");
+    use common::traffic::{lane_of, on_road};
+    let mut sim = Simulation::new();
+    let node_id = four_way(&mut sim);
+    set_control(&mut sim, node_id, JunctionControl::TrafficLight);
+    // East-west starts green with nobody on it; one car arrives southbound.
+    let south = spawn(
+        &mut sim,
+        at(4.0, 2.5, -7.0, 0.0),
+        at(4.0, 7.0, -7.0, 0.0),
+        1,
+    )
+    .unwrap();
+    let mut entered_at = -1.0;
+    run(&mut sim, 10.0, |sim| {
+        if entered_at < 0.0 && on_road(sim, south) && lane_of(sim, south).is_connector() {
+            entered_at = sim.sim_time();
+        }
+    });
+    assert!(
+        entered_at >= traffic_lights::MIN_GREEN,
+        "waited for the minimum green to end"
+    );
+    assert!(
+        entered_at < traffic_lights::MIN_GREEN + traffic_lights::CLEARANCE_TIME + 2.0,
+        "then got green quickly"
+    );
 }
 
 #[test]
-#[ignore = "needs vehicles at junctions (M4.3)"]
 fn continuous_stream_yields_after_max_green() {
-    unimplemented!("port with M4.3");
+    use common::traffic::{lane_of, on_road};
+    let mut sim = Simulation::new();
+    let node_id = four_way(&mut sim);
+    set_control(&mut sim, node_id, JunctionControl::TrafficLight);
+    let south = spawn(
+        &mut sim,
+        at(4.0, 2.5, -7.0, 0.0),
+        at(4.0, 7.0, -7.0, 0.0),
+        1,
+    )
+    .unwrap();
+    let mut entered_at = -1.0;
+    let mut spawned = 0;
+    run(&mut sim, 25.0, |sim| {
+        // Keep feeding east-west so its approach is never empty.
+        if sim.tick_count % 10 == 0
+            && spawn(sim, at(0.3, 4.0, 0.0, 7.0), at(7.5, 4.0, 0.0, 7.0), 50).is_some()
+        {
+            spawned += 1;
+        }
+        if entered_at < 0.0 && on_road(sim, south) && lane_of(sim, south).is_connector() {
+            entered_at = sim.sim_time();
+        }
+    });
+    assert!(spawned > 10, "east-west really was busy");
+    assert!(
+        entered_at >= traffic_lights::MIN_GREEN,
+        "east-west kept its green a while"
+    );
+    assert!(
+        entered_at < traffic_lights::MAX_GREEN + traffic_lights::CLEARANCE_TIME + 2.0,
+        "but not past the maximum"
+    );
 }
 
 #[test]
@@ -172,18 +283,21 @@ fn waiting_southbound(sim: &mut Simulation) -> NodeId {
         .find(|id| roads.lanes[id].turn == tf_sim::roads::Turn::Straight)
         .unwrap();
     assert_eq!(roads.lanes[&through].signal_phase, 1);
-    let id = VehicleId(1);
     let length = roads.lanes[&approach].length;
-    let vehicle = Vehicle {
-        id,
-        lane: Some(approach),
-        distance: length - 10.0,
-        next_lanes: vec![through],
-        stopped_time: 5.0,
-        ..Vehicle::default()
-    };
-    sim.vehicles.vehicles.insert(id, vehicle);
-    sim.roads.lanes[&approach].queue.push(id);
+    let exit = roads.lanes[&through].outgoing_lane_ids[0];
+    let route =
+        tf_sim::routing::Route::new(vec![approach, through, exit], length - 10.0, 20.0, 1.0);
+    let id = sim
+        .vehicles
+        .spawn(
+            &sim.roads,
+            route,
+            None,
+            1,
+            tf_sim::traffic::vehicle::Kind::Car,
+        )
+        .unwrap();
+    sim.vehicles.vehicles[&id].stopped_time = 5.0;
     node_id
 }
 
@@ -192,7 +306,7 @@ fn step_lights(sim: &mut Simulation, seconds: f64) {
         sim.signals.step(
             Simulation::TICK_DT,
             &sim.roads,
-            &sim.vehicles.vehicles,
+            &sim.vehicles,
             &sim.crosswalks,
         );
     }

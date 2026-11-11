@@ -378,27 +378,108 @@ fn turns_from_a_three_lane_one_way_use_the_matching_lanes() {
 }
 
 #[test]
-#[ignore = "needs vehicles (M4.2)"]
 fn vehicles_on_a_road_being_upgraded_carry_on() {
-    unimplemented!("port with M4.2");
+    use common::traffic::{on_road, road, spawn, vehicle};
+    let mut sim = tf_sim::Simulation::new();
+    road(
+        &mut sim,
+        v(0.0, 2.0),
+        v(12.0, 2.0),
+        road_type("local_2lane"),
+    );
+    let id = spawn(
+        &mut sim,
+        v(1.0, 2.0) + v(0.0, 7.0) / G,
+        v(11.0, 2.0) + v(0.0, 7.0) / G,
+        1,
+    )
+    .unwrap();
+    for _ in 0..20 {
+        sim.step();
+    }
+    road(
+        &mut sim,
+        v(0.0, 2.0),
+        v(12.0, 2.0),
+        road_type("avenue_4lane"),
+    );
+    let mut arrived = false;
+    for _ in 0..600 {
+        sim.step();
+        if !on_road(&sim, id) {
+            // As in GDScript, only a patience give-up counts against it. (In both builds
+            // the car actually fails at once: its destination lane was replaced; see
+            // NOTES.md, "GDScript bugs found".)
+            arrived = !vehicle(&sim, id).gave_up;
+            break;
+        }
+    }
+    assert!(arrived, "re-snapped onto the new lanes and arrived");
 }
 
+/// 200 random trips for 90 s on a 5 x 5 grid, 3 cells apart: even rows/columns of
+/// `even` roads, odd ones of `odd_h` / `odd_v` roads (one-way ones alternate direction).
+fn stress_grid(even: &str, odd_h: &str, odd_v: &str, min_arrivals: usize) {
+    use common::traffic::{connector_conflict_violations, min_queue_gap, road, vehicle_events};
+    let mut sim = tf_sim::Simulation::new();
+    for i in 0..5 {
+        let at = (1 + i * 3) as f32;
+        let horizontal = road_type(if i % 2 == 0 { even } else { odd_h });
+        let vertical = road_type(if i % 2 == 0 { even } else { odd_v });
+        if i % 4 == 1 {
+            road(&mut sim, v(13.0, at), v(1.0, at), horizontal); // Westbound.
+            road(&mut sim, v(at, 13.0), v(at, 1.0), vertical); // Northbound.
+        } else {
+            road(&mut sim, v(1.0, at), v(13.0, at), horizontal);
+            road(&mut sim, v(at, 1.0), v(at, 13.0), vertical);
+        }
+    }
+    sim.stress.target_count = 200;
+    let mut arrived = 0;
+    let mut violations = 0;
+    let mut worst_gap = f64::INFINITY;
+    for _ in 0..tf_sim::Simulation::TICK_RATE * 90 {
+        sim.step();
+        arrived += vehicle_events(&mut sim).0.len();
+        violations += connector_conflict_violations(&sim);
+        worst_gap = worst_gap.min(min_queue_gap(&sim));
+    }
+    println!(
+        "grid {even}/{odd_h}: vehicles {}, arrivals {arrived}, stuck {}, smallest gap {worst_gap:.2}",
+        sim.vehicles.vehicles.len(),
+        sim.vehicles.stuck_count(30.0)
+    );
+    assert_eq!(
+        violations, 0,
+        "never two vehicles where conflicting paths meet"
+    );
+    assert!(
+        worst_gap >= tf_sim::traffic::vehicle_system::MIN_GAP - 0.01,
+        "no overlaps, lane changes included"
+    );
+    assert!(arrived > min_arrivals, "traffic flows");
+    assert_eq!(sim.vehicles.stuck_count(30.0), 0, "no deadlock");
+}
+
+/// Random traffic on grids mixing road types: multi-lane and one-way junctions and lane
+/// changes keep the safety rules and nothing deadlocks. 200 vehicles: at 250 a grid with
+/// one-way streets is at the edge of real gridlock (it locks up or not depending on the
+/// random trips).
 #[test]
-#[ignore = "needs vehicles and lane changes (M4.4)"]
 fn stress_grid_with_avenues() {
-    unimplemented!("port with M4.4");
+    stress_grid("avenue_4lane", "local_2lane", "local_2lane", 300);
 }
 
 #[test]
-#[ignore = "needs vehicles and lane changes (M4.4)"]
 fn stress_grid_with_one_way_streets() {
-    unimplemented!("port with M4.4");
+    stress_grid("local_2lane", "one_way_2lane", "one_way_1lane", 200);
 }
 
+/// Before lane changing (5b) this gridlocked: a car in the wrong lane of an avenue had to
+/// circle the block to reach its turn.
 #[test]
-#[ignore = "needs vehicles and lane changes (M4.4)"]
 fn stress_grid_with_avenues_and_one_way_streets() {
-    unimplemented!("port with M4.4");
+    stress_grid("avenue_4lane", "one_way_2lane", "one_way_1lane", 300);
 }
 
 /// Junctions too close for the roads meeting there would leave lanes no vehicle fits

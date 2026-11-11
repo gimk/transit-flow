@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M3 and M4.1 done. Next work package: **M4.2** (VehicleSystem: spawning, following, movement, reroute); **M8.1** (game shell) can run in parallel.
+**Status:** M0–M3 and M4 done except M4.7 (freight) and R2; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **M4.7** (freight), then **R2**; **M5** (walking) and **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -213,22 +213,24 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Done (2026-11-11):* `Vehicle`, `TrafficLights` and (early, from M5.1) `Crosswalks` ported. From `test_signals.gd`, the four tests without moving vehicles pass; the four with them are stubs for M4.3. Three more tests drive the light controller directly, with a car placed in a queue by hand and pedestrians waiting: resting green, minimum green, amber, then the waiting phase; walk light only early in the green. Workspace: 121 tests pass, 12 stubs.
   - *Read:* `sim/traffic/vehicle.gd`, `traffic_lights.gd`, `test_signals.gd`.
   - *Done when:* `Vehicle` is complete; `TrafficLights` passes the ported `test_signals` assertions that don't need moving vehicles (mark the others `#[ignore = "needs M4.3"]` and remove the ignore in M4.3).
-- [ ] **M4.2 VehicleSystem: spawning, following, movement, reroute** · Opus · M4.1, M3.1
+- [x] **M4.2 VehicleSystem: spawning, following, movement, reroute** · Opus · M4.1, M3.1
+  - *Done (2026-11-11), together with M4.3–M4.6:* the whole of `vehicle_system.gd` ported at once (its slices call into each other every tick), then each slice's tests. See NOTES ("VehicleSystem"). **The traffic is Godot's, tick for tick:** all five stress grids give exactly Godot's arrivals, gaps and stuck counts. Ported: `test_vehicles.gd` (7), `test_traffic.gd` (9), `test_junction_priority.gd` (5), `test_lane_changes.gd` (6), `test_driveways.gd` (7), and the 9 tests waiting for vehicles (signals, curves, road types). One GDScript test turned out not to test what it says (NOTES, "GDScript bugs found"). Workspace: 164 tests pass, 3 wait for citizens and saves.
   - The two-pass step, queues, `spawn`, car-following, stop lines, arrivals and failures, patience, reroute after road and lot changes, re-snap onto rebuilt lanes.
   - *Done when:* `test_vehicles.gd` and `test_traffic.gd` (the parts without junction control) are ported and pass, with `traffic_checks` every tick.
-- [ ] **M4.3 Junctions** · Opus · M4.2
+- [x] **M4.3 Junctions** · Opus · M4.2 (with M4.2)
   - Conflict zones and timing (`_conflicts_clear`), gap acceptance, `_must_yield`, look speed, don't-block-the-box, exit fairness, `_yield_in_junction`, lights (sneakers, turn window).
   - *Done when:* `test_junctions.gd`, `test_junction_priority.gd`, the rest of `test_signals.gd` and `test_traffic.gd` are ported and pass.
-- [ ] **M4.4 Lane changes** · Opus · M4.3
+- [x] **M4.4 Lane changes** · Opus · M4.3 (with M4.2)
   - *Done when:* `test_lane_changes.gd` is ported and passes.
-- [ ] **M4.5 Driveways (depart, pull out, turn in)** · Opus · M4.4
+- [x] **M4.5 Driveways (depart, pull out, turn in)** · Opus · M4.4 (with M4.2)
   - *Done when:* `test_driveways.gd` is ported and passes.
-- [ ] **M4.6 StressTraffic, CongestionMonitor** · Sonnet · M4.3 · parallel with M4.4–M4.5
+- [x] **M4.6 StressTraffic, CongestionMonitor** · Sonnet · M4.3 (with M4.2; the congestion check on the Bottleneck comes with its citizens, M7.3)
   - *Read:* `stress_traffic.gd`, `congestion_monitor.gd`, `test_bottleneck.gd` (congestion parts).
   - *Done when:* congestion values on the Bottleneck fall within the baseline bands.
 - [ ] **M4.7 FreightSystem** · Sonnet · M4.5, M3.2
   - *Read:* `freight_system.gd`, `test_freight.gd`.
-- [ ] **M4.8 Benchmark** · Haiku · M4.6
+- [x] **M4.8 Benchmark** · Haiku · M4.6
+  - *Done (2026-11-11):* `cargo run -p tf_sim --release --bin traffic_benchmark`, unoptimised, on this M1, against GDScript (`baseline.md`): 500 vehicles 0.45 ms per tick (GDScript 4.93), 1 000 0.86 (10.53), **2 000 1.65 ms (26.50): 16× faster**, 5 000 3.27 (48.91). Same arrivals per second at every size. Go.
   - Port `benchmarks/traffic_benchmark.gd` to `cargo run -p tf_sim --release --bin traffic_benchmark` (same 20×20 grid, 500 / 1k / 2k / 5k vehicles, the same columns). Add the results table under this WP next to Godot's from `baseline.md`.
   - *Done when:* the table is filled in. This is the first go / no-go point: **if the Rust tick isn't at least 5× faster than GDScript at 2 000 vehicles, stop and ask the user** before going on.
 - [ ] **M4.9 Optimisation pass (optional)** · Opus · M4.8, R2

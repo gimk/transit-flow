@@ -146,10 +146,50 @@ fn curves_survive_a_save() {
     assert!((segment.length() - original.length()).abs() <= 0.01);
 }
 
+/// Traffic round a loop of curved and straight roads: smooth (never above the lane's
+/// limit, no overlaps, no conflicts), and nobody stuck.
 #[test]
-#[ignore = "needs vehicles (M4.2): test_traffic_drives_round_curves"]
 fn traffic_drives_round_curves() {
-    unimplemented!("port with M4.2");
+    use common::traffic::{connector_conflict_violations, min_queue_gap};
+    let mut sim = tf_sim::Simulation::new();
+    let curve = |sim: &mut tf_sim::Simulation, a: Vec2, b: Vec2, c: Vec2| {
+        sim.call(|sim, out| {
+            sim.roads
+                .add_curved_road(a * G, b * G, c * G, local(), 0, out);
+        });
+    };
+    let straight = |sim: &mut tf_sim::Simulation, a: Vec2, b: Vec2| {
+        sim.call(|sim, out| {
+            sim.roads.add_road(a * G, b * G, local(), 0, out);
+        });
+    };
+    curve(&mut sim, v(2.0, 2.0), v(5.0, 2.0), v(5.0, 5.0)); // East then south,
+    straight(&mut sim, v(5.0, 5.0), v(5.0, 9.0));
+    curve(&mut sim, v(5.0, 9.0), v(5.0, 12.0), v(2.0, 12.0)); // south then west,
+    straight(&mut sim, v(2.0, 12.0), v(-1.0, 12.0));
+    curve(&mut sim, v(-1.0, 12.0), v(-4.0, 12.0), v(-4.0, 9.0));
+    straight(&mut sim, v(-4.0, 9.0), v(-4.0, 5.0));
+    curve(&mut sim, v(-4.0, 5.0), v(-4.0, 2.0), v(-1.0, 2.0));
+    straight(&mut sim, v(-1.0, 2.0), v(2.0, 2.0)); // Closing the loop.
+    straight(&mut sim, v(0.5, 2.0), v(0.5, 12.0)); // And a road across it.
+    sim.stress.target_count = 40;
+    let mut too_fast = 0;
+    let mut worst_gap = f64::INFINITY;
+    let mut violations = 0;
+    for _ in 0..tf_sim::Simulation::TICK_RATE * 40 {
+        sim.step();
+        worst_gap = worst_gap.min(min_queue_gap(&sim));
+        violations += connector_conflict_violations(&sim);
+        for car in sim.vehicles.vehicles.values() {
+            if car.speed > sim.roads.lane_any(car.lane.unwrap()).unwrap().speed_limit + 0.5 {
+                too_fast += 1;
+            }
+        }
+    }
+    assert_eq!(too_fast, 0, "never above a lane's limit");
+    assert!(worst_gap >= tf_sim::traffic::vehicle_system::MIN_GAP - 0.01);
+    assert_eq!(violations, 0);
+    assert_eq!(sim.vehicles.stuck_count(20.0), 0);
 }
 
 #[test]

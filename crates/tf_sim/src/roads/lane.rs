@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 
 use super::lane_builder;
 use crate::geom::{Curve2D, GdVec2};
-use crate::ids::{LaneId, NodeId, SegmentId, VehicleId};
+use crate::ids::{LaneId, NodeId, SegmentId};
 
 /// The movement a connector performs; `None` for road lanes. Godot's values.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -54,8 +54,6 @@ pub struct Lane {
     /// connector, the light phase that lets vehicles onto it (see
     /// `RoadNetwork::assign_signal_phases`).
     pub signal_phase: i32,
-    /// Runtime, owned by `VehicleSystem`: vehicles on this lane, front-most first.
-    pub queue: Vec<VehicleId>,
     /// Straight lanes (two points, no handles) are sampled with plain math, which is
     /// much cheaper than curve sampling for the many vehicles on them.
     pub is_straight: bool,
@@ -90,7 +88,6 @@ impl Lane {
             conflicting_lane_ids: Vec::new(),
             conflict_zones: IndexMap::new(),
             signal_phase: 0,
-            queue: Vec::new(),
             is_straight: false,
             start: Vec2::ZERO,
             direction: Vec2::ZERO,
