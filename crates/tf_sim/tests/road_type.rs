@@ -166,9 +166,32 @@ fn one_way_lanes_all_run_the_way_it_was_dragged() {
 }
 
 #[test]
-#[ignore = "needs the Router (M2.1)"]
 fn one_way_roads_are_never_driven_the_wrong_way() {
-    unimplemented!("port with M2.1");
+    // A one-way loop of three sides, closed by a two-way street.
+    let mut net = common::roads::RoutedRoads::new();
+    let one_way = road_type("one_way_1lane");
+    net.pieces(v(1.0, 1.0), v(6.0, 1.0), one_way);
+    net.pieces(v(6.0, 1.0), v(6.0, 5.0), one_way);
+    net.pieces(v(6.0, 5.0), v(1.0, 5.0), one_way);
+    net.pieces(v(1.0, 5.0), v(1.0, 1.0), road_type("local_2lane"));
+    // From the middle of the top (eastbound) road back to its start: all the way around.
+    let from = net
+        .roads
+        .find_lane_position(v(4.0, 1.0) * G, 10.0, 0)
+        .unwrap();
+    let to = net
+        .roads
+        .find_lane_position(v(2.0, 1.0) * G, 10.0, 0)
+        .unwrap();
+    let route = net
+        .route(from.lane_id, from.distance, to.lane_id, to.distance)
+        .unwrap();
+    let turns = route
+        .lane_ids
+        .iter()
+        .filter(|&&id| net.roads.lanes[&id].is_connector())
+        .count();
+    assert_eq!(turns, 4, "around the block, not backwards");
 }
 
 #[test]

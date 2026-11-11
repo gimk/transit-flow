@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0 and M1 done (R1 passed). Next work packages: **M2.1** (routing) and, in parallel, **M8.1** (game shell).
+**Status:** M0, M1 and M2 done. Next work packages: **M3.1** (lots) and **M4.1** (vehicle data, traffic lights), which can run in parallel; **M8.1** (game shell) can too.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -188,7 +188,8 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M2: Routing
 
-- [ ] **M2.1 LaneGraph, Route, Router** · Sonnet · R1
+- [x] **M2.1 LaneGraph, Route, Router** · Sonnet · R1
+  - *Done (2026-11-11):* Godot 4.7's A* ported (see NOTES), so ties break as in Godot. **Every golden route matches lane for lane**, with the same travel and free-flow times: 530+ samples over six layouts, including lot-to-lot routes through Godot's access points and a new `grid` layout of equally quick routes. `test_router.gd` (12 tests) and the two routing tests deferred from M1 are ported. Workspace: 88 tests pass, 8 waiting for lots and vehicles.
   - *Read:* `sim/routing/*.gd`, `test_router.gd`.
   - A* with the same cost (`length / speed_limit × (1 + congestion)`, `LANE_CHANGE_COST`), the same heuristic, the second bus graph, the path cache and its invalidation, `find_route`, `find_route_onward`, `find_best_route`.
   - *Done when:* `test_router` is ported and passes; golden routes match (same lane lists, cost within 1e-3; where two routes cost the same, either is accepted and logged).

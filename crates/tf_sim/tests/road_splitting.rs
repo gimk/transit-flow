@@ -217,9 +217,26 @@ fn split_keeps_direction_and_type() {
 }
 
 #[test]
-#[ignore = "needs the Router (M2.1)"]
 fn routing_goes_straight_through_a_created_crossing() {
-    unimplemented!("port with M2.1");
+    let mut net = common::roads::RoutedRoads::new();
+    net.pieces(v(0.0, 2.0), v(4.0, 2.0), local());
+    net.pieces(v(2.0, 0.0), v(2.0, 4.0), local());
+    let west = net
+        .roads
+        .find_lane_position(v(0.5, 2.0) * G + v(0.0, 7.0), 4.0, 0)
+        .unwrap();
+    let east = net
+        .roads
+        .find_lane_position(v(3.5, 2.0) * G + v(0.0, 7.0), 4.0, 0)
+        .unwrap();
+    let route = net
+        .route(west.lane_id, west.distance, east.lane_id, east.distance)
+        .unwrap();
+    assert_eq!(route.lane_ids.len(), 3);
+    assert_eq!(
+        net.roads.lanes[&route.lane_ids[1]].turn,
+        tf_sim::roads::Turn::Straight
+    );
 }
 
 #[test]

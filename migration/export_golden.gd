@@ -5,7 +5,7 @@ extends SceneTree
 ## Writes migration/golden/<name>.json. Everything here is RNG-free: road geometry,
 ## junctions, plots, the walk network, transit stops and routes.
 ##
-## Layout files (bottleneck, bottleneck_bypass, bottleneck_bus_lanes, town, junctions):
+## Layout files (bottleneck, bottleneck_bypass, bottleneck_bus_lanes, town, junctions, grid):
 ## {
 ##   "save": Simulation.to_dict() of the layout (the input: Rust loads it with from_dict),
 ##   "roads": network dump of the *reloaded* save (see below), so ids are the ones
@@ -45,7 +45,7 @@ extends SceneTree
 
 const OUT_DIR := "res://migration/golden/"
 const G := 64.0
-const ROUTE_SAMPLES := 40
+const ROUTE_SAMPLES := 80
 const BUS_ROUTE_SAMPLES := 12
 const LOT_ROUTE_SAMPLES := 20
 const WALK_SAMPLES := 12
@@ -75,6 +75,14 @@ func _initialize() -> void:
 	sim = Simulation.new()
 	_build_junctions(sim)
 	_export_layout("junctions", sim)
+
+	# A plain 6 x 6 grid of local streets, two cells apart: many equally quick routes, so
+	# it tests that A* breaks ties as Godot does.
+	sim = Simulation.new()
+	for i in 6:
+		sim.roads.add_road(Vector2(1, 1 + i * 2) * G, Vector2(11, 1 + i * 2) * G, RoadType.load_by_id(&"local_2lane"))
+		sim.roads.add_road(Vector2(1 + i * 2, 1) * G, Vector2(1 + i * 2, 11) * G, RoadType.load_by_id(&"local_2lane"))
+	_export_layout("grid", sim)
 
 	_export_edits()
 	quit()

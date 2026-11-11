@@ -9,12 +9,13 @@ use serde::Deserialize;
 use tf_sim::geom::{Curve2D, CurvePoint};
 
 /// Every layout file (not `edits.json`).
-pub const LAYOUTS: [&str; 5] = [
+pub const LAYOUTS: [&str; 6] = [
     "bottleneck",
     "bottleneck_bypass",
     "bottleneck_bus_lanes",
     "town",
     "junctions",
+    "grid",
 ];
 
 pub fn path(name: &str) -> PathBuf {
@@ -36,6 +37,53 @@ pub fn v(p: [f32; 2]) -> Vec2 {
 pub struct Layout {
     pub save: serde_json::Value,
     pub roads: Network,
+    pub lots: Vec<Lot>,
+    pub routes: Vec<RouteSample>,
+    pub lot_routes: Vec<LotRouteSample>,
+}
+
+#[derive(Deserialize)]
+pub struct Lot {
+    pub id: i32,
+    pub cell: [i32; 2],
+    #[serde(rename = "type")]
+    pub lot_type: i32,
+    pub plot: [f32; 4],
+    pub access: Vec<AccessPoint>,
+}
+
+#[derive(Deserialize)]
+pub struct AccessPoint {
+    pub lane_id: i32,
+    pub distance: f64,
+    #[serde(default)]
+    pub penalty: f64,
+}
+
+#[derive(Deserialize)]
+pub struct GoldenRoute {
+    pub lane_ids: Vec<i32>,
+    pub start_distance: f64,
+    pub end_distance: f64,
+    pub travel_time: f64,
+    pub free_flow_time: f64,
+}
+
+#[derive(Deserialize)]
+pub struct RouteSample {
+    pub from_lane: i32,
+    pub from_distance: f64,
+    pub to_lane: i32,
+    pub to_distance: f64,
+    pub bus: bool,
+    pub route: Option<GoldenRoute>,
+}
+
+#[derive(Deserialize)]
+pub struct LotRouteSample {
+    pub from_lot: i32,
+    pub to_lot: i32,
+    pub route: Option<GoldenRoute>,
 }
 
 #[derive(Deserialize)]

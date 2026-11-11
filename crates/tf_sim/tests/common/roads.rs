@@ -133,3 +133,62 @@ pub fn lane_ids(list: &[LaneId]) -> Vec<i32> {
 pub fn node_ids(list: &[NodeId]) -> Vec<i32> {
     list.iter().map(|id| id.0).collect()
 }
+
+/// A road network with a router listening to it, the way `Simulation` wires them
+/// (`Router.new(roads)` in GDScript tests).
+pub struct RoutedRoads {
+    pub roads: RoadNetwork,
+    pub router: tf_sim::routing::Router,
+}
+
+impl RoutedRoads {
+    pub fn new() -> Self {
+        Self {
+            roads: RoadNetwork::new(),
+            router: tf_sim::routing::Router::new(),
+        }
+    }
+
+    /// Hands the router every `changed` the network emitted.
+    pub fn deliver(&mut self, out: Outbox) {
+        for change in changes(&out) {
+            self.router.on_roads_changed(change, &mut Outbox::new());
+        }
+    }
+
+    pub fn add(&mut self, from: Vec2, to: Vec2, road_type: &'static RoadType) -> Option<SegmentId> {
+        let mut out = Outbox::new();
+        let id = self
+            .roads
+            .add_road(from * G, to * G, road_type, 0, &mut out);
+        self.deliver(out);
+        id
+    }
+
+    pub fn pieces(&mut self, from: Vec2, to: Vec2, road_type: &'static RoadType) -> Vec<SegmentId> {
+        let mut out = Outbox::new();
+        let ids = self
+            .roads
+            .add_road_pieces(from * G, to * G, road_type, 0, &mut out);
+        self.deliver(out);
+        ids
+    }
+
+    pub fn remove(&mut self, id: SegmentId) -> bool {
+        let mut out = Outbox::new();
+        let removed = self.roads.remove_segment(id, &mut out);
+        self.deliver(out);
+        removed
+    }
+
+    pub fn route(
+        &mut self,
+        from: LaneId,
+        from_distance: f64,
+        to: LaneId,
+        to_distance: f64,
+    ) -> Option<tf_sim::routing::Route> {
+        self.router
+            .find_route(&self.roads, from, from_distance, to, to_distance, false)
+    }
+}

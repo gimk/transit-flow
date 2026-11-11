@@ -77,14 +77,20 @@ Godot vehicles hold `Lane` objects and keep driving a lane the network has dropp
 
 Ported for the road fuzz test: Godot's `RandomPCG::random(from, to)`, PCG32's unbiased bounded draw. It matches Godot's output for 5 seeds.
 
+### A* is Godot's, ties included (M2.1)
+
+`LaneGraph` extends Godot's `AStar2D`, and on grids many routes are equally quick, so which one Godot picks matters for parity. The Rust `LaneGraph` ports Godot 4.7's `AStar2D::_solve`: `f32` scores (`real_t`), its binary heap (`SortArray` `push_heap` / `adjust_heap` / `pop_heap`), ties broken toward the larger g, the open-list update by `find`, and neighbours tried in connection order. A probe showed Godot 4.7 keeps neighbours in insertion order (an `AHashMap`; removal swaps with the last, which the lane graph never does). Every golden route matches lane for lane, including 80 on a plain street grid (`golden/grid.json`); flipping the tie rule makes a grid route fail.
+
+### Router API (M2.1)
+
+The router doesn't hold the network: every query takes `&RoadNetwork`. Congestion costs live on `Router::congestion` (one map for both graphs; GDScript copied `graph.congestion` into the bus graph at each query, which amounts to the same thing). `CongestionMonitor` (M4.6) replaces it every 5 s. Access points are `LanePoint { lane_id, distance, penalty }` (the GDScript dictionaries; `penalty` 0 when absent).
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
 
 | GUT test | Rust stub | Needs |
 |---|---|---|
-| `test_road_splitting.gd` `test_routing_goes_straight_through_a_created_crossing` | `road_splitting.rs` | M2.1 |
-| `test_road_types.gd` `test_one_way_roads_are_never_driven_the_wrong_way` | `road_type.rs` | M2.1 |
 | `test_road_types.gd` `test_dragging_another_type_over_a_road_upgrades_it_in_place` | `road_type.rs` | M3.1 |
 | `test_curves.gd` `test_lots_keep_clear_of_curves` | `curves.rs` | M3.1 |
 | `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
