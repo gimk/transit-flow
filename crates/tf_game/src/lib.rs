@@ -4,6 +4,7 @@
 //! (`events`), keys and pointer (`input`), the map camera (`camera`), game commands and saves (`game`) and the plugin wiring them (`plugin`), flat-shape drawing (`draw`) and the map views (`views`, M9).
 //! See `docs/BEVY_MIGRATION_PLAN.md` §2.3.
 
+pub mod bench;
 pub mod camera;
 pub mod capture;
 pub mod draw;

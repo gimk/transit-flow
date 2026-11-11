@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
+use tf_game::bench::{self, BenchPlugin};
 use tf_game::camera::MapCamera;
 use tf_game::capture::{self, Cli, WINDOW_SIZE};
 use tf_game::plugin::GamePlugin;
@@ -14,11 +15,24 @@ use tf_game::plugin::GamePlugin;
 const BACKGROUND: Color = Color::srgb(0.11, 0.12, 0.14);
 
 fn main() {
-    let cli = match capture::parse_args(std::env::args().skip(1)) {
-        Ok(cli) => cli,
-        Err(message) => {
-            eprintln!("error: {message}\n{}", capture::USAGE);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let bench = match bench::parse_args(&args) {
+        Some(Ok(options)) => Some(options),
+        Some(Err(message)) => {
+            eprintln!("error: {message}\n{}\n{}", capture::USAGE, bench::USAGE);
             std::process::exit(2);
+        }
+        None => None,
+    };
+    let cli = if bench.is_some() {
+        Cli::Play
+    } else {
+        match capture::parse_args(args.iter().cloned()) {
+            Ok(cli) => cli,
+            Err(message) => {
+                eprintln!("error: {message}\n{}", capture::USAGE);
+                std::process::exit(2);
+            }
         }
     };
     let mut window = Window {
@@ -37,6 +51,9 @@ fn main() {
             camera.zoom = zoom;
         }
     }
+    if bench.is_some() {
+        window.present_mode = bevy::window::PresentMode::AutoNoVsync;
+    }
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(window),
@@ -48,6 +65,9 @@ fn main() {
     .add_systems(Startup, move |mut commands: Commands| {
         commands.spawn(camera.clone());
     });
+    if let Some(options) = bench {
+        app.add_plugins(BenchPlugin(options));
+    }
     if let Cli::Capture(options) = cli {
         app.add_plugins(capture::CapturePlugin(options));
     }

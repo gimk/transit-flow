@@ -19,6 +19,7 @@ pub mod externals;
 pub mod grid;
 pub mod ground;
 pub mod lots;
+pub mod moving;
 pub mod roads;
 pub mod zones;
 
@@ -99,6 +100,7 @@ impl Plugin for ViewsPlugin {
             lots::LotViewPlugin,
             roads::RoadViewPlugin,
             externals::ExternalViewPlugin,
+            moving::MovingViewPlugin,
         ));
     }
 }

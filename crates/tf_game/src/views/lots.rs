@@ -205,11 +205,18 @@ pub struct LotView(pub LotId);
 #[derive(Resource, Default, Debug)]
 pub struct LotViews {
     lots: HashMap<LotId, (LotShape, Entity)>,
+    /// Goes up whenever a lot is drawn, redrawn or removed (parked cars follow it).
+    pub revision: u64,
     /// Lots drawn anew so far (tests check an edit redraws only what changed).
     pub built: usize,
 }
 
 impl LotViews {
+    /// Every lot on screen with the shape it was drawn from.
+    pub fn shapes(&self) -> impl Iterator<Item = (LotId, &LotShape)> {
+        self.lots.iter().map(|(id, (shape, _))| (*id, shape))
+    }
+
     pub fn entity(&self, id: LotId) -> Option<Entity> {
         self.lots.get(&id).map(|(_, e)| *e)
     }
@@ -254,6 +261,7 @@ fn update_lots(
         for (_, (_, entity)) in views.lots.drain() {
             commands.entity(entity).despawn();
         }
+        views.revision += 1;
     }
     let sim = handle.get_mut();
     let roads = &sim.roads;
@@ -287,6 +295,7 @@ fn update_lots(
         if let Some((_, entity)) = views.lots.remove(&id) {
             commands.entity(entity).despawn();
         }
+        views.revision += 1;
     }
     for id in ids {
         let shape = &wanted[&id];
@@ -305,6 +314,7 @@ fn update_lots(
         );
         commands.entity(entity).insert(LotView(id));
         views.built += 1;
+        views.revision += 1;
         views.lots.insert(id, (shape.clone(), entity));
     }
 }
