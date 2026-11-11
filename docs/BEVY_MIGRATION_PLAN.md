@@ -253,8 +253,9 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 ### M6: Transit
 
-- [ ] **M6.1 BusStop, BusLine** · Haiku · M2.1
+- [x] **M6.1 BusStop, BusLine** · Haiku · M2.1
   - *Read:* `sim/transit/bus_stop.gd`, `bus_line.gd`. Data classes only.
+  - *Done (2026-11-11):* `transit/bus_stop.rs` and `bus_line.rs`. Lane ids are `Option` (Godot -1), the line's timings are `f32` like `PackedFloat32Array`, `routes` is `Vec<Option<Route>>`, riders waiting at a stop are citizen ids (TransitSystem holds the `Rider`s, M6.2). Unit tests for `is_active`, loop time, headway and `next_index`; mutation-checked (a wrong wrap-round in `next_index` fails).
 - [ ] **M6.2 TransitSystem and buses in VehicleSystem** · Opus · M6.1, M5.2
   - *Read:* `transit_system.gd` (810 lines), the bus parts of `vehicle_system.gd` (dwelling, `set_route`, bays, `_leave_bays`, `_let_buses_out`, `_pass_stopped_buses`), `test_buses.gd`, `test_bus_lanes.gd`.
   - *Done when:* both test files are ported and pass; mid-block crosswalks match the golden files.
