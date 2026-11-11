@@ -3,14 +3,17 @@
 //! Pure data and logic, stepped at a fixed tick, with no engine dependency, so it runs
 //! headless in tests and benchmarks. The game (`tf_game`) only reads it through view
 //! snapshots and changes it through command methods. Porting rules and the
-//! architecture are in `docs/BEVY_MIGRATION_PLAN.md`.
+//! architecture are in `docs/BEVY_MIGRATION_PLAN.md`; how to port a class is in
+//! `docs/migration/PORTING_GUIDE.md`.
 //!
-//! Modules are empty until their work package ports them (see the plan's §6).
+//! Most systems are stubs until their work package ports them (see the plan's §6).
 
 pub mod city;
 pub mod clock;
 pub mod debug;
+pub mod events;
 pub mod geom;
+pub mod ids;
 pub mod rng;
 pub mod roads;
 pub mod routing;
@@ -19,3 +22,5 @@ pub mod simulation;
 pub mod traffic;
 pub mod transit;
 pub mod walking;
+
+pub use simulation::Simulation;

@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0.1 done. Next work packages: **M0.2** and **M0.3** (parallel).
+**Status:** M0.1 and M0.2 done. Next work package: **M0.3**.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -48,7 +48,7 @@ scripts/check.sh           fmt + clippy + tests: the one command every WP runs
 ### 2.2 `tf_sim`: the simulation as a plain Rust library
 
 - **Not ECS.** The sim is ported as ordinary structs with the same names and the same responsibilities as the GDScript classes (`RoadNetwork`, `Router`, `LotSystem`, `VehicleSystem`, ...), owned by `Simulation`. That keeps the port 1:1 and reviewable against the GDScript. Bevy's ECS is used only in `tf_game`.
-- **Dependencies (only these, unless a WP says otherwise):** `glam` (same version Bevy uses, for `Vec2`), `serde` + `serde_json` (saves, golden files), `ron` (road types), `indexmap`, `rand_pcg` + `rand_core` (seeded RNG), `smallvec`. Tests: `approx`.
+- **Dependencies (only these, unless a WP says otherwise):** `glam` (same version Bevy uses, for `Vec2`), `serde` + `serde_json` (saves, golden files), `ron` (road types), `indexmap`, `smallvec` (the RNG is our own port of Godot's, `rng.rs`). Tests: `approx`.
 - **Ids and storage.** Every GDScript `Dictionary[int, X]` becomes `IndexMap<i32, X>`. Removals use `shift_remove`, never `swap_remove`, so iteration order matches Godot (insertion order). Many results depend on that order. Ids keep the same types and counters as in GDScript (they're saved).
 - **Object references become ids.** `Lane.outgoing_lanes`, `Lane.queue`, `Vehicle.next_lanes` and the like hold `LaneId` / `VehicleId` (newtypes over `i32`) or dense indices, never `Rc`/`RefCell`. No `dispose()` is needed. Hot paths may keep a dense `Vec` index next to the `IndexMap` if the benchmark asks for it (M4.9), not before.
 - **Signals become explicit dispatch** (see the inventory in §2.4). `Simulation` owns every system, so it calls the handlers itself, in the order Godot connects them. Systems never hold references to each other: a system method takes the other systems it needs as parameters (`vehicles.step(dt, &mut TrafficCtx { roads, router, lots, signals, crosswalks })`).
@@ -56,13 +56,13 @@ scripts/check.sh           fmt + clippy + tests: the one command every WP runs
 
   | GDScript | Rust (`tf_sim`) |
   |---|---|
-  | `float` | `f32` for distances, speeds and positions; `f64` for sim time (`tick_count as f64 * TICK_DT`) |
+  | `float` | `f64` (GDScript floats are 64-bit); `Curve2D` values stay `f32` like Godot's (see `docs/migration/PORTING_GUIDE.md`) |
   | `Vector2` | `glam::Vec2` |
   | `Vector2i` | `glam::IVec2` |
   | `Curve2D` (always a polyline here) | `geom::Polyline`: points + cumulative lengths; `sample(d) -> (pos, angle)`, `closest_offset(p)`, `length()` |
   | `Geometry2D.get_closest_point_to_segment`, `segment_intersects_segment`, `get_closest_points_between_segments` | `geom::segment` functions, unit-tested against values dumped from Godot |
   | `AStar2D` (`LaneGraph`) | own A* over a CSR or adjacency `Vec`, with `BinaryHeap`; same costs and heuristic |
-  | `RandomNumberGenerator` with a fixed seed | `rng::SimRng` (PCG32) with the **same seed constants**. Sequences differ from Godot's, which is accepted: parity is checked statistically, not bit-for-bit (§3) |
+  | `RandomNumberGenerator` with a fixed seed | `rng::SimRng` with the **same seed constants**: bit-exact with Godot (verified in M0.2), so the same draws happen in the same order |
   | `RoadType` `.tres` | `RoadType` struct, `data/road_types/<id>.ron`, same fields and values |
   | `Dictionary` used as a record (saves) | `serde_json::Value` at the save boundary only; typed structs everywhere else |
   | `Array.sort_custom` | `sort_by` (stable; Godot's isn't, so ties may order differently: acceptable) |
@@ -96,7 +96,7 @@ Godot calls listeners in the order they connected, and that is `Simulation._init
 | Signal | Listeners, in order | Rust |
 |---|---|---|
 | `RoadNetwork.changed(nodes, segs)` | router, lots, zones, signals, vehicles, walk network, transit, stress (plus `Game` → views) | Every road edit goes through `Simulation::{add_road_pieces, add_path_pieces, remove_segment, set_segment_type, set_node_control, ...}`, which runs the `RoadNetwork` command and then calls `on_roads_changed` on each listener, synchronously |
-| `LotSystem.changed` | vehicles (reroute), freight, citizens (+ views) | same, via `Simulation` wrappers around lot and zone commands, and after `zones.step` when it developed lots |
+| `LotSystem.changed` | vehicles (reroute), citizens, freight (+ views) | same, via `Simulation` wrappers around lot and zone commands, and after `zones.step` when it developed lots |
 | `ZoneSystem.changed`, `ExternalConnections.changed`, `SimClock.hour_changed` / `day_started` | views only | flags or counters in `Simulation`, read by the runner and turned into Bevy events |
 | `VehicleSystem.vehicle_arrived` / `vehicle_failed` | transit, citizens, stress, flow | `VehicleSystem` pushes `VehicleEvent`s into a `Vec` during its step. Wherever the GDScript emits them, check whether a listener's effect is visible to the rest of the same `step` (M0.2 decides per emit site: drain right after `vehicles.step`, or split the step) |
 | `PedestrianSystem.pedestrian_arrived` | citizens | same pattern |
@@ -111,7 +111,7 @@ Three layers, from strict to statistical:
 
 1. **Golden data (exact, tolerance 1e-3 px).** `migration/export_golden.gd` (M0.3) runs in headless Godot and dumps JSON for pure, RNG-free functions: lane geometry, connectors, conflict zones, signal phases, `plan_road` / `plan_path` results, splitting outcomes, lot plots and access points, walk network, routes and their costs. It runs on a fixed list of scripted layouts: the scenarios in `sim/debug/scenarios.gd` (Bottleneck, Town, bus-lanes variant) plus the layouts built in `test_road_*`, `test_curves`, `test_junction*`, `test_router`. The Rust tests rebuild the same layouts and compare. Expect float noise; a mismatch beyond 1e-3 px is a bug in the port.
 2. **Ported tests (exact assertions).** Every GUT file in `tests/unit/` becomes a Rust test file with the same test names (`test_town.gd` → `crates/tf_sim/tests/town.rs`, `fn town_uses_every_feature`). Assertions are ported 1:1. If an assertion depends on RNG draws (a specific citizen, an exact count), widen it into a range and log it in `NOTES.md`. `tests/traffic_checks.gd` becomes `tests/common/traffic_checks.rs` and runs every tick in the stress and Town tests: no overlaps, never two vehicles in a shared conflict zone, no pedestrian on a crosswalk while a car is on a turn over it.
-3. **Behavioural metrics (statistical).** `migration/baseline.md` (M0.3) records Godot's numbers: Town for one day (Flow %, failed trips, peak vehicles, mode shares, the time 95% of drivers are at work), Bottleneck ± bypass ± bus lanes, the stress grid (arrivals in 90 s per road mix, stuck count). The Rust port must land within the bands set there (default: Flow ±5 points, failed trips ≤ Godot + 3, arrivals ±15%, stuck 0 where Godot has 0). Its numbers are averaged over 5 RNG seeds, while Godot's are single runs with its fixed seeds.
+3. **Behavioural metrics (statistical).** `migration/baseline.md` (M0.3) records Godot's numbers: Town for one day (Flow %, failed trips, peak vehicles, mode shares, the time 95% of drivers are at work), Bottleneck ± bypass ± bus lanes, the stress grid (arrivals in 90 s per road mix, stuck count). The Rust port must land within the bands set there (default: Flow ±5 points, failed trips ≤ Godot + 3, arrivals ±15%, stuck 0 where Godot has 0). The RNG is bit-exact (M0.2), so runs start identical and only drift apart through float rounding and Godot-specific details: compare single runs with the same seeds. Where a metric is out of its band, compare the early ticks of both runs to find where they first diverge.
 
 ## 4. Rules for every agent (read before any WP)
 
@@ -153,14 +153,15 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - `scripts/check.sh`; `.gdignore` in `crates/` and `target/`; `.gitignore` gets `target/`.
   - Add a short "Migration in progress" section to `CLAUDE.md` pointing at this plan and `scripts/check.sh`.
   - *Done when:* `cargo run -p tf_game` opens a window; `scripts/check.sh` passes; Godot still imports cleanly and its tests still pass.
-- [ ] **M0.2 Porting conventions and skeleton types** · Opus · M0.1
+- [x] **M0.2 Porting conventions and skeleton types** · Opus · M0.1
+  - *Done (2026-11-11):* ids, `SimRng`, `geom` (Polyline, segment functions), `events` (`SimEvent`, `Outbox`), the `Simulation` skeleton with depth-first dispatch, `SimClock` with its 6 ported tests, one stub per system. Two finds raise the bar for parity: `SimRng` is **bit-exact** with Godot's `RandomNumberGenerator`, and `geom::segment` matches `Geometry2D` on 48 cases Godot printed (`migration/probes/`). Rust now uses `f64` wherever GDScript has a `float` (it's 64-bit) and `f32` for `Vector2` and `Curve2D` values. Open for M0.3 and M1.2: Godot's `Curve2D` baking (see `NOTES.md`, Geometry).
   - In `tf_sim`: id newtypes (`NodeId`, `SegmentId`, `LaneId`, `VehicleId`, `LotId`, `CitizenId`, `PedestrianId`, `StopId`, `LineId`), `SimRng`, `geom::Polyline` and segment helpers (with tests), the `Simulation` struct with every system as an empty stub, and the `step()` order from `simulation.gd`.
   - Read every `emit(` site of the signals in §2.4, decide for each where its event is drained, and record the decisions in `NOTES.md` under "Event dispatch". This sets the pattern every later WP follows.
   - Write `docs/migration/PORTING_GUIDE.md`: a worked example porting one small class (`sim_clock.gd` → `clock.rs` with its test file), showing doc comments, constants, signal handling and test naming. Every later agent reads it.
   - *Done when:* `clock.rs` passes the ported `test_sim_clock.gd`; the guide exists; `NOTES.md` has the dispatch decisions.
 - [ ] **M0.3 Golden exporter and baseline** · Sonnet · M0.1 · parallel with M0.2
   - *Read:* `sim/debug/scenarios.gd`, `benchmarks/traffic_benchmark.gd`, `tests/unit/test_town.gd`, `test_bottleneck.gd`, `test_traffic.gd`, `test_road_splitting.gd`, `test_curves.gd`, `test_router.gd`, `test_lots.gd`, `test_walking.gd`.
-  - *Write:* `migration/export_golden.gd` (a `SceneTree` script; builds each layout and writes `migration/golden/<layout>.json`. Each file starts with the **command log** that built the layout: every `RoadNetwork` / `LotSystem` / `ZoneSystem` / `TransitSystem` call in order, with its arguments. Rust tests replay it, so M1–M6 can check golden data long before `Scenarios` is ported in M7.3. Record it by wrapping those calls in the exporter, not by editing `sim/`. After the log come the results: nodes, segments, lanes with points, outgoing ids, conflicting ids and zones, signal phases, plots, access points, walk network, and a fixed list of routes with costs). Then `migration/run_baseline.gd`, which runs the metric scenarios of §3 and writes `migration/baseline.md` with the numbers and the tolerance bands, and the benchmark table re-run on this Mac.
+  - *Write:* `migration/export_golden.gd` (a `SceneTree` script; builds each layout and writes `migration/golden/<layout>.json`. Each file starts with the **command log** that built the layout: every `RoadNetwork` / `LotSystem` / `ZoneSystem` / `TransitSystem` call in order, with its arguments. Rust tests replay it, so M1–M6 can check golden data long before `Scenarios` is ported in M7.3. Record it by wrapping those calls in the exporter, not by editing `sim/`. After the log come the results: nodes, segments, lanes with their control points and handles, Godot's `get_baked_points()`, `get_baked_length()` and `sample_baked_with_rotation()` at a few offsets (M1.2 needs them to reproduce Godot's baking), outgoing ids, conflicting ids and zones, signal phases, plots, access points, walk network, and a fixed list of routes with costs). Then `migration/run_baseline.gd`, which runs the metric scenarios of §3 and writes `migration/baseline.md` with the numbers and the tolerance bands, and the benchmark table re-run on this Mac.
   - *Done when:* both scripts run headless without errors and the JSON and `baseline.md` are committed. The JSON schema is documented at the top of `export_golden.gd`.
 
 ### M1: Roads (the foundation everything else stands on)
@@ -171,6 +172,7 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Done when:* a test loads all 6 types and checks every field against the `.tres` values; lane sampling tests pass.
 - [ ] **M1.2 LaneBuilder** · Sonnet · M1.1
   - *Read:* `sim/roads/lane_builder.gd`, `tests/unit/test_lane_builder.gd`.
+  - Also `geom::bake`: Godot's `Curve2D` baking (`Curve2D::_bake` in Godot 4.7's `scene/resources/curve.cpp`, MIT), for polylines and cubic Béziers, and `Polyline::sample_with_rotation` interpolating headings as Godot does. See `NOTES.md` (Geometry). This makes M1.2 an **Opus** WP if the baked points don't match on the first try.
   - *Done when:* those tests are ported and pass; lane points match the golden files.
 - [ ] **M1.3 RoadNetwork** · Opus · M1.2
   - *Read:* `sim/roads/road_network.gd` (837 lines: planning, splitting, curves, upgrades, connectors, conflict zones, signal phases, saves), plus `test_road_network.gd`, `test_road_splitting.gd`, `test_road_types.gd`, `test_curves.gd`, `test_junctions.gd` (the network parts).

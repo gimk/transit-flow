@@ -1,0 +1,66 @@
+# Migration notes
+
+The log the migration plan (`docs/BEVY_MIGRATION_PLAN.md`) asks for: decisions taken while porting, deviations from the GDScript, GDScript bugs found and left as they are, and what was left behind. Newest entries at the end of each section.
+
+## Decisions
+
+### Event dispatch (M0.2)
+
+Godot signals run their listeners synchronously, inside the `emit()` call, in connection order. In Rust a system pushes a `SimEvent` into the `Outbox` it was given, and `Simulation::call` delivers the outbox as soon as that call returns. Each listener runs through `Simulation::call` too, so its own events are delivered before the next listener runs. That's depth first, as in Godot (for example: `vehicle_arrived` → transit → `rider_arrived` → citizens, all before citizens hear `vehicle_arrived`). The views get every event last, through `Simulation::take_view_events`.
+
+Listener order is `Simulation._init`'s construction order. Read from the code (the table in the plan's §2.4 had `LotsChanged` slightly wrong; this is the corrected order):
+
+| Signal | Listeners, in order |
+|---|---|
+| `RoadNetwork.changed` | router, lots, zones, signals, vehicles, pedestrians (its `WalkNetwork`, created in `PedestrianSystem._init`), transit, stress |
+| `LotSystem.changed` | vehicles (`_request_reroute`), citizens (`_sync_with_lots`), freight |
+| `VehicleSystem.vehicle_arrived` / `vehicle_failed` | transit, citizens, stress, flow |
+| `PedestrianSystem.pedestrian_arrived` | citizens |
+| `TransitSystem.rider_arrived` / `rider_stranded` | citizens |
+| `CitizenSystem.trip_ended` | flow |
+| `ZoneSystem.changed`, `ExternalConnections.changed`, `SimClock.hour_changed` / `day_started` | views only |
+
+Where each emit site's events are delivered, and whether that differs from Godot:
+
+| Emit site (GDScript) | Rust | Same as Godot? |
+|---|---|---|
+| `SimClock.advance` | delivered after `clock.advance` | Yes (views only) |
+| `RoadNetwork` commands (`road_network.gd:118, 134, 145, 163`) | the command returns its `ChangeSet`; the `Simulation` command wrapper pushes `RoadsChanged` and delivers it | Yes |
+| `LotSystem.add_lot` / `remove_lot` / `restore` (`lot_system.gd:62, 131, 190`) | delivered after the calling command, or after `zones.step` when zones develop lots | Nearly. `zones.step` can add several lots in one tick, each emitting `changed`, and in Godot citizens sync after each one. Here all of them are delivered after `zones.step`: the first sync sees every new lot and the later ones find nothing new. New lots are processed in the same order, so the same citizens are created with the same RNG draws. Vehicles only set a flag, and freight rebuilds its lists. |
+| `LotSystem._on_roads_changed` (`lot_system.gd:252`) | inside the `RoadsChanged` delivery (depth first) | Yes |
+| `ZoneSystem` (`zone_system.gd:54, 65, 99, 137`) | after the call | Yes (views only) |
+| `VehicleSystem._reroute_all` → `vehicle_failed` (`vehicle_system.gd:1516`), at the start of `step` | `step` is split: `step_begin` (`_time += dt`, re-route), deliver, then `step_rest` | Yes |
+| `VehicleSystem.step` arrivals and give-ups (`vehicle_system.gd:396`, `_fail` at 400) | pushed in Godot's order (all arrivals, then the give-ups) and delivered after `step_rest` | Nearly. In Godot an arrival's listeners run before the give-up loop runs `_fail` on the vehicles that gave up. Here the give-ups have already been detached when the arrival listeners run. Listeners never touch other vehicles' give-up state, so no effect is expected. |
+| `VehicleSystem.reroute_delayed_vehicle` → `_fail` (called by `CongestionMonitor.step`) | delivered after `congestion.step` | Nearly. Congestion re-routes up to 3 vehicles per tick, and a failure's listeners run after all of them instead of between them. |
+| `PedestrianSystem.step` (`pedestrian_system.gd:111`), at the end of its step | delivered after `pedestrians.step` | Yes |
+| `TransitSystem._on_vehicle_arrived` → `rider_arrived` (`transit_system.gd:581`) | inside the `VehicleArrived` delivery (depth first) | Yes |
+| `TransitSystem._give_up_waiting` → `rider_stranded` (`transit_system.gd:635`), last in `step` | delivered after `transit.step` | Yes |
+| `CitizenSystem._finish_trip` → `trip_ended` (`citizen_system.gd:309`) | delivered after whatever citizen call emitted it | Yes (flow only records it) |
+
+Vehicles and pedestrians that leave the sim are removed from their map before the signal in Godot, but listeners still read them through the signal argument. In Rust the event carries the id, and the system keeps those objects in a "finished" list until the end of the tick (`clear_finished`, called last in `Simulation::step`). Listeners look them up there. M4.2 and M5.2 implement this. (Road and lot edits only set `_reroute_pending`, so failures happen inside `step`.)
+
+### RNG: bit-exact with Godot (M0.2)
+
+`rng::SimRng` reproduces Godot 4.7's `RandomNumberGenerator` exactly: PCG32 with Godot's seeding (`pcg32_srandom_r` with `PCG_DEFAULT_INC_64`), `randi()`, and Godot's two-draw `randf()`. It's checked against values Godot printed for 5 seeds. A system seeded like its GDScript original therefore draws the same numbers, which the plan didn't expect. `rand_pcg` and `rand_core` were dropped from the workspace dependencies.
+
+### Number types (M0.2)
+
+GDScript `float` is 64-bit, while `Vector2` and `Curve2D` distances are 32-bit. The Rust port keeps the same split: `f64` wherever the GDScript has a `float` variable (speeds, distances along lanes held in vehicles, times), `glam::Vec2` (`f32`) wherever it has a `Vector2`, and `f32` for everything a `Curve2D` returns or takes (`Polyline`). Convert where the GDScript mixes them, as Godot does (`Vector2 * float` computes in `f32`). Together with the exact RNG, this keeps runs close to Godot's for as long as possible, which helps when debugging a divergence.
+
+### Geometry (M0.2)
+
+`geom::segment` ports `Geometry2D.get_closest_point_to_segment`, `segment_intersects_segment` (Godot's algorithm, including `CMP_EPSILON` and the parallel-segment rule) and `get_closest_points_between_segments`. They're checked against 48 cases printed by Godot (`geom/godot_geometry2d.json`).
+
+`geom::Polyline` stands in for a baked `Curve2D`: sampling, closest offset and length over its points. **Open for M1.2:** Godot bakes every `Curve2D` into points `bake_interval` (5 px) apart before sampling, even straight polylines, so corners get cut and the baked length is a little shorter than the polyline's. Connectors are cubic Béziers. `sample_baked_with_rotation` also interpolates headings between baked points rather than taking the segment's heading. M0.3's golden files must include, for each lane, its control points, handles, `get_baked_points()`, `get_baked_length()`, and `sample_baked_with_rotation` at a few offsets. M1.2 then ports Godot's baking (`Curve2D::_bake` in Godot's `scene/resources/curve.cpp`, MIT licensed) as `geom::bake` until they match. `Lane`'s straight-lane fast path (exact math) doesn't depend on it.
+
+## Deviations
+
+None yet.
+
+## GDScript bugs found (ported as they are)
+
+None yet.
+
+## Left behind
+
+By the user's decision (plan §1): generated art and visual effects, the dot display, and the UI beyond basic commands. The files are listed under M9 in the plan.
