@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 reviewed: every GDScript sim function is ported and the Town runs 14× faster; **waiting for the user's sign-off** before M12. Next: **M8.1** (game shell).
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. Next: **M8.1** (game shell).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -341,9 +341,9 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
     | `test_view_snapshot.gd` (3: lateness, parked cars, indicators) | none yet | view data (`ViewSnapshot`): ported with the snapshot in M8.1 |
     | `test_alert_renderer.gd`, `test_dot_display.gd`, `test_nature.gd`, `test_night_lights.gd`, `test_road_corners.gd` | none | view, not migrated (§1: dot display, nature, night lights, alerts, corner fillets) |
     | `tests/integration/test_build_tools.gd` | `tf_game/tests` | tools, M10 |
-- [ ] **R3 Sim parity gate** · Opus · M7.3
+- [x] **R3 Sim parity gate** · Opus · M7.3
   - Review the complete `tf_sim` against `sim/`: every GDScript function has a Rust counterpart or a `NOTES.md` entry explaining why not. Re-run the benchmark with citizens (Town, plus stress 2 000). **The user signs off before the cutover work in M12.**
-  - *Review (2026-11-11), waiting for the user's sign-off:* all 420 functions in `sim/**/*.gd` have a Rust counterpart (checked by name, `get_` prefixes dropped; the 9 left are renamed or inlined, listed in `NOTES.md` § "Function map (R3)"). Parity rests on the traces rather than on reading: the traffic, bus, citizen and Town traces, the golden layouts and saves, and all 68 `baseline.md` metrics equal Godot's. 252 tests, none ignored.
+  - *Done (2026-11-11), signed off by the user the same day:* all 420 functions in `sim/**/*.gd` have a Rust counterpart (checked by name, `get_` prefixes dropped; the 9 left are renamed or inlined, listed in `NOTES.md` § "Function map (R3)"). Parity rests on the traces rather than on reading: the traffic, bus, citizen and Town traces, the golden layouts and saves, and all 68 `baseline.md` metrics equal Godot's. 252 tests, none ignored.
   - Benchmark with citizens (`cargo run -p tf_sim --release --bin town_benchmark`, Godot side `migration/probes/town_benchmark.gd`, same runs, same peak vehicle counts):
 
     | Run | GDScript (ms per tick, avg / worst) | Rust | Speed-up |
