@@ -37,6 +37,7 @@ pub trait GdVec2 {
     fn gd_rotated(self, angle: f32) -> Vec2;
     fn gd_slerp(self, to: Vec2, weight: f32) -> Vec2;
     fn gd_distance_to(self, to: Vec2) -> f32;
+    fn gd_move_toward(self, to: Vec2, delta: f32) -> Vec2;
     fn gd_is_equal_approx(self, other: Vec2) -> bool;
     fn gd_bezier_interpolate(self, control_1: Vec2, control_2: Vec2, end: Vec2, t: f32) -> Vec2;
     fn gd_bezier_derivative(self, control_1: Vec2, control_2: Vec2, end: Vec2, t: f32) -> Vec2;
@@ -92,6 +93,16 @@ impl GdVec2 for Vec2 {
 
     fn gd_distance_to(self, to: Vec2) -> f32 {
         ((self.x - to.x) * (self.x - to.x) + (self.y - to.y) * (self.y - to.y)).sqrt()
+    }
+
+    fn gd_move_toward(self, to: Vec2, delta: f32) -> Vec2 {
+        let vd = to - self;
+        let len = (vd.x * vd.x + vd.y * vd.y).sqrt();
+        if len <= delta || len < CMP_EPSILON {
+            to
+        } else {
+            self + vd / len * delta
+        }
     }
 
     fn gd_is_equal_approx(self, other: Vec2) -> bool {

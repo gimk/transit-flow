@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **M5.2** (PedestrianSystem; M5.1 WalkNetwork done); **M8.1** (game shell) can run in parallel.
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) done. Next: **M6** (transit); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -246,9 +246,10 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Read:* `sim/walking/crosswalks.gd`, `walk_network.gd`.
   - *Done when:* the walk network matches the golden files.
   - *Done (2026-11-11):* `WalkNetwork` ported (`crosswalks` came with M4.1). Godot's `AStar2D` search moved out of `LaneGraph` into `routing/astar.rs`, which both graphs now use (routing goldens still pass). `tests/walk_golden.rs` checks all six layouts (mid-block crosswalks seeded from each file's `transit.mid_block`): 622 graph points with ids, positions (1e-3) and connections in order, the crosswalk edges and sidewalks in Godot's insertion order, and all 72 sampled paths (points, crossings, length). Mutation-checked: a sidewalk offset of 6 and the flipped A* tie rule both fail it.
-- [ ] **M5.2 PedestrianSystem and the vehicle-side crosswalk rules** · Sonnet · M5.1, M4.5
+- [x] **M5.2 PedestrianSystem and the vehicle-side crosswalk rules** · Sonnet · M5.1, M4.5
   - *Read:* `pedestrian.gd`, `pedestrian_system.gd`, and the crosswalk parts of `vehicle_system.gd` (`_crosswalks_clear`, `is_crosswalk_busy`, `CROSSWALK_PATIENCE`), `test_walking.gd`.
   - *Done when:* `test_walking` is ported and passes, including the crosswalk safety check.
+  - *Done (2026-11-11):* `Pedestrian` and `PedestrianSystem` ported and wired into `Simulation` (`Simulation::walking()` builds the `WalkCtx`: roads, lots, lights, vehicles and the `&mut Crosswalks`; step order unchanged). The vehicle-side crosswalk rules came with `VehicleSystem` (M4). `tests/walking.rs` ports `test_walking.gd`: the junction, cars giving way, the walk light, and the random-walks safety check (never a walker on a crosswalk under a car on a turn over it; 123 walks finish in the minute, 0 stuck cars) pass; `test_citizens_walk_short_trips` is an `#[ignore]` stub for M7.1. Mutation-checked: letting pedestrians cross regardless of cars fails the light and safety tests. The walk count was not compared with Godot's, because the Godot binary wasn't at `/Applications/Godot.app` in this session. `Vector2.move_toward` added to `geom::gd`.
 
 ### M6: Transit
 

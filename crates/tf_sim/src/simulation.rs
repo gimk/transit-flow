@@ -16,7 +16,7 @@ use crate::traffic::{
     CongestionMonitor, FreightSystem, StressTraffic, TrafficLights, VehicleSystem,
 };
 use crate::transit::TransitSystem;
-use crate::walking::{Crosswalks, PedestrianSystem};
+use crate::walking::{Crosswalks, PedestrianSystem, WalkCtx};
 
 #[derive(Debug, Default)]
 pub struct Simulation {
@@ -102,7 +102,10 @@ impl Simulation {
             sim.signals
                 .step(dt, &sim.roads, &sim.vehicles, &sim.crosswalks)
         });
-        self.call(|sim, out| sim.pedestrians.step(time, dt, out));
+        self.call(|sim, out| {
+            let (pedestrians, mut ctx) = sim.walking();
+            pedestrians.step(time, dt, &mut ctx, out);
+        });
         self.call(|sim, out| sim.transit.step(time, out));
         self.call(|sim, out| {
             let (vehicles, mut ctx) = sim.traffic();
@@ -136,6 +139,19 @@ impl Simulation {
             crosswalks: &self.crosswalks,
         };
         (&mut self.vehicles, ctx)
+    }
+
+    /// The pedestrian system and what it works with, borrowed apart (`PedestrianSystem`
+    /// takes a `WalkCtx` where the GDScript class holds references to the other systems).
+    pub fn walking(&mut self) -> (&mut PedestrianSystem, WalkCtx<'_>) {
+        let ctx = WalkCtx {
+            roads: &self.roads,
+            lots: &self.lots,
+            signals: &self.signals,
+            vehicles: &self.vehicles,
+            crosswalks: &mut self.crosswalks,
+        };
+        (&mut self.pedestrians, ctx)
     }
 
     /// The events delivered since the last call, oldest first, for the views.

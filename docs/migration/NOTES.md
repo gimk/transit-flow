@@ -109,6 +109,10 @@ The whole of `vehicle_system.gd` was ported at once (its four planned slices cal
 
 `WalkNetwork` extends `AStar2D` too, so the Godot search was moved from `LaneGraph` into `routing::astar::AStar` (dense point indices, neighbours in connection order, caller-supplied step cost and estimate as `f32`); `LaneGraph` and `WalkNetwork` both use it. Walk point ids are the GDScript's (1, 2, ... in build order), so point `id` is index `id - 1`. `WalkNetwork` doesn't hold the roads or the crosswalks: `find_path` / `distance` / `ensure_built` take them, and `PedestrianSystem` forwards `RoadsChanged` to `on_roads_changed`. `find_path` returns `Option<WalkPath>` (Godot: `{}`). Both `sort_custom` calls in `_build` (crossings by distance, arms by angle) are `sort_by`, which is stable where Godot's isn't; they only differ on exact ties (two roads leaving a node at the same angle, two crosswalks at the same distance), which the golden layouts don't have.
 
+### PedestrianSystem (M5.2)
+
+The system doesn't hold the roads, lots, lights, vehicles or crosswalks: the methods take a `WalkCtx` (`Simulation::walking()` splits the borrows; `crosswalks` is `&mut`, since pedestrians update it while reading `VehicleSystem::is_crosswalk_busy`). Pedestrians who arrive move from `pedestrians` to `finished` (read with `pedestrian_any`) until the next tick starts; `remove` takes the `Crosswalks` to release the pedestrian's claims. `owner_id` is an `i32` like `Vehicle.owner_id`. `Parking::find_space`'s walking-distance closure is `PedestrianSystem::get_walking_distance(&ctx, from, to)`, wired by M7.1.
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
@@ -118,4 +122,5 @@ Ported as `#[ignore]` stubs with the work package that brings what they need. Th
 | `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
 | `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
 | `test_freight.gd` `test_saves_external_connections` | `freight.rs` | M7.3 (Simulation saves) |
+| `test_walking.gd` `test_citizens_walk_short_trips` | `walking.rs` | M7.1 (citizens) |
 | `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |
