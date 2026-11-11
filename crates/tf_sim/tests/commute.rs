@@ -213,8 +213,20 @@ fn losing_the_workplace_mid_trip_sends_people_home_job_hunting() {
 }
 
 #[test]
-#[ignore = "needs Simulation saves (M7.3): test_save_round_trip_keeps_lots_and_recreates_residents"]
-fn save_round_trip_keeps_lots_and_recreates_residents() {}
+fn save_round_trip_keeps_lots_and_recreates_residents() {
+    let mut sim = Simulation::new();
+    small_town(&mut sim, 2, 1, 1);
+    steps(&mut sim, 2);
+    let saved = sim.to_dict();
+    let loaded = Simulation::from_dict(&serde_json::from_str(&saved.to_string()).unwrap())
+        .expect("the save loads");
+    common::golden::assert_json_matches(&loaded.to_dict(), &saved, "round trip");
+    assert_eq!(
+        loaded.citizens.citizens.len(),
+        4,
+        "residents are recreated from homes"
+    );
+}
 
 #[test]
 fn shoppers_never_pick_the_shop_they_work_at() {

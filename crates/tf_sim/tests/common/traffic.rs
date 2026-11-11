@@ -4,7 +4,7 @@
 use glam::Vec2;
 use tf_sim::Simulation;
 use tf_sim::events::SimEvent;
-use tf_sim::ids::{LaneId, LotId, VehicleId};
+use tf_sim::ids::{LotId, VehicleId};
 use tf_sim::roads::RoadType;
 use tf_sim::traffic::vehicle::{Kind, Vehicle};
 
@@ -108,53 +108,7 @@ pub fn vehicle_events(sim: &mut Simulation) -> (Vec<VehicleId>, Vec<VehicleId>) 
     (arrived, failed)
 }
 
-/// Smallest bumper-to-bumper gap between consecutive vehicles on any lane.
-pub fn min_queue_gap(sim: &Simulation) -> f64 {
-    let mut smallest = f64::INFINITY;
-    let lanes: Vec<LaneId> = sim.vehicles.occupied_lanes().collect();
-    for lane_id in lanes {
-        let queue = sim.vehicles.queue(lane_id);
-        for pair in queue.windows(2) {
-            let (a, b) = (
-                &sim.vehicles.vehicles[&pair[0]],
-                &sim.vehicles.vehicles[&pair[1]],
-            );
-            smallest = smallest.min(a.distance - b.distance - (a.length + b.length) * 0.5);
-        }
-    }
-    smallest
-}
-
-/// Pairs of vehicles that are both inside the stretch two conflicting connectors share.
-pub fn connector_conflict_violations(sim: &Simulation) -> usize {
-    let on_connectors: Vec<&Vehicle> = sim
-        .vehicles
-        .vehicles
-        .values()
-        .filter(|v| sim.roads.lane_any(v.lane.unwrap()).unwrap().is_connector())
-        .collect();
-    let in_zone = |v: &Vehicle, zone: Vec2| {
-        v.distance + v.length * 0.5 >= f64::from(zone.x)
-            && v.distance - v.length * 0.5 <= f64::from(zone.y)
-    };
-    let mut violations = 0;
-    for a in &on_connectors {
-        for b in &on_connectors {
-            let (lane_a, lane_b) = (
-                sim.roads.lane_any(a.lane.unwrap()).unwrap(),
-                sim.roads.lane_any(b.lane.unwrap()).unwrap(),
-            );
-            if a.id < b.id
-                && let (Some(&zone_a), Some(&zone_b)) = (
-                    lane_a.conflict_zones.get(&lane_b.id),
-                    lane_b.conflict_zones.get(&lane_a.id),
-                )
-                && in_zone(a, zone_a)
-                && in_zone(b, zone_b)
-            {
-                violations += 1;
-            }
-        }
-    }
-    violations
-}
+#[allow(unused_imports)]
+pub use tf_sim::debug::checks::{
+    connector_conflict_violations, crosswalk_violations, min_queue_gap,
+};

@@ -142,16 +142,16 @@ The system doesn't hold the roads, router, vehicles, pedestrians or crosswalks: 
 - Godot keeps the records in `Vector2`s, so the end time and score are **`f32`** there, and `_total` adds the `f64` score but subtracts the rounded `f32` when a record is forgotten. Ported as it is (`records: VecDeque<(f32, f32)>`); the drift is of the order 1e-8 per forgotten trip.
 - The probe samples Flow every 400 ticks (15 samples over the day: value, trips in the window, shares per mode). The Rust values equal Godot's to the last digit printed (1e-6 of a percent), including the share of each mode (walk 26.5%, car 69.8%, bus 3.6% at the end). `test_daily_pulse` prints flow 71% and the Rust test pins it.
 
+### Scenarios, saves, Town (M7.3)
+
+- `debug::scenarios` returns `BottleneckInfo { junction, bypass }` and `TownInfo { center, lights, highways, bus_lines }` where Godot returns dictionaries; `add_bottleneck_bus_line` and `add_bottleneck_bus_lanes` return `Option<LineId>`. A bus stop that can't be placed is `StopId(-1)` in the list given to `add_line` (Godot appends -1 too), which `add_line` drops.
+- `Simulation::to_dict` / `from_dict` live in `save.rs` (an `impl Simulation`); `from_dict` returns `None` for another `version`, builds the sim with `with_roads(RoadNetwork::from_dict(..))`, restores lots, zones, externals and transit in Godot's order, and delivers each restore's events through `sim.call`, so `LotsChanged` makes the citizens move into the homes (as `_sync_with_lots` does in Godot's `lots.restore`). **Compared with Godot's saves** (the six golden layouts): loaded and saved again they come out equal (numbers to 1e-3, as every golden check does: `serde_json` writes `f32`s as the nearest `f64`, so exact text equality isn't expected). Each scenario built in Rust also saves exactly Godot's save of it (`tests/scenarios.rs`).
+- `CitizenSystem::set_seed` is `citizens._rng.seed = seed` (the Bottleneck tests and the baseline reseed the draws before building).
+- The safety checks of `traffic_checks.gd` (queue gaps, conflict zones) and the crosswalk rule of `test_walking.gd` moved from the tests' helpers into `debug::checks`, so `bin/run_baseline.rs` can use them; `tests/common/traffic.rs` re-exports them.
+- `TripEnded` is delivered after the citizen call, so a listener reading `citizen.state` sees the state after `_arrive`. The Town's commute statistic (Godot: `state == TO_WORK` at the emit) therefore tests `state == AtWork` on a completed trip, which is the same set: a completed trip to work always ends at work (`_arrive`), and nothing moves the citizen on within the tick. The count (175) and the median agree with Godot.
+- **Result: the Town is Godot's, tick for tick.** `migration/probes/town_trace.gd` → `golden/town_trace.json` (5760 ticks): 2577 events, Flow every 240 ticks (to 1e-6 %), vehicle / pedestrian / departure / rider / stuck counts every 120 ticks, the stats of `baseline.md`, and the end state of 176 citizens and 165 vehicles all equal Godot's (`tests/town.rs`). The crosswalk rule holds on every tick too (a Rust-only check: Godot's Town test doesn't run it). Every number in `migration/baseline.md` is reproduced exactly by `bin/run_baseline.rs`, which also prints Godot's value and the band and exits 1 outside it.
+- The probe's vehicle events carry `Vehicle.Kind` and the destination lot (not in `citizen_trace`'s format); `tests/town.rs` re-implements the recorder instead of sharing `citizen_trace.rs`'s, since the two formats differ.
+
 ## Tests waiting for a later work package
 
-Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
-
-| GUT test | Rust stub | Needs |
-|---|---|---|
-| `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
-| `test_freight.gd` `test_saves_external_connections` | `freight.rs` | M7.3 (Simulation saves) |
-| `test_commute.gd` `test_save_round_trip_keeps_lots_and_recreates_residents` | `commute.rs` | M7.3 (Simulation saves) |
-| `test_flow.gd` `test_flow_drops_when_the_commute_road_is_cut` | `flow.rs` | M7.3 (`Scenarios.build_bottleneck`). Godot prints no numbers; the test needs Flow above 50 before the cut and 10 points lower after. |
-| `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |
-| `test_buses.gd` `test_stops_and_lines_are_saved` | `buses.rs` | M7.3 (Simulation saves). `stops_and_lines_round_trip_through_their_save` checks `TransitSystem::to_dict` / `restore` meanwhile. |
-| `test_buses.gd` `test_a_bus_line_speeds_up_trips_without_a_car`, `test_bus_lanes.gd` `test_bus_lanes_on_a_congested_corridor_raise_flow` | `buses.rs`, `bus_lanes.rs` | M7.3 (`Scenarios.build_bottleneck`; Flow is there since M7.2). Godot prints, for the first: without a bus Flow 50.2467652414837, carless commute 69.3176470588235 over 17 trips, modes {1: 0.696, 0: 0.304}; with the line Flow 52.754597110754, commute 50.5941176470588, modes {1: 0.696, 2: 0.25, 0: 0.054}. For the second: without a bus Flow 50.2467652414837, with bus lanes and a line 54.3198077281508. |
+None: every ignored stub is ported. (M7.3 ported the eight: zones, freight and commute saves; Flow after cutting the road; the curved bypass; the bus save test, the bus line and the bus lanes on the Bottleneck.) Godot's printed numbers are asserted in `flow.rs`, `curves.rs`, `buses.rs` and `bus_lanes.rs`.

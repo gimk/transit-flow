@@ -8,8 +8,10 @@ use std::collections::HashMap;
 use common::roads::{G, road_type};
 use common::traffic::{connector_conflict_violations, min_queue_gap, road as add_road};
 use common::transit::{add_line, add_stop};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use tf_sim::Simulation;
+use tf_sim::city::citizen::Mode;
+use tf_sim::debug::scenarios;
 use tf_sim::roads::{Lane, RoadNetwork, Turn};
 use tf_sim::traffic::vehicle::Kind;
 use tf_sim::traffic::vehicle_system::MIN_GAP;
@@ -189,5 +191,33 @@ fn cars_never_turn_through_bus_lanes() {
 }
 
 #[test]
-#[ignore = "needs Scenarios (M7.3): test_bus_lanes_on_a_congested_corridor_raise_flow"]
-fn bus_lanes_on_a_congested_corridor_raise_flow() {}
+fn bus_lanes_on_a_congested_corridor_raise_flow() {
+    // (flow, bus share) without a bus and with bus lanes and a line.
+    let mut results = Vec::new();
+    for with_bus in [false, true] {
+        let mut run = Simulation::new();
+        let origin = IVec2::new(30, 30);
+        scenarios::build_bottleneck(&mut run, origin);
+        if with_bus {
+            scenarios::add_bottleneck_bus_lanes(&mut run, origin);
+        }
+        for _ in 0..Simulation::TICK_RATE * 120 {
+            run.step();
+        }
+        let now = run.sim_time();
+        let shares = run.flow.mode_shares(now);
+        results.push((
+            run.flow.flow_percent(now),
+            shares.get(&Mode::Bus).copied().unwrap_or(0.0),
+        ));
+    }
+    println!(
+        "bottleneck without a bus {:?}, with bus lanes and a line {:?}",
+        results[0], results[1]
+    );
+    assert!(results[1].1 > 0.1, "people ride");
+    assert!(results[1].0 > results[0].0 + 2.0, "Flow rises");
+    // Godot: Flow 50.2467652414837 without, 54.3198077281508 with.
+    assert!((results[0].0 - 50.2467652414837).abs() < 1e-6);
+    assert!((results[1].0 - 54.3198077281508).abs() < 1e-6);
+}

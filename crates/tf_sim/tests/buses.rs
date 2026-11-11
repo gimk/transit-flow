@@ -13,6 +13,7 @@ use glam::{IVec2, Vec2};
 use tf_sim::Simulation;
 use tf_sim::city::citizen::{Mode, State};
 use tf_sim::city::lot::LotType;
+use tf_sim::debug::scenarios;
 use tf_sim::events::SimEvent;
 use tf_sim::ids::{CitizenId, LaneId, LineId, StopId};
 use tf_sim::roads::RoadType;
@@ -386,8 +387,24 @@ fn stops_and_lines_survive_road_edits() {
 }
 
 #[test]
-#[ignore = "needs Simulation saves (M7.3): test_stops_and_lines_are_saved"]
-fn stops_and_lines_are_saved() {}
+fn stops_and_lines_are_saved() {
+    let mut sim = Simulation::new();
+    let line_id = street_line(&mut sim);
+    let loaded = Simulation::from_dict(&serde_json::from_str(&sim.to_dict().to_string()).unwrap())
+        .expect("the save loads");
+    assert_eq!(loaded.transit.stops.len(), 8);
+    assert_eq!(
+        loaded.transit.lines[&line_id].stop_ids,
+        sim.transit.lines[&line_id].stop_ids
+    );
+    assert_eq!(
+        loaded.transit.lines[&line_id].bus_count,
+        sim.transit.lines[&line_id].bus_count
+    );
+    for stop in loaded.transit.stops.values() {
+        assert!(stop.is_active());
+    }
+}
 
 /// What the GDScript test checks through `Simulation.from_dict`, at the transit system's
 /// level: the saved stops and lines come back on their roads.
@@ -452,8 +469,51 @@ fn no_trip_uses_more_than_three_modes() {
 }
 
 #[test]
-#[ignore = "needs Scenarios (M7.3): test_a_bus_line_speeds_up_trips_without_a_car"]
-fn a_bus_line_speeds_up_trips_without_a_car() {}
+fn a_bus_line_speeds_up_trips_without_a_car() {
+    // (flow, bus share, carless commute, carless trips) without and with the line.
+    let mut results = Vec::new();
+    for with_bus in [false, true] {
+        let mut run = Simulation::new();
+        let origin = IVec2::new(30, 30);
+        scenarios::build_bottleneck(&mut run, origin);
+        if with_bus {
+            scenarios::add_bottleneck_bus_line(&mut run, origin);
+        }
+        let (mut time, mut trips) = (0.0, 0);
+        for _ in 0..Simulation::TICK_RATE * 120 {
+            run.step();
+            for event in run.take_view_events() {
+                if let SimEvent::TripEnded { citizen, completed } = event {
+                    let c = &run.citizens.citizens[&citizen];
+                    if !c.has_car && completed && c.trip_lot_id == c.work_lot_id {
+                        time += c.trip_end_time - c.trip_start_time;
+                        trips += 1;
+                    }
+                }
+            }
+        }
+        let now = run.sim_time();
+        let shares = run.flow.mode_shares(now);
+        let bus = shares.get(&Mode::Bus).copied().unwrap_or(0.0);
+        let flow = run.flow.flow_percent(now);
+        let commute = time / f64::from(i32::max(trips, 1));
+        println!(
+            "bottleneck, bus {with_bus}: flow {flow}, modes {shares:?}, carless commute {commute}, carless trips {trips}"
+        );
+        results.push((flow, bus, commute, trips));
+    }
+    assert!(results[1].1 > 0.1, "people ride");
+    assert_eq!(results[1].3, results[0].3, "the same commuters");
+    assert!(results[1].2 < results[0].2 * 0.85, "and get there sooner");
+    // Godot: Flow 50.2467652414837 / 52.754597110754, commute 69.3176470588235 over 17
+    // trips / 50.5941176470588, bus share 0.25 with the line.
+    assert!((results[0].0 - 50.2467652414837).abs() < 1e-6);
+    assert!((results[1].0 - 52.754597110754).abs() < 1e-6);
+    assert!((results[0].2 - 69.3176470588235).abs() < 1e-6);
+    assert!((results[1].2 - 50.5941176470588).abs() < 1e-6);
+    assert_eq!(results[0].3, 17);
+    assert!((results[1].1 - 0.25).abs() < 1e-9);
+}
 
 /// On a grid with many ways round, and traffic to tempt them off it, buses keep to the
 /// lanes their line was laid out on (`BusLine::routes`), turnarounds included.

@@ -5,9 +5,10 @@ mod common;
 
 use common::roads::{G, local};
 use common::traffic::{road as add_road, spawn, step_vehicles, vehicle, vehicle_events};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use tf_sim::Simulation;
 use tf_sim::city::FlowMetric;
+use tf_sim::debug::scenarios;
 use tf_sim::ids::VehicleId;
 use tf_sim::traffic::stress_traffic;
 use tf_sim::traffic::vehicle::Vehicle;
@@ -121,5 +122,33 @@ fn late_drivers_turn_impatient_then_give_up() {
 /// Flow reacts to the network: cutting the road the commuters need mid-morning makes
 /// their trips fail, and Flow drops.
 #[test]
-#[ignore = "needs Scenarios (M7.3): test_flow_drops_when_the_commute_road_is_cut"]
-fn flow_drops_when_the_commute_road_is_cut() {}
+fn flow_drops_when_the_commute_road_is_cut() {
+    let mut sim = Simulation::new();
+    let info = scenarios::build_bottleneck(&mut sim, IVec2::new(30, 30));
+    // Everyone drives (people on foot don't mind the road being cut).
+    for citizen in sim.citizens.citizens.values_mut() {
+        citizen.has_car = true;
+    }
+    for _ in 0..Simulation::TICK_RATE * 40 {
+        sim.step();
+    }
+    let before = sim.flow.flow_percent(sim.sim_time());
+    // The main road just east of the junction, between the suburb and the factories.
+    let cut = sim
+        .roads
+        .find_segment_at(info.junction + Vec2::new(G, 0.0), 4.0, 0)
+        .expect("the main road is there");
+    sim.call(|sim, out| {
+        sim.roads.remove_segment(cut, out);
+    });
+    for _ in 0..Simulation::TICK_RATE * 20 {
+        sim.step();
+    }
+    let after = sim.flow.flow_percent(sim.sim_time());
+    println!("bottleneck flow: {before:.0}% before cutting the road, {after:.0}% after");
+    assert!(before > 50.0, "the morning was flowing");
+    assert!(after < before - 10.0, "failed trips pull Flow down");
+    // Godot: 61.9404012533 before, 48.6674581276 after.
+    assert!((before - 61.9404012533).abs() < 1e-6, "{before}");
+    assert!((after - 48.6674581276).abs() < 1e-6, "{after}");
+}

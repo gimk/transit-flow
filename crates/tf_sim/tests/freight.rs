@@ -120,5 +120,10 @@ fn activity_curve() {
 }
 
 #[test]
-#[ignore = "needs Simulation::to_dict / from_dict (M7.3)"]
-fn saves_external_connections() {}
+fn saves_external_connections() {
+    let (sim, _) = setup();
+    let saved = sim.to_dict();
+    let loaded = Simulation::from_dict(&serde_json::from_str(&saved.to_string()).unwrap())
+        .expect("the save loads");
+    assert_eq!(loaded.externals.points, sim.externals.points);
+}

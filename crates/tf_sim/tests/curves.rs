@@ -5,7 +5,9 @@
 mod common;
 
 use common::roads::{G, local};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
+use tf_sim::Simulation;
+use tf_sim::debug::scenarios;
 use tf_sim::events::Outbox;
 use tf_sim::ids::SegmentId;
 use tf_sim::roads::{RoadNetwork, RoadType};
@@ -228,7 +230,49 @@ fn lots_keep_clear_of_curves() {
 }
 
 #[test]
-#[ignore = "needs citizens (M7.3): test_a_curved_bypass_works_like_a_straight_one"]
 fn a_curved_bypass_works_like_a_straight_one() {
-    unimplemented!("port with M7.3");
+    let origin = IVec2::new(30, 30);
+    let at = |x: i32, y: i32| (origin + IVec2::new(x, y)).as_vec2() * G;
+    let mut flows = std::collections::HashMap::new();
+    for variant in ["none", "straight", "curved"] {
+        let mut run = Simulation::new();
+        let info = scenarios::build_bottleneck(&mut run, origin);
+        if variant == "straight" {
+            scenarios::build_bypass(&mut run, &info);
+        } else if variant == "curved" {
+            // The same way round, with its corners curved.
+            let t = local();
+            run.call(|sim, out| {
+                sim.roads
+                    .add_curved_road(at(-3, 0), at(-3, -4), at(1, -4), t, 0, out);
+                sim.roads.add_road(at(1, -4), at(11, -4), t, 0, out);
+                sim.roads
+                    .add_curved_road(at(11, -4), at(15, -4), at(15, 0), t, 0, out);
+            });
+        }
+        for _ in 0..Simulation::TICK_RATE * 90 {
+            run.step();
+        }
+        flows.insert(variant, run.flow.flow_percent(run.sim_time()));
+    }
+    println!(
+        "bottleneck flow: no bypass {:.0}%, straight bypass {:.0}%, curved bypass {:.0}%",
+        flows["none"], flows["straight"], flows["curved"]
+    );
+    assert!(
+        (flows["curved"] - flows["straight"]).abs() < 6.0,
+        "about the same"
+    );
+    // Godot: 50.2467652415, 50.5394627314, 51.2315315416.
+    for (variant, godot) in [
+        ("none", 50.2467652415),
+        ("straight", 50.5394627314),
+        ("curved", 51.2315315416),
+    ] {
+        assert!(
+            (flows[variant] - godot).abs() < 1e-6,
+            "{variant}: {}",
+            flows[variant]
+        );
+    }
 }

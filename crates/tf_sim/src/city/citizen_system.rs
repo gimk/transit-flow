@@ -257,6 +257,12 @@ impl CitizenSystem {
         }
     }
 
+    /// `sim.citizens._rng.seed = seed`: tests reseed the citizens' draws to try other
+    /// departure orders (before the citizens exist).
+    pub fn set_seed(&mut self, seed: u64) {
+        self.rng = SimRng::new(seed);
+    }
+
     /// Debug: everyone at home leaves for work right away, ignoring the schedule (once
     /// they have a job), spread at random over the next `spread_seconds` sim seconds.
     pub fn depart_everyone_now(&mut self, spread_seconds: f64) {

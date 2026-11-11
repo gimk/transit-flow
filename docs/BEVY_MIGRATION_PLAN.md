@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. Next: **M7.3** (scenarios, saves, Town); **M8.1** (game shell) can run in parallel.
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. Next: **R3** (sim parity gate); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -269,9 +269,78 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 - [x] **M7.2 FlowMetric** · Sonnet · M7.1
   - *Read:* `flow_metric.gd`, `test_flow.gd`.
   - *Done (2026-11-11):* `FlowMetric` ported (scoring, the one-day window, mode shares; Godot's `f32` records included) and wired into `Simulation`'s listeners (vehicle arrivals and failures, `TripEnded`, in Godot's order). `tests/flow.rs` ports `test_flow` (5; the Bottleneck one waits for `Scenarios`, M7.3). The Flow assertions left out of M7.1 are in: `flow_scores_whole_trips_and_counts_modes` (`trips.rs`), `a_day_has_four_distinct_traffic_periods` (Flow 71%, as Godot prints), `citizens_walk_short_trips`. `citizen_trace.rs` now also compares Flow, its trip count and the mode shares every 400 ticks over the traced day (15 samples): equal to Godot's to 1e-6 of a percent. Mutation-checked (the cap at 1, counting citizens' cars twice: tests fail). See NOTES ("FlowMetric").
-- [ ] **M7.3 Scenarios, Simulation save/load, Town** · Sonnet · M7.2
+- [x] **M7.3 Scenarios, Simulation save/load, Town** · Sonnet · M7.2
   - *Read:* `sim/debug/scenarios.gd`, `simulation.gd`, `test_simulation.gd`, `test_town.gd`, `test_bottleneck.gd`.
   - *Done when:* every file in `tests/unit/` that tests the sim has a Rust counterpart that passes (list them in a table under this WP: GUT file → Rust file → status); the Town runs a full day with safety checks every tick; every metric in `baseline.md` is inside its band. Report each metric next to Godot's.
+  - *Done (2026-11-11):* `debug::scenarios` has everything `scenarios.gd` has (`build_bottleneck` and its bypass, bus-line and bus-lane variants, `build_town`, `add_highway`, `build_bypass`), and `Simulation::to_dict` / `from_dict` (`save.rs`, `SAVE_VERSION` 1, null on another version; `from_dict` delivers `LotsChanged` through `sim.call`, so the residents are recreated) save and load Godot's JSON. `tests/scenarios.rs`: each scenario's save equals the save Godot exported (bottleneck, bypass, bus lanes, town). `tests/simulation.rs`: `test_simulation.gd` plus a round trip over all six golden layouts (Godot's own saves, loaded and saved again). The 8 ignored tests are ported and pass with Godot's printed numbers pinned (Flow before and after the cut road 61.9404012533 / 48.6674581276, the curved bypass 50.2467652415 / 50.5394627314 / 51.2315315416, bus line 52.754597110754 and carless commute 50.5941176470588, bus lanes 54.3198077281508 ...); `tests/bottleneck.rs` ports `test_bottleneck.gd` (queue 26, congestion 6.21, the six mornings to the digit Godot prints). New probe `migration/probes/town_trace.gd` → `golden/town_trace.json` (the Town for a full day, 5760 ticks: 2577 events (vehicle arrivals with kind and destination, failures, pedestrians, riders, state changes, trip starts and ends), Flow every 240 ticks, vehicle counts every 120, stats, end state): `tests/town.rs` (`test_town.gd` + `the_town_day_matches_godot`) agrees on every event tick, on Flow, on the stats and on every citizen and vehicle at the end, with the safety checks (connector conflicts, queue gaps, people on a crosswalk under a turning car) on every tick; the whole day takes 0.6 s in the test profile, so nothing is `#[ignore]`d. The shared checks moved to `debug::checks` (the tests' `common::traffic` re-exports them). `src/bin/run_baseline.rs` (`cargo run -p tf_sim --release --bin run_baseline`, 2 s) prints every metric of `baseline.md` next to Godot's and exits 1 when one leaves its band: **all 68 rows are equal to Godot's**. Mutation-checked (bottleneck spread of the departures, a Town zone, the clock and the external connections in the save: tests fail). See NOTES ("Scenarios, saves, Town").
+
+    **Rust vs Godot (`migration/baseline.md`)**: every metric is equal to Godot's, so inside its band.
+
+    | Metric | Godot | Rust | Band |
+    |---|---|---|---|
+    | Town: citizens (cars / no car) | 176 (136 / 40) | 176 (136 / 40) | exact |
+    | Town: Flow % | 60.3 | 60.3 (60.2748) | ± 5 points |
+    | Town: failed vehicle trips | 2 | 2 | ≤ Godot + 3 |
+    | Town: vehicle arrivals | 573 | 573 | ± 10% |
+    | Town: truck trips | 261 | 261 | ± 15% |
+    | Town: highways used for exports | 2 | 2 | exact |
+    | Town: peak vehicles | 165 | 165 | ± 15% |
+    | Town: 95% of drivers at work (hour) | 12.37 | 12.37 | ± 1 h |
+    | Town: commuters who reached work | 175 | 175 | ± 5 |
+    | Town: median commute (× ideal) | 1.77 | 1.77 | ± 0.3 |
+    | Town: mode share car / bus / walk | 69.6% / 5.4% / 25.0% | 69.6% / 5.4% / 25.0% | ± 5 points |
+    | Town: conflict violations / smallest gap / stuck 30 s+ | 0 / 4.00 / 0 | 0 / 4.00 / 0 | 0 / ≥ 3.99 / 0 |
+    | Bottleneck seed 1, no bypass: at work (s) / driving (s) / took bypass | 80.4 / 1169 / 0 | 80.4 / 1169 / 0 | ± 15% |
+    | Bottleneck seed 1, bypass | 82.1 / 1187 / 2 | 82.1 / 1187 / 2 | ± 15% |
+    | Bottleneck seed 2, no bypass | 88.7 / 814 / 0 | 88.7 / 814 / 0 | ± 15% |
+    | Bottleneck seed 2, bypass | 87.9 / 883 / 2 | 87.9 / 883 / 2 | ± 15% |
+    | Bottleneck seed 3, no bypass | 89.8 / 977 / 0 | 89.8 / 977 / 0 | ± 15% |
+    | Bottleneck seed 3, bypass | 89.8 / 979 / 1 | 89.8 / 979 / 1 | ± 15% |
+    | Bottleneck Flow after 120 s: plain (Flow % / arrivals) | 50.2 / 39 | 50.2 / 39 | ± 5 points, ± 10% |
+    | bypass | 50.5 / 39 | 50.5 / 39 | same |
+    | bus line (curbside) | 52.8 / 44 | 52.8 / 44 | same |
+    | bus lanes | 54.3 / 49 | 54.3 / 49 | same |
+    | Stress: local, none, 250 (vehicles / arrivals) | 250 / 507 | 250 / 507 | ± 15% |
+    | local, traffic_light, 250 | 249 / 622 | 249 / 622 | ± 15% |
+    | avenue_4lane / local_2lane, 200 | 200 / 491 | 200 / 491 | ± 15% |
+    | local_2lane / one_way_2lane / one_way_1lane, 200 | 199 / 283 | 199 / 283 | ± 15% |
+    | avenue_4lane / one_way_2lane / one_way_1lane, 200 | 199 / 419 | 199 / 419 | ± 15% |
+
+    **Tests in `tests/unit/` (GUT file → Rust file → status)**:
+
+    | GUT file | Rust file | Status |
+    |---|---|---|
+    | `test_bottleneck.gd` (3) | `tests/bottleneck.rs` (3) | ported (M7.3), Godot's numbers pinned |
+    | `test_bus_lanes.gd` (5) | `tests/bus_lanes.rs` (5) | ported |
+    | `test_buses.gd` (14) | `tests/buses.rs` (16) | ported |
+    | `test_commute.gd` (8) | `tests/commute.rs` (8) | ported |
+    | `test_curves.gd` (7) | `tests/curves.rs` (7) | ported |
+    | `test_daily_pulse.gd` (1) | `tests/daily_pulse.rs` (1) | ported |
+    | `test_driveways.gd` (7) | `tests/driveways.rs` (7) | ported |
+    | `test_flow.gd` (6) | `tests/flow.rs` (6) | ported |
+    | `test_freight.gd` (5) | `tests/freight.rs` (5) | ported |
+    | `test_grid.gd` (4) | `src/grid.rs` unit tests (4) | ported |
+    | `test_junction_priority.gd` (5) | `tests/junction_priority.rs` (5) | ported |
+    | `test_junctions.gd` (12) | `tests/junctions.rs` (12) | ported |
+    | `test_lane_builder.gd` (4) | `tests/lane_builder.rs` (5) | ported |
+    | `test_lane_changes.gd` (6) | `tests/lane_changes.rs` (6) | ported |
+    | `test_lots.gd` (13) | `tests/lots.rs` (13) | ported |
+    | `test_road_network.gd` (13) | `tests/road_network.rs` (13) | ported |
+    | `test_road_splitting.gd` (15) | `tests/road_splitting.rs` (15) | ported |
+    | `test_road_types.gd` (15) | `tests/road_type.rs` (17) | ported |
+    | `test_router.gd` (12) | `tests/router.rs` (12) | ported |
+    | `test_signals.gd` (8) | `tests/signals.rs` (11) | ported |
+    | `test_sim_clock.gd` (6) | `tests/sim_clock.rs` (6) | ported |
+    | `test_simulation.gd` (3) | `tests/simulation.rs` (5) | ported (M7.3; plus the golden save round trip) |
+    | `test_town.gd` (4) | `tests/town.rs` (5) | ported (M7.3; plus the Godot parity of the day) |
+    | `test_traffic.gd` (9) | `tests/traffic.rs` (9) | ported |
+    | `test_trips.gd` (9) | `tests/trips.rs` (9) | ported |
+    | `test_vehicles.gd` (7) | `tests/vehicles.rs` (7) | ported |
+    | `test_walking.gd` (5) | `tests/walking.rs` (5) | ported |
+    | `test_zones.gd` (6) | `tests/zones.rs` (8) | ported |
+    | `test_view_snapshot.gd` (3: lateness, parked cars, indicators) | none yet | view data (`ViewSnapshot`): ported with the snapshot in M8.1 |
+    | `test_alert_renderer.gd`, `test_dot_display.gd`, `test_nature.gd`, `test_night_lights.gd`, `test_road_corners.gd` | none | view, not migrated (§1: dot display, nature, night lights, alerts, corner fillets) |
+    | `tests/integration/test_build_tools.gd` | `tf_game/tests` | tools, M10 |
 - [ ] **R3 Sim parity gate** · Opus · M7.3
   - Review the complete `tf_sim` against `sim/`: every GDScript function has a Rust counterpart or a `NOTES.md` entry explaining why not. Re-run the benchmark with citizens (Town, plus stress 2 000). **The user signs off before the cutover work in M12.**
 

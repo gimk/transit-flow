@@ -137,9 +137,35 @@ fn developments_per_tick_are_capped() {
 }
 
 #[test]
-#[ignore = "needs Simulation saves (M7.3): test_save_round_trip_keeps_zones_and_their_buildings"]
 fn save_round_trip_keeps_zones_and_their_buildings() {
-    unimplemented!("port with M7.3");
+    let mut sim = sim();
+    paint(
+        &mut sim,
+        &cells(IVec2::new(1, 3), IVec2::new(3, 3)),
+        LotType::Residential,
+    );
+    let mut clock = 0.0;
+    develop_all(&mut sim, &mut clock);
+    // Not developed yet.
+    paint(
+        &mut sim,
+        &cells(IVec2::new(6, 3), IVec2::new(6, 3)),
+        LotType::Industrial,
+    );
+    let saved = sim.to_dict();
+    let mut loaded = Simulation::from_dict(&serde_json::from_str(&saved.to_string()).unwrap())
+        .expect("the save loads");
+    assert_eq!(loaded.zones.zones, sim.zones.zones);
+    assert_eq!(loaded.lots.lots.len(), 3);
+    assert!(loaded.zones.is_developed(IVec2::new(1, 3)));
+    for i in 0..20 {
+        step_zones(&mut loaded, 100.0 * f64::from(i + 1));
+    }
+    assert_eq!(
+        loaded.lots.lots.len(),
+        4,
+        "the undeveloped cell develops after loading"
+    );
 }
 
 /// The golden layouts' zones and external connections restore and save back unchanged.
