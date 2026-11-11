@@ -335,5 +335,6 @@ fn citizens_walk_short_trips() {
         .filter(|c| c.state == tf_sim::city::citizen::State::AtWork)
         .count();
     assert_eq!(at_work, 2);
-    // M7.2 adds: walks count in Flow (`flow.get_trip_count > 0`).
+    let now = sim.sim_time();
+    assert!(sim.flow.trip_count(now) > 0, "walks count in Flow");
 }

@@ -248,7 +248,11 @@ impl Simulation {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
                     sim.stress.on_vehicle_gone(owner, out);
                 });
-                self.call(|sim, out| sim.flow.on_vehicle_arrived(id, out));
+                self.call(|sim, _out| {
+                    if let Some(vehicle) = sim.vehicles.vehicle_any(id) {
+                        sim.flow.on_vehicle_arrived(vehicle);
+                    }
+                });
             }
             &SimEvent::VehicleFailed(id) => {
                 self.call(|sim, out| {
@@ -263,7 +267,11 @@ impl Simulation {
                     let owner = sim.vehicles.vehicle_any(id).map(|v| v.owner_id);
                     sim.stress.on_vehicle_gone(owner, out);
                 });
-                self.call(|sim, out| sim.flow.on_vehicle_failed(id, out));
+                self.call(|sim, _out| {
+                    if let Some(vehicle) = sim.vehicles.vehicle_any(id) {
+                        sim.flow.on_vehicle_failed(vehicle);
+                    }
+                });
             }
             &SimEvent::PedestrianArrived(id) => {
                 self.call(|sim, out| {
@@ -284,7 +292,11 @@ impl Simulation {
                 });
             }
             &SimEvent::TripEnded { citizen, completed } => {
-                self.call(|sim, out| sim.flow.on_trip_ended(citizen, completed, out));
+                self.call(|sim, _out| {
+                    if let Some(citizen) = sim.citizens.citizens.get(&citizen) {
+                        sim.flow.on_trip_ended(citizen, completed);
+                    }
+                });
             }
             // Views only.
             SimEvent::ZonesChanged

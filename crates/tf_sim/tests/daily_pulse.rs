@@ -91,4 +91,8 @@ fn a_day_has_four_distinct_traffic_periods() {
     assert!(evening[0] > evening[1], "evening: mostly commuter cars");
     let night_total = night[0] + night[1];
     assert!(night_total < morning[0], "night is quiet");
+    let now = sim.sim_time();
+    let flow = sim.flow.flow_percent(now);
+    assert_eq!(format!("{flow:.0}"), "71", "the same Flow as Godot (71%)");
+    assert!(flow > 0.0, "trips were scored");
 }

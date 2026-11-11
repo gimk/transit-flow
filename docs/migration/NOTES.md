@@ -136,16 +136,22 @@ The system doesn't hold the roads, router, vehicles, pedestrians or crosswalks: 
 
 **Result: the citizens are Godot's, tick for tick.** `migration/probes/citizen_trace.gd` → `golden/citizen_trace.json` is a day (6000 ticks, 06:00 to 06:00 the next day) in a small city: zoned homes, shops and factories on a grid, a highway with trucks, a bus line, shop parking of three spaces, a street cut and laid again at 16:00 and 18:30, a shop removed, everyone at home sent out at once at 22:40 (spread over 10 s). 80 citizens, 2083 events: every vehicle and pedestrian arrival (402, 145), every state change (801), trip start (364: mode, destination, Flow's reference time) and trip end (358: completed, mode, ideal time and duration to the millisecond), the riders getting off and stranded; and at the end every citizen's schedule, taste, car and job, the parking spaces, the vehicles, and 320 planned trips (mode, legs, cost to 1e-6). All the same (`tests/citizen_trace.rs`). `test_daily_pulse` prints the same cars and trucks per period (morning 61/23, midday 0/74, evening 59/24, night 6/13), and the mode-choice costs `test_buses` prints (22.8, 35.6, 34.0) are the same.
 
+### FlowMetric (M7.2)
+
+`FlowMetric` holds no systems: `Simulation::dispatch` passes it the vehicle (`on_vehicle_arrived(&Vehicle)` / `on_vehicle_failed`, found with `vehicle_any`, still readable while their events are delivered) or the citizen (`on_trip_ended(&Citizen, completed)`). Getters take `&mut self` (they forget old records first): `flow_percent(now)` (-1 when empty), `trip_count(now)`, `mode_shares(now)` (an `IndexMap<Mode, f64>` in the order the modes first appear, summing `1 / n` per record as the GDScript does). `FlowMetric::score(&Vehicle, arrived)` is the static `score`.
+- Godot keeps the records in `Vector2`s, so the end time and score are **`f32`** there, and `_total` adds the `f64` score but subtracts the rounded `f32` when a record is forgotten. Ported as it is (`records: VecDeque<(f32, f32)>`); the drift is of the order 1e-8 per forgotten trip.
+- The probe samples Flow every 400 ticks (15 samples over the day: value, trips in the window, shares per mode). The Rust values equal Godot's to the last digit printed (1e-6 of a percent), including the share of each mode (walk 26.5%, car 69.8%, bus 3.6% at the end). `test_daily_pulse` prints flow 71% and the Rust test pins it.
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
 
 | GUT test | Rust stub | Needs |
 |---|---|---|
-| `test_trips.gd` `test_flow_scores_whole_trips_and_counts_modes`, `test_daily_pulse.gd` (its Flow assertions), `test_walking.gd` `test_citizens_walk_short_trips` (its Flow assertion) | `trips.rs` (not written yet), `daily_pulse.rs`, `walking.rs` | M7.2 (`FlowMetric`) |
 | `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
 | `test_freight.gd` `test_saves_external_connections` | `freight.rs` | M7.3 (Simulation saves) |
 | `test_commute.gd` `test_save_round_trip_keeps_lots_and_recreates_residents` | `commute.rs` | M7.3 (Simulation saves) |
+| `test_flow.gd` `test_flow_drops_when_the_commute_road_is_cut` | `flow.rs` | M7.3 (`Scenarios.build_bottleneck`). Godot prints no numbers; the test needs Flow above 50 before the cut and 10 points lower after. |
 | `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |
 | `test_buses.gd` `test_stops_and_lines_are_saved` | `buses.rs` | M7.3 (Simulation saves). `stops_and_lines_round_trip_through_their_save` checks `TransitSystem::to_dict` / `restore` meanwhile. |
 | `test_buses.gd` `test_a_bus_line_speeds_up_trips_without_a_car`, `test_bus_lanes.gd` `test_bus_lanes_on_a_congested_corridor_raise_flow` | `buses.rs`, `bus_lanes.rs` | M7.3 (`Scenarios.build_bottleneck`; Flow is there since M7.2). Godot prints, for the first: without a bus Flow 50.2467652414837, carless commute 69.3176470588235 over 17 trips, modes {1: 0.696, 0: 0.304}; with the line Flow 52.754597110754, commute 50.5941176470588, modes {1: 0.696, 2: 0.25, 0: 0.054}. For the second: without a bus Flow 50.2467652414837, with bus lanes and a line 54.3198077281508. |

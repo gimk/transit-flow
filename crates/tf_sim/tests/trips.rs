@@ -243,3 +243,20 @@ fn a_removed_car_park_sends_the_car_home() {
     assert_eq!(sim.citizens.citizens[&id].car_lot_id, home);
     assert_eq!(sim.citizens.parking.used(car_park), 0);
 }
+
+#[test]
+fn flow_scores_whole_trips_and_counts_modes() {
+    let Fixture { mut sim, .. } = fixture();
+    let id = nth(&sim, 0);
+    citizen(&mut sim, id).leave_now = true;
+    run_until(&mut sim, id, State::AtWork, 2000);
+    let now = sim.sim_time();
+    assert_eq!(
+        sim.flow.trip_count(now),
+        1,
+        "the car leg isn't scored on its own"
+    );
+    let shares = sim.flow.mode_shares(now);
+    assert_eq!(shares.len(), 1);
+    assert_eq!(shares[&Mode::Car], 1.0);
+}

@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use tf_sim::Simulation;
 use tf_sim::city::LotType;
-use tf_sim::city::citizen::{Mode, State};
+use tf_sim::city::citizen::State;
 use tf_sim::debug::scenarios;
 use tf_sim::events::SimEvent;
 use tf_sim::geom::sort::sort_custom;
@@ -27,11 +27,13 @@ use tf_sim::rng::SimRng;
 const TICKS: usize = 6000;
 
 type Event = (usize, String, i64, i64, i64, i64, i64);
+/// (tick, flow in millionths of a percent, trips in the window, (mode, share in millionths)).
+type FlowSample = (usize, Option<i64>, usize, Vec<(i32, i64)>);
 
 #[derive(Deserialize)]
 struct Golden {
     events: Vec<Event>,
-    flow: Vec<serde_json::Value>,
+    flow: Vec<FlowSample>,
     citizens: Vec<[i64; 13]>,
     parking: Vec<(i32, i32)>,
     counts: [usize; 8],
@@ -193,6 +195,7 @@ fn a_day_of_citizens_matches_godot() {
     }
     common::transit::add_line(&mut sim, &stops).unwrap();
 
+    let mut flow_samples = Vec::new();
     let mut recorder = Recorder {
         events: Vec::new(),
         state: HashMap::new(),
@@ -224,6 +227,26 @@ fn a_day_of_citizens_matches_godot() {
         sim.step();
         recorder.drain(&mut sim, tick);
         recorder.poll(&sim, tick);
+        if tick % 400 == 399 {
+            let now = sim.sim_time();
+            let flow = sim.flow.flow_percent(now);
+            let shares: Vec<(i32, i64)> = {
+                let mut shares: Vec<_> = sim
+                    .flow
+                    .mode_shares(now)
+                    .into_iter()
+                    .map(|(mode, share)| (mode as i32, (share * 1e6).round() as i64))
+                    .collect();
+                shares.sort();
+                shares
+            };
+            flow_samples.push((
+                tick,
+                (flow >= 0.0).then(|| (flow * 1e6).round() as i64),
+                sim.flow.trip_count(now),
+                shares,
+            ));
+        }
     }
 
     let first_difference = recorder
@@ -354,5 +377,23 @@ fn a_day_of_citizens_matches_godot() {
     let order: Vec<i32> = points.iter().map(|p| p.0).collect();
     assert_eq!(order, golden.sort, "sort_custom orders ties as Godot does");
 
-    let _ = (golden.flow, Mode::Walk);
+    // Flow, sampled every 400 ticks: the value (to 1e-6 of a percent), the trips in the
+    // window and the shares of each mode.
+    assert_eq!(flow_samples.len(), golden.flow.len());
+    for (here, there) in flow_samples.iter().zip(&golden.flow) {
+        assert_eq!(
+            (here.0, here.2, &here.3),
+            (there.0, there.2, &there.3),
+            "flow at tick {}",
+            there.0
+        );
+        match (here.1, there.1) {
+            (Some(a), Some(b)) => assert!(
+                (a - b).abs() <= 2,
+                "flow at tick {}: {a} vs Godot {b} (millionths of a percent)",
+                there.0
+            ),
+            (a, b) => assert_eq!(a, b, "flow at tick {}", there.0),
+        }
+    }
 }
