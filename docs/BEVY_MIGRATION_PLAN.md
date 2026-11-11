@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M3 and M4 done except R2; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **R2**; **M5** (walking) and **M8.1** (game shell) can run in parallel.
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. Next: **M5** (walking); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -236,7 +236,8 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
   - *Done when:* the table is filled in. This is the first go / no-go point: **if the Rust tick isn't at least 5× faster than GDScript at 2 000 vehicles, stop and ask the user** before going on.
 - [ ] **M4.9 Optimisation pass (optional)** · Opus · M4.8, R2
   - Only if the user asks after M4.8: dense lane and vehicle arrays, parallelise the read-only prepare pass with `rayon`. Every ported test and the baseline bands must still pass.
-- [ ] **R2 Review gate** · Opus · M4.5
+- [x] **R2 Review gate** · Opus · M4.5
+  - *Done (2026-11-11):* the five stress grids now assert Godot's exact arrivals and vehicle counts (`traffic.rs`, `road_type.rs`). A new probe, `migration/probes/traffic_trace.gd`, traces what they don't reach: a block removed, another retyped to an avenue and the first re-added under 250 vehicles with lights, and a game day of freight through driveways and the highway gate (`traffic_trace.json`). Every arrival, failure and give-up lands on the same tick as in Godot, and every vehicle ends on the same lane, distance and speed (`tests/traffic_trace.rs`; mutation-checked: an edit one tick late, another freight seed and a tripled import rate all fail it). Buses (bays, pulling out round a stopped bus) and the vehicle-side crosswalk rules can't run before M5 and M6, so I re-read them and the pass order of `step` against the GDScript: they match.
   - Same line-by-line review for `traffic/`. Run the stress grids for all road mixes from `baseline.md` and compare.
 
 ### M5: Walking · parallel-safe with M4.6–M4.8

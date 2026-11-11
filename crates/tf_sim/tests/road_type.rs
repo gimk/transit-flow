@@ -419,7 +419,7 @@ fn vehicles_on_a_road_being_upgraded_carry_on() {
 
 /// 200 random trips for 90 s on a 5 x 5 grid, 3 cells apart: even rows/columns of
 /// `even` roads, odd ones of `odd_h` / `odd_v` roads (one-way ones alternate direction).
-fn stress_grid(even: &str, odd_h: &str, odd_v: &str, min_arrivals: usize) {
+fn stress_grid(even: &str, odd_h: &str, odd_v: &str, min_arrivals: usize, godot: (usize, usize)) {
     use common::traffic::{connector_conflict_violations, min_queue_gap, road, vehicle_events};
     let mut sim = tf_sim::Simulation::new();
     for i in 0..5 {
@@ -459,6 +459,11 @@ fn stress_grid(even: &str, odd_h: &str, odd_v: &str, min_arrivals: usize) {
     );
     assert!(arrived > min_arrivals, "traffic flows");
     assert_eq!(sim.vehicles.stuck_count(30.0), 0, "no deadlock");
+    assert_eq!(
+        (arrived, sim.vehicles.vehicles.len()),
+        godot,
+        "the same arrivals and vehicles as Godot (`migration/baseline.md`)"
+    );
 }
 
 /// Random traffic on grids mixing road types: multi-lane and one-way junctions and lane
@@ -467,19 +472,37 @@ fn stress_grid(even: &str, odd_h: &str, odd_v: &str, min_arrivals: usize) {
 /// random trips).
 #[test]
 fn stress_grid_with_avenues() {
-    stress_grid("avenue_4lane", "local_2lane", "local_2lane", 300);
+    stress_grid(
+        "avenue_4lane",
+        "local_2lane",
+        "local_2lane",
+        300,
+        (491, 200),
+    );
 }
 
 #[test]
 fn stress_grid_with_one_way_streets() {
-    stress_grid("local_2lane", "one_way_2lane", "one_way_1lane", 200);
+    stress_grid(
+        "local_2lane",
+        "one_way_2lane",
+        "one_way_1lane",
+        200,
+        (283, 199),
+    );
 }
 
 /// Before lane changing (5b) this gridlocked: a car in the wrong lane of an avenue had to
 /// circle the block to reach its turn.
 #[test]
 fn stress_grid_with_avenues_and_one_way_streets() {
-    stress_grid("avenue_4lane", "one_way_2lane", "one_way_1lane", 300);
+    stress_grid(
+        "avenue_4lane",
+        "one_way_2lane",
+        "one_way_1lane",
+        300,
+        (419, 199),
+    );
 }
 
 /// Junctions too close for the roads meeting there would leave lanes no vehicle fits

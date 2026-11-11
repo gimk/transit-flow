@@ -224,7 +224,7 @@ fn priority_to_the_right_between_crossing_drivers() {
 
 /// 250 random trips on a 5 x 5 street grid for 2 sim minutes, with every junction under
 /// `control`, checking the safety rules on every tick.
-fn stress_grid(control: JunctionControl) -> (usize, usize) {
+fn stress_grid(control: JunctionControl, godot: (usize, usize)) -> (usize, usize) {
     let mut sim = Simulation::new();
     build_grid(&mut sim, 5, 3);
     let junctions: Vec<_> = sim
@@ -277,16 +277,21 @@ fn stress_grid(control: JunctionControl) -> (usize, usize) {
     );
     assert!(arrived > 250, "traffic keeps flowing");
     assert_eq!(sim.vehicles.stuck_count(30.0), 0, "no permanent deadlock");
+    assert_eq!(
+        (arrived, sim.vehicles.vehicles.len()),
+        godot,
+        "the same arrivals and vehicles as Godot (`migration/baseline.md`)"
+    );
     let _ = DT;
     (arrived, sim.vehicles.vehicles.len())
 }
 
 #[test]
 fn stress_grid_never_overlaps_or_deadlocks() {
-    stress_grid(JunctionControl::None);
+    stress_grid(JunctionControl::None, (507, 250));
 }
 
 #[test]
 fn stress_grid_with_traffic_lights() {
-    stress_grid(JunctionControl::TrafficLight);
+    stress_grid(JunctionControl::TrafficLight, (622, 249));
 }

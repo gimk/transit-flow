@@ -103,7 +103,7 @@ The whole of `vehicle_system.gd` was ported at once (its four planned slices cal
 - Finished vehicles (and pedestrians) now stay readable until the **start of the next tick** (`Simulation::step` clears them first): Godot keeps their objects for whoever holds them, and tests read them after the tick.
 - `StressTraffic` and `CongestionMonitor` (M4.6) were ported along with it: the stress tests need both.
 
-**Result: the Rust traffic is Godot's, tick for tick.** All five stress grids of `migration/baseline.md` give exactly Godot's numbers (arrivals 507 and 622 on the local grids, 491, 283 and 419 on the mixed ones; same vehicle counts, gaps, 0 stuck), and the benchmark gives the same arrivals per second at every size.
+**Result: the Rust traffic is Godot's, tick for tick.** All five stress grids of `migration/baseline.md` give exactly Godot's numbers (arrivals 507 and 622 on the local grids, 491, 283 and 419 on the mixed ones; same vehicle counts, gaps, 0 stuck), and the benchmark gives the same arrivals per second at every size. R2 pinned the five grids in the tests and added `traffic_trace` (road edits under traffic, a day of freight), which also matches tick for tick.
 
 ## Tests waiting for a later work package
 
