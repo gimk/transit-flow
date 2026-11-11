@@ -67,7 +67,10 @@ impl Simulation {
         self.call(|sim, out| sim.citizens.step(time, out));
         self.call(|sim, out| sim.freight.step(dt, out));
         self.call(|sim, out| sim.stress.step(out));
-        self.call(|sim, out| sim.signals.step(dt, out));
+        self.call(|sim, _out| {
+            sim.signals
+                .step(dt, &sim.roads, &sim.vehicles.vehicles, &sim.crosswalks)
+        });
         self.call(|sim, out| sim.pedestrians.step(time, dt, out));
         self.call(|sim, out| sim.transit.step(time, out));
         self.call(|sim, out| sim.vehicles.step_begin(dt, out));
@@ -107,7 +110,7 @@ impl Simulation {
                 self.call(|sim, out| sim.router.on_roads_changed(change, out));
                 self.call(|sim, out| sim.lots.on_roads_changed(&sim.roads, change, out));
                 self.call(|sim, out| sim.zones.on_roads_changed(&sim.lots, change, out));
-                self.call(|sim, out| sim.signals.on_roads_changed(change, out));
+                self.call(|sim, out| sim.signals.on_roads_changed(&sim.roads, change, out));
                 self.call(|sim, out| sim.vehicles.on_roads_changed(change, out));
                 self.call(|sim, out| sim.pedestrians.on_roads_changed(change, out));
                 self.call(|sim, out| sim.transit.on_roads_changed(change, out));

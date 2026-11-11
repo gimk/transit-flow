@@ -89,6 +89,10 @@ The router doesn't hold the network: every query takes `&RoadNetwork`. Congestio
 
 `Grid` (`core/grid.gd`) moved into `tf_sim::grid`: the sim uses it. `LotSystem` and `Parking` take the road network (and lots) as parameters. `Parking::find_space` takes the walking distance as a closure (`PedestrianSystem.get_walking_distance`, M5.2). Access points are `LanePoint`s. `Lot.Type` is `LotType`, with Godot's integer values (saved).
 
+### Vehicles, lights and crosswalks (M4.1)
+
+`Vehicle` holds lane ids (`lane: Option<LaneId>`, `next_lanes`, `granted_connector` …) where Godot holds `Lane` objects; look them up with `RoadNetwork::lane_any`, which also finds retired lanes. GDScript `-1` and `INF` sentinels became `Option`s and `f64::INFINITY`. `VehicleSystem::vehicles` exists already (empty until M4.2) so `TrafficLights` can read the front vehicle of each queue. `Crosswalks` (planned for M5.1) was ported here because the lights read waiting pedestrians; its mid-block entries are a `MidBlockCrossing` struct.
+
 ## Tests waiting for a later work package
 
 Ported as `#[ignore]` stubs with the work package that brings what they need. That WP ports them fully and removes the `ignore`:
@@ -98,6 +102,7 @@ Ported as `#[ignore]` stubs with the work package that brings what they need. Th
 | `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
 | `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
 | `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
+| `test_signals.gd` the four tests with moving vehicles | `signals.rs` | M4.3 |
 | `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` | `road_type.rs` | M4.2 |
 | `test_road_types.gd` the three `test_stress_grid_*` | `road_type.rs` | M4.4 |
 | `test_curves.gd` `test_a_curved_bypass_works_like_a_straight_one` | `curves.rs` | M7.3 |

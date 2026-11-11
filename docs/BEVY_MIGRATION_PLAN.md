@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M3 done. Next work package: **M4.1** (vehicle data, traffic lights); **M8.1** (game shell) can run in parallel.
+**Status:** M0–M3 and M4.1 done. Next work package: **M4.2** (VehicleSystem: spawning, following, movement, reroute); **M8.1** (game shell) can run in parallel.
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -209,7 +209,8 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 `vehicle_system.gd` is 1 666 lines and is ported in slices, all by Opus, in order, each slice compiling and tested before the next. Split the Rust into modules under `traffic/vehicle_system/` (`mod.rs` core and step, `following.rs`, `junctions.rs`, `lane_changes.rs`, `driveways.rs`, `buses.rs`, `crosswalks.rs`), keeping function names.
 
-- [ ] **M4.1 Vehicle, TrafficLights** · Sonnet · M2.1
+- [x] **M4.1 Vehicle, TrafficLights** · Sonnet · M2.1
+  - *Done (2026-11-11):* `Vehicle`, `TrafficLights` and (early, from M5.1) `Crosswalks` ported. From `test_signals.gd`, the four tests without moving vehicles pass; the four with them are stubs for M4.3. Three more tests drive the light controller directly, with a car placed in a queue by hand and pedestrians waiting: resting green, minimum green, amber, then the waiting phase; walk light only early in the green. Workspace: 121 tests pass, 12 stubs.
   - *Read:* `sim/traffic/vehicle.gd`, `traffic_lights.gd`, `test_signals.gd`.
   - *Done when:* `Vehicle` is complete; `TrafficLights` passes the ported `test_signals` assertions that don't need moving vehicles (mark the others `#[ignore = "needs M4.3"]` and remove the ignore in M4.3).
 - [ ] **M4.2 VehicleSystem: spawning, following, movement, reroute** · Opus · M4.1, M3.1

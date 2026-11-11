@@ -6,7 +6,10 @@ use crate::roads::ChangeSet;
 
 /// Stub: see the module docs.
 #[derive(Debug, Default)]
-pub struct VehicleSystem {}
+pub struct VehicleSystem {
+    /// Every vehicle on the road (not those waiting in driveways), by id.
+    pub vehicles: indexmap::IndexMap<crate::ids::VehicleId, crate::traffic::vehicle::Vehicle>,
+}
 
 impl VehicleSystem {
     pub fn new() -> Self {
