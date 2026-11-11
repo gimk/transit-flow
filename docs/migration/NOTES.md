@@ -77,6 +77,16 @@ GDScript `float` is 64-bit, while `Vector2` and `Curve2D` distances are 32-bit. 
 - `--overlay` writes `DebugOverlayToggleRequested("heatmap"|"lanes")` on frame 1, once. M9 overlay views only have to read that message.
 - Until M9 every screenshot is the clear colour: checked that all 921600 pixels equal `ClearColor` (28,31,36). The camera spawns in `main.rs` (zoom set there, before the first frame), `CapturePlugin` does not touch it.
 
+### Shape helpers and static map (M9.1)
+
+- `draw::ShapeBuilder` collects polylines (mitre joins, cut back past `MITRE_LIMIT` half widths; flat ends), closed polylines, polygons (ear clipping, either winding), rects, rotated quads, rect outlines and circles, each with its own colour, as **vertex colours** of one `Mesh`; every shape uses the one white `ViewMaterial` (alpha blended). Points are in the Bevy world (y up): convert sim positions with `camera::sim_to_bevy`. `append` merges builders. M9.2 can build the batched vehicle mesh with `quad` and rebuild it per frame.
+- `views::ViewsPlugin` (added in `main.rs`, not in `GamePlugin`: it needs mesh and material assets, so tests add `AssetPlugin` and `init_asset::<Mesh/ColorMaterial>()`) holds the static views, one module each, with their `*Views` index resource: `ground` (one rectangle plus a border), `grid`, `zones`, `lots`, `roads`, `externals`. `views::z` has every depth, including the bands reserved for M9.2 / M9.3; `views::spawn_shape(commands, meshes, material, builder, z)` is the one way to put a shape on screen.
+- **Rebuild rules:** roads by id (`RoadNetworkChanged`: the named segments are despawned and rebuilt if they still exist, plus the discs of the nodes named or at the ends of those segments, old and new); lots, zones and externals don't get ids in their messages, so each system recomputes what the sim wants (`LotShape`, `ZoneShape`, `(point, active)`) on `LotsChanged` / `ZonesChanged` / `ExternalsChanged` / `RoadNetworkChanged` and respawns only the entries that differ. They read the sim with `SimHandle::get_mut()` (waits for the worker): once per change message, but while the city grows `LotsChanged` comes about once a frame, so a hitch is possible with the threaded runner; if M9.2's frame times show it, publish a lots view like `RoadsView`. `SimulationReset` (and the first frame) rebuilds everything.
+- **Road look:** per segment a sidewalk band, a kerb band in the road type's edge colour, the asphalt, a red tint over bus lanes (the lanes with `bus_only`), and thin lane lines (yellow centre line on two-way roads) cut back by `junction_radius`. At each node three discs (sidewalk, kerb, asphalt) as wide as its widest road make roads join without gaps and round dead ends. Each level has its own z, so a minor road's kerb never cuts into a major road's asphalt. Not drawn: the GDScript's inside-corner fillets, dashes, crosswalks and stop lines, grain, and elevation layers (the GDScript doesn't stack them either: `road_renderer.gd` ignores `elevation_layer`).
+- **Lots:** `lots::lot_layout` is `LotRenderer.layout` (front direction, parking strip, building rect, stalls), public for M9.2's parked cars (`stall_count(lot_type)`); the lot is a zone-coloured rectangle with a dark outline, a pavement strip with stall lines in front, and a dim red outline without road access. **Zones** (cells with no lot): zone colour at alpha 0.22 on the free plot, an outline, and a red outline round the cell while waiting for a road (solid, where the GDScript dashes it). **Externals:** a blue (road reaches it) or grey sign with a white bar instead of the "HWY" text, at the GDScript's position.
+- **Grid:** `views::grid::ShowGrid(bool)`, off by default, for the snapping tools of M10 to set. Minor lines hide when a cell is under 12 px on screen. The map border is always drawn.
+- Colours are the GDScript's where they were flat (zone colours, road type colours from the data files), otherwise picked for readability at zoom 0.25 to 4 (ground, sidewalks, markings). The `ClearColor` of `main.rs` shows outside the map.
+
 ## Deviations
 
 None yet.
@@ -88,6 +98,8 @@ None yet.
 ## Left behind
 
 By the user's decision (plan §1): generated art and visual effects, the dot display, and the UI beyond basic commands. The files are listed under M9 in the plan.
+
+Not migrated, and not to be (M9; the files stay in Godot until the cutover): `view/building_painter.gd`, `nature_renderer.gd`, `night_lights.gd`, `day_night.gd`, `road_markings.gd`, `alert_renderer.gd`, `dot_display.gd`, `surface_grain.gdshader` and every other `.gdshader`, and their tests (`test_nature.gd`, `test_night_lights.gd`, `test_road_corners.gd`, `test_alert_renderer.gd`, `test_dot_display.gd`). The Rust views draw flat shapes instead (`views/`).
 
 ### Removed lanes are retired, not dropped (M1.3)
 

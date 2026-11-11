@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. M8.3 (headless screenshot mode) done. Next: **M9**.
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. M8.3 (headless screenshot mode) done. M9.1 (shape helpers and static map) done. Next: **M9.2** (moving things) and **M9.3** (transit, lights, overlays).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -371,10 +371,11 @@ Format: **ID, title** · model · depends on · parallel-safe with. *Read* = GDS
 
 Scope: §2.3's flat shapes, nothing more. Read the GDScript renderer only to learn **what** it shows and **when** it updates (which events, which snapshot fields, incremental rebuilds), not how it paints. **Don't port** painters, shaders, grain, shadows, night lighting or the dot display. *Done when:* a Town screenshot shows the elements, readable at 0.5×, 1× and 3× zoom, and the Town at 2 000 stress vehicles holds 60 FPS on this Mac (state the frame time in the WP notes).
 
-- [ ] **M9.1 Shape helpers and static map** · Sonnet · M8.3
+- [x] **M9.1 Shape helpers and static map** · Sonnet · M8.3
   - `tf_game::draw`: build a mesh from a polyline with a width, a filled polygon, a rectangle, a circle.
   - Static views, rebuilt from change events by id: ground (one flat-coloured rectangle for the map), the grid while a snapping tool is active, roads (band + lane lines), lots (rectangles by zone colour), zones without buildings (outlines), highway markers.
   - *Read for behaviour only:* `view/road_renderer.gd`, `lot_renderer.gd`, `zone_renderer.gd`, `grid_renderer.gd`, `external_renderer.gd`.
+  - *Done (2026-11-11):* `draw::ShapeBuilder` (polyline with mitres, polygon by ear clipping, rect, quad, outline, circle; vertex colours, one white material) and `views/` (`ground`, `grid` behind the `ShowGrid` flag, `zones`, `lots`, `roads`, `externals`; depths in `views::z`, bands reserved for M9.2/M9.3). Roads rebuild by the ids of `RoadNetworkChanged`; lots, zones and markers rebuild what differs on their change messages. Town screenshots at zoom 0.5, 1 and 3 and the Bottleneck scenarios read well. 299 tests (`tests/map_views.rs`: an edit rebuilds only its segments). Decisions in NOTES ("Shape helpers and static map (M9.1)").
 - [ ] **M9.2 Moving things** · Sonnet · M9.1
   - Vehicles as rotated rectangles in one batched mesh, interpolated between `view_from` / `view_to`. Kind colours as in §2.3, plus F2 lateness colours (green → red, from `ViewSnapshot.lateness`). Pedestrians and waiting riders as dots.
   - *Read for behaviour only:* `view/vehicle_renderer.gd` (interpolation, `color_for_vehicle`), `pedestrian_renderer.gd`.
