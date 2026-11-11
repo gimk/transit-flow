@@ -86,6 +86,8 @@ struct Done {
     snapshots: Vec<Arc<ViewSnapshot>>,
     /// Milliseconds each tick took.
     tick_ms: Vec<f64>,
+    /// Milliseconds each snapshot capture took (not counted in `tick_ms`).
+    capture_ms: Vec<f64>,
 }
 
 /// Steps `count` ticks, snapshotting after each (on the worker if threaded).
@@ -93,16 +95,20 @@ fn run_batch(job: Job) -> Done {
     let Job { mut sim, count } = job;
     let mut snapshots = Vec::with_capacity(count);
     let mut tick_ms = Vec::with_capacity(count);
+    let mut capture_ms = Vec::with_capacity(count);
     for _ in 0..count {
         let started = Instant::now();
         sim.step();
         tick_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        let captured = Instant::now();
         snapshots.push(Arc::new(ViewSnapshot::capture(&mut sim)));
+        capture_ms.push(captured.elapsed().as_secs_f64() * 1000.0);
     }
     Done {
         sim,
         snapshots,
         tick_ms,
+        capture_ms,
     }
 }
 
@@ -163,6 +169,9 @@ pub struct SimHandle {
     pub sim_lagging: bool,
     /// Smoothed cost of one simulation tick, for the debug readout.
     pub average_tick_ms: f64,
+    /// Smoothed cost of capturing the snapshot after a tick (on the worker, on top of
+    /// `average_tick_ms`).
+    pub average_capture_ms: f64,
     /// Snapshots ready for the views, oldest first.
     snapshots: VecDeque<Arc<ViewSnapshot>>,
     /// The snapshots just before and after the render clock, and how far (0-1) between
@@ -197,6 +206,7 @@ impl SimHandle {
             effective_speed: 1.0,
             sim_lagging: false,
             average_tick_ms: 0.0,
+            average_capture_ms: 0.0,
             render_time: first.time,
             view_from: first.clone(),
             view_to: first.clone(),
@@ -401,6 +411,9 @@ impl SimHandle {
         self.snapshots.extend(done.snapshots);
         for ms in done.tick_ms {
             self.average_tick_ms += (ms - self.average_tick_ms) * 0.05;
+        }
+        for ms in done.capture_ms {
+            self.average_capture_ms += (ms - self.average_capture_ms) * 0.05;
         }
     }
 

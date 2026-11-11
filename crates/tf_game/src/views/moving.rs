@@ -157,7 +157,7 @@ impl Batch {
 }
 
 /// An empty mesh with the attributes a `Batch` fills in.
-fn empty_batch_mesh() -> Mesh {
+pub fn empty_batch_mesh() -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),

@@ -18,9 +18,12 @@ use crate::draw::ShapeBuilder;
 pub mod externals;
 pub mod grid;
 pub mod ground;
+pub mod lights;
 pub mod lots;
 pub mod moving;
+pub mod overlays;
 pub mod roads;
+pub mod transit;
 pub mod zones;
 
 /// Draw order: higher z is drawn over lower. Every layer has its own band, so shapes
@@ -41,6 +44,8 @@ pub mod z {
     pub const ROAD_SURFACE: f32 = 10.4;
     pub const ROAD_BUS_LANE: f32 = 10.6;
     pub const ROAD_MARKINGS: f32 = 10.8;
+    /// Zebra stripes at bus stops (M9.3).
+    pub const CROSSWALKS: f32 = 11.0;
     /// Highway signs on the map edge.
     pub const EXTERNALS: f32 = 12.0;
     /// Cars parked on lots (M9.2).
@@ -48,6 +53,8 @@ pub mod z {
     /// Bus lines and stops (M9.3).
     pub const TRANSIT_LINES: f32 = 30.0;
     pub const BUS_STOPS: f32 = 31.0;
+    /// The congestion heatmap, under the vehicles (M9.3).
+    pub const HEATMAP: f32 = 35.0;
     /// Moving vehicles (M9.2).
     pub const VEHICLES: f32 = 40.0;
     /// Pedestrians and waiting riders (M9.2).
@@ -101,6 +108,9 @@ impl Plugin for ViewsPlugin {
             roads::RoadViewPlugin,
             externals::ExternalViewPlugin,
             moving::MovingViewPlugin,
+            transit::TransitViewPlugin,
+            lights::LightViewPlugin,
+            overlays::OverlayViewPlugin,
         ));
     }
 }

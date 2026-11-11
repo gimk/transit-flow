@@ -7,12 +7,14 @@
 
 use bevy::prelude::*;
 
+use crate::events::DebugOverlayToggleRequested;
 use crate::game::{self, Announce};
 use crate::runner::SimHandle;
 
-pub const USAGE: &str = "       transit-flow --bench-frames N [--bench-vehicles V]
+pub const USAGE: &str = "       transit-flow --bench-frames N [--bench-vehicles V] [--bench-overlay heatmap|lanes]
   --bench-frames    Town + stress traffic, no vsync: log the frame time over N frames (release build)
-  --bench-vehicles  stress vehicles to wait for (default 2000)";
+  --bench-vehicles  stress vehicles to wait for (default 2000)
+  --bench-overlay   switch on a debug overlay first (heatmap, lanes)";
 /// Real seconds to wait for the stress traffic to fill up before measuring anyway.
 const WARMUP_TIMEOUT: f64 = 120.0;
 /// Frames dropped after the warm-up (the first frames after a speed change).
@@ -22,6 +24,8 @@ const SETTLE_FRAMES: u32 = 60;
 pub struct BenchOptions {
     pub frames: u32,
     pub vehicles: usize,
+    /// A debug overlay to switch on first (`heatmap` or `lanes`), to measure its cost.
+    pub overlay: Option<&'static str>,
 }
 
 /// `Some` if the arguments ask for the benchmark (`Err` if they are malformed).
@@ -32,9 +36,18 @@ pub fn parse_args(args: &[String]) -> Option<Result<BenchOptions, String>> {
     let mut options = BenchOptions {
         frames: 0,
         vehicles: 2000usize,
+        overlay: None,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
+        if flag == "--bench-overlay" {
+            options.overlay = match it.next().map(String::as_str) {
+                Some("heatmap") => Some("heatmap"),
+                Some("lanes") => Some("lanes"),
+                _ => return Some(Err("--bench-overlay takes heatmap or lanes".into())),
+            };
+            continue;
+        }
         let value = it.next().and_then(|v| v.parse::<u32>().ok());
         match (flag.as_str(), value) {
             ("--bench-frames", Some(n)) if n >= 1 => options.frames = n,
@@ -72,7 +85,15 @@ impl Plugin for BenchPlugin {
     }
 }
 
-fn setup(options: Res<BenchOptions>, mut handle: ResMut<SimHandle>, mut announce: Announce) {
+fn setup(
+    options: Res<BenchOptions>,
+    mut handle: ResMut<SimHandle>,
+    mut announce: Announce,
+    mut overlays: MessageWriter<DebugOverlayToggleRequested>,
+) {
+    if let Some(overlay) = options.overlay {
+        overlays.write(DebugOverlayToggleRequested(overlay.into()));
+    }
     game::load_town_scenario(&mut handle, &mut announce);
     handle.get_mut().stress.target_count = options.vehicles;
     handle.set_speed(3);
@@ -112,12 +133,13 @@ fn measure(
         let update_worst = run.updates.iter().copied().fold(0.0, f64::max);
         let p99 = sorted[((sorted.len() as f64 * 0.99) as usize).min(sorted.len() - 1)];
         println!(
-            "bench: {} frames, {} vehicles (+{} waiting), average {average:.2} ms ({:.0} FPS), p99 {p99:.2} ms, worst {worst:.2} ms; main-thread update (First to Last) average {update_average:.2} ms, worst {update_worst:.2} ms; sim tick {:.2} ms, lagging: {}",
+            "bench: {} frames, {} vehicles (+{} waiting), average {average:.2} ms ({:.0} FPS), p99 {p99:.2} ms, worst {worst:.2} ms; main-thread update (First to Last) average {update_average:.2} ms, worst {update_worst:.2} ms; sim tick {:.2} ms + snapshot capture {:.2} ms, lagging: {}",
             run.frames.len(),
             handle.view_to.vehicle_count,
             handle.view_to.waiting_count,
             1000.0 / average,
             handle.average_tick_ms,
+            handle.average_capture_ms,
             handle.sim_lagging,
         );
         exit.write(AppExit::Success);
