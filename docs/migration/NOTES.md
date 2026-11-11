@@ -96,6 +96,7 @@ Ported as `#[ignore]` stubs with the work package that brings what they need. Th
 | GUT test | Rust stub | Needs |
 |---|---|---|
 | `test_lots.gd` `test_an_avenue_too_close_removes_the_lots_between` | `lots.rs` | M7.1 (zones and citizens) |
+| `test_zones.gd` `test_save_round_trip_keeps_zones_and_their_buildings` | `zones.rs` | M7.3 (Simulation saves) |
 | `test_curves.gd` `test_traffic_drives_round_curves` | `curves.rs` | M4.2 |
 | `test_road_types.gd` `test_vehicles_on_a_road_being_upgraded_carry_on` | `road_type.rs` | M4.2 |
 | `test_road_types.gd` the three `test_stress_grid_*` | `road_type.rs` | M4.4 |

@@ -63,7 +63,7 @@ impl Simulation {
         let time = self.sim_time();
         let dt = Self::TICK_DT;
         self.call(|sim, out| sim.clock.advance(dt, out));
-        self.call(|sim, out| sim.zones.step(time, out));
+        self.call(|sim, out| sim.zones.step(time, &sim.roads, &mut sim.lots, out));
         self.call(|sim, out| sim.citizens.step(time, out));
         self.call(|sim, out| sim.freight.step(dt, out));
         self.call(|sim, out| sim.stress.step(out));
@@ -106,7 +106,7 @@ impl Simulation {
             SimEvent::RoadsChanged(change) => {
                 self.call(|sim, out| sim.router.on_roads_changed(change, out));
                 self.call(|sim, out| sim.lots.on_roads_changed(&sim.roads, change, out));
-                self.call(|sim, out| sim.zones.on_roads_changed(change, out));
+                self.call(|sim, out| sim.zones.on_roads_changed(&sim.lots, change, out));
                 self.call(|sim, out| sim.signals.on_roads_changed(change, out));
                 self.call(|sim, out| sim.vehicles.on_roads_changed(change, out));
                 self.call(|sim, out| sim.pedestrians.on_roads_changed(change, out));
