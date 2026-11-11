@@ -4,3 +4,6 @@
 
 # Rust
 /target/
+
+# macOS folder metadata
+.DS_Store
