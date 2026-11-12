@@ -2,153 +2,16 @@
 //! keys, as `tests/integration/test_build_tools.gd` drove the main scene. The palette, top
 //! bar, hint-position and debug-menu tests of that file go away with the UI.
 
+mod common;
+
 use bevy::input::ButtonState;
-use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
-use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
+use common::{Harness, grid_point};
 use tf_game::events::*;
-use tf_game::input::Pointer;
-use tf_game::plugin::GamePlugin;
 use tf_game::runner::SimHandle;
-use tf_game::tools::{Shape, ToolManager, ToolPreview};
-use tf_game::views::ViewsPlugin;
-use tf_game::views::grid::ShowGrid;
+use tf_game::tools::{Shape, ToolPreview};
 use tf_sim::grid;
 use tf_sim::roads::RoadType;
-
-struct Harness {
-    app: App,
-}
-
-fn local() -> &'static RoadType {
-    RoadType::load_by_id("local_2lane").unwrap()
-}
-
-/// A grid point a few cells away from the map centre.
-fn grid_point(dx: i32, dy: i32) -> Vec2 {
-    grid::snap_to_point(grid::map_rect().center()) + Vec2::new(dx as f32, dy as f32) * 64.0
-}
-
-impl Harness {
-    fn new() -> Self {
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            AssetPlugin::default(),
-            bevy::input::InputPlugin,
-        ))
-        .init_asset::<Mesh>()
-        .init_asset::<ColorMaterial>()
-        .add_plugins((GamePlugin { threaded: false }, ViewsPlugin));
-        app.update();
-        let mut harness = Self { app };
-        // Start from an empty map without the highway.
-        harness.sim(|sim| *sim = tf_sim::Simulation::new());
-        harness.frames(2);
-        harness
-    }
-
-    fn frames(&mut self, n: usize) {
-        for _ in 0..n {
-            self.app.update();
-        }
-    }
-
-    /// Runs `f` on the simulation (waits for the worker, if any).
-    fn sim<R>(&mut self, f: impl FnOnce(&mut tf_sim::Simulation) -> R) -> R {
-        let mut handle = self.app.world_mut().resource_mut::<SimHandle>();
-        f(handle.get_mut())
-    }
-
-    /// Builds a road directly, like a scenario does.
-    fn road(&mut self, from: Vec2, to: Vec2) {
-        self.sim(|sim| {
-            sim.call(|sim, out| {
-                sim.roads.add_road(from, to, local(), 0, out);
-            })
-        });
-        self.frames(2);
-    }
-
-    fn key(&mut self, code: KeyCode) {
-        for state in [ButtonState::Pressed, ButtonState::Released] {
-            self.app.world_mut().write_message(KeyboardInput {
-                key_code: code,
-                logical_key: Key::Unidentified(NativeKey::Unidentified),
-                state,
-                text: None,
-                repeat: false,
-                window: Entity::PLACEHOLDER,
-            });
-            self.frames(1);
-        }
-    }
-
-    fn move_to(&mut self, world: Vec2) {
-        self.app
-            .world_mut()
-            .resource_mut::<Pointer>()
-            .set_world(world);
-        self.frames(1);
-    }
-
-    fn button(&mut self, button: MouseButton, state: ButtonState) {
-        self.app.world_mut().write_message(MouseButtonInput {
-            button,
-            state,
-            window: Entity::PLACEHOLDER,
-        });
-        self.frames(1);
-    }
-
-    fn left(&mut self, state: ButtonState) {
-        self.button(MouseButton::Left, state);
-    }
-
-    fn drag(&mut self, from: Vec2, to: Vec2) {
-        self.move_to(from);
-        self.left(ButtonState::Pressed);
-        self.move_to(to);
-        self.left(ButtonState::Released);
-        self.frames(2);
-    }
-
-    fn click(&mut self, at: Vec2, button: MouseButton) {
-        self.move_to(at);
-        self.button(button, ButtonState::Pressed);
-        self.button(button, ButtonState::Released);
-    }
-
-    fn active_tool(&self) -> Option<&'static str> {
-        self.app.world().resource::<ToolManager>().active_id()
-    }
-
-    fn tool_variant(&self) -> Option<String> {
-        self.app.world().resource::<ToolManager>().variant()
-    }
-
-    fn hint(&self) -> String {
-        self.app
-            .world()
-            .resource::<ToolManager>()
-            .hint()
-            .to_string()
-    }
-
-    fn grid_shown(&self) -> bool {
-        self.app.world().resource::<ShowGrid>().0
-    }
-
-    fn segments(&mut self) -> usize {
-        self.sim(|sim| sim.roads.segments.len())
-    }
-
-    /// Messages of type `M` written since the last call (reads them all).
-    fn messages<M: Message + Clone>(&mut self) -> Vec<M> {
-        let cursor = self.app.world_mut().resource_mut::<Messages<M>>();
-        cursor.iter_current_update_messages().cloned().collect()
-    }
-}
 
 #[test]
 fn road_tool_builds_axis_locked_road_from_drag() {

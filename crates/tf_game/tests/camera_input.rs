@@ -62,8 +62,22 @@ fn bindings_are_physical_keys_from_project_godot() {
     assert_eq!(b.keys(Action::ToolCancel), &[KeyCode::Escape]);
     assert_eq!(b.keys(Action::ToggleFullscreen), &[KeyCode::F11]);
     assert_eq!(b.actions_for(KeyCode::F7), vec![Action::DebugLoadScenario]);
-    // Every action has a key, and no key triggers two actions.
+    // The debug keys with fallbacks for macOS (F10 / F12 can be taken by the system).
+    assert_eq!(
+        b.keys(Action::DebugRushHour),
+        &[KeyCode::F10, KeyCode::KeyP]
+    );
+    assert_eq!(
+        b.keys(Action::DebugNewEmptyMap),
+        &[KeyCode::F12, KeyCode::KeyN]
+    );
+    // Every action has a key (except the debug panel toggle: the Bevy build has no panel),
+    // and no key triggers two actions.
     for action in Action::ALL {
+        if action == Action::ToggleDebugMenu {
+            assert!(b.keys(action).is_empty());
+            continue;
+        }
         assert!(!b.keys(action).is_empty(), "{action:?} has no key");
         for k in b.keys(action) {
             assert_eq!(b.actions_for(*k), vec![action], "{k:?} is shared");

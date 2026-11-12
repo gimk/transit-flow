@@ -9,6 +9,7 @@ use crate::events::*;
 use crate::game::{self, Announce};
 use crate::input::{Action, ActionInput, GameInputPlugin};
 use crate::runner::{RunnerEvent, SimHandle};
+use crate::status::StatusLinePlugin;
 use crate::tools::ToolsPlugin;
 
 pub struct GamePlugin {
@@ -28,9 +29,15 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         // A new game starts on an empty map with its highway (`Game._ready`).
         app.insert_resource(SimHandle::new(game::empty_map(), self.threaded))
-            .add_plugins((EventsPlugin, GameInputPlugin, MapCameraPlugin, ToolsPlugin))
+            .add_plugins((
+                EventsPlugin,
+                GameInputPlugin,
+                MapCameraPlugin,
+                ToolsPlugin,
+                StatusLinePlugin,
+            ))
             .add_systems(PreUpdate, advance_sim)
-            .add_systems(Update, (sim_keys, log_hours));
+            .add_systems(Update, sim_keys);
     }
 }
 
@@ -140,15 +147,5 @@ fn sim_keys(
     }
     if actions.just_pressed(DebugStressTraffic) {
         game::cycle_stress_traffic(&mut handle, &mut announce);
-    }
-}
-
-/// Minimal sign of life until the views exist (M9): the time, once per game hour.
-fn log_hours(mut hours: MessageReader<HourChanged>, handle: Res<SimHandle>) {
-    for HourChanged(hour) in hours.read() {
-        info!(
-            "day {} {:02}:00, {} vehicles, flow {:.0}%",
-            handle.view_to.day, hour, handle.view_to.vehicle_count, handle.view_to.flow_percent
-        );
     }
 }

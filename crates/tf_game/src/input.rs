@@ -33,6 +33,8 @@ pub enum Action {
     ToolBus,
     ToolCancel,
     RoadCurveMode,
+    /// Godot folded the debug panel with F1. The Bevy build has no panel (M10.3), so
+    /// nothing is bound.
     ToggleDebugMenu,
     ToggleLateness,
     ToggleLaneOverlay,
@@ -130,7 +132,7 @@ impl Default for KeyBindings {
             (ToolBus, &[KeyU]),
             (ToolCancel, &[Escape]),
             (RoadCurveMode, &[KeyV]),
-            (ToggleDebugMenu, &[F1]),
+            (ToggleDebugMenu, &[]),
             (ToggleLateness, &[F2]),
             (ToggleLaneOverlay, &[F3]),
             (ToggleHeatmap, &[F4]),
@@ -140,8 +142,8 @@ impl Default for KeyBindings {
             (DebugLoadScenario, &[F7]),
             (DebugLoadTown, &[F8]),
             (ToggleFullscreen, &[F11]),
-            (DebugRushHour, &[F10]),
-            (DebugNewEmptyMap, &[F12]),
+            (DebugRushHour, &[F10, KeyP]),
+            (DebugNewEmptyMap, &[F12, KeyN]),
             (DebugLoadBusLanesScenario, &[Digit0]),
         ];
         Self {
