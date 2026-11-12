@@ -135,6 +135,33 @@ GDScript `float` is 64-bit, while `Vector2` and `Curve2D` distances are 32-bit. 
 - **Tests:** `tests/status_line.rs` (the line's content, the speed, Flow, the tool with its variant and hint, Esc clearing it, the midnight day change through `advance_to_hour`, a notification clearing) and `tests/debug_keys.rs` (every key above, plus the overlay messages, the stress steps, Bottleneck, Town, quicksave / quickload round trip, rush hour both keys, fullscreen with a stand-in `PrimaryWindow` entity, new empty map both keys). The app harness moved from `tests/tools.rs` to `tests/common/mod.rs` (`run_sim`, `press_collect`, `status`); the 23 tool tests are unchanged. `camera_input.rs` now expects `ToggleDebugMenu` to be the one action without a key. 344 tests in all.
 - **Checked:** `scripts/check.sh` exit 0; `timeout 20 cargo run -p tf_game --features dev` exits 124; the Town at 08:00 screenshot reads on one line with the notice.
 
+### R4 game parity
+
+- **Scripted playtest** (`migration/probes/playtest_trace.gd` + `.tscn` -> `migration/golden/playtest_trace.json`; Rust: `crates/tf_game/tests/playtest_parity.rs`). Godot runs `main.tscn` in a 3600x2200 `SubViewport` (big, so the HUD never covers the field) and plays the playtest through real events: mouse motion and buttons and `InputEventAction`s pushed into the viewport; the keys `Game` handles go to `Game._unhandled_input` (the SubViewport doesn't reach the autoload). It is a scene, not `--script`: autoloads aren't there when a `--script` file is compiled, and `main.tscn` needs them. Run: `Godot --headless res://migration/probes/playtest_trace.tscn`. The game is paused (Space) and the sim stepped by hand, so every run is the same. The trace stores, per step, the input (the pointer positions are the world positions the tools saw, so Rust replays the very same floats), the tick count, the active tool and variant, `Simulation.to_dict()` and metrics (vehicles, pedestrians, waiting departures, arrivals, failures, Flow x 1e6, trips, time); at the end every vehicle. The Rust test replays it through `GamePlugin` + `ViewsPlugin` (keys as messages, `Pointer::set_world`, mouse buttons) with the inline runner, steps the sim through `SimHandle::get_mut` (not `run_sim`, whose `replace` would send `SimulationReset` to the tools), and compares each step: saves within 1e-3, everything else exactly.
+- **Steps (28, all equal to Godot):** F7 Bottleneck; R, three bypass roads built with R cycling the type (local, avenue, avenue with bus lanes); a zero-length drag; V, a curved road (drag to the bend, click the end), V and Esc; R x3 more, a one-way road dragged west, another type dragged over it (conversion), Esc and right-click aborting drags; L x3 (lights, protected lefts, none on the Bottleneck junction; lights on the new bypass junction); H, C, I zone drags, X dezone (a lot goes); B on the curve, B on a zoned lot, B held and swept over three cells; U a 3-stop curbside line, U again a 3-stop bay line, right-click on a stop, right-click opening a line, a click off any road; F6; 1200 ticks; F10 rush hour; 0 Bottleneck with bus lanes; F12 new map; F8 Town (1200 ticks, with every vehicle at the end). It found no mismatch: no tool bug.
+- **Godot saves** of every step load in the Rust build and save back the same (`godot_saves_load_and_save_back_the_same`).
+- **Not in the trace:** F5/F9 (Godot would overwrite the real quicksave in the user's data folder; the Rust round trip is in `debug_keys.rs`, and the format equality is the test above), the route tool (it changes nothing in the sim), the overlays and F11.
+- **Key table (Godot -> Bevy):**
+
+| Godot | Bevy | |
+|---|---|---|
+| WASD / arrows pan; wheel zoom to the cursor; middle-drag, trackpad pan, pinch | same (physical keys) | same (M8.2 tests) |
+| Space pause, 1 / 2 / 3 = 1x / 2x / 4x | same; speeds `[0, 1, 2, 4]`; Space goes back to the last running speed | same. The top bar's speed buttons are UI: left behind |
+| R B T H C I X L U V Esc | same keys and behaviour (R again next road type, U again curbside / bay, V curved, Esc aborts then puts the tool away) | same (playtest) |
+| F1 fold the debug panel | unbound (no panel) | left behind |
+| F2 lateness, F3 lanes, F4 heatmap | same keys (`DebugOverlayToggleRequested`) | same |
+| F5 / F9 quicksave / quickload (JSON, sorted keys, tab indent) | same keys and format | same format (playtest test). Different folder: Godot `user://quicksave.json` (macOS `~/Library/Application Support/godot/app_userdata/Transit Flow/`), Bevy `~/Library/Application Support/transit-flow/quicksave.json` (copy a file to move it). The failure notice names the Rust error ("no save found") instead of Godot's `error_string` |
+| F6 stress traffic 0, 250, 500, 1000, 2000 | same constants and the same wrap | same (250 in the playtest) |
+| F7 Bottleneck, F8 Town (camera centred on the junction / the Town) | same, same notices | same (playtest) |
+| F11 exclusive fullscreen | same | same |
+| button only: New empty map (highway stub, camera on its entry) | F12 or N | new key, same function |
+| button only: Rush hour now | F10 or P | new key, same function (`depart_everyone_now(0)`) |
+| button only: Bottleneck + bus lanes | 0 | new key, same function |
+| button only: Day / night, Dot display | none | left behind (visuals) |
+| HUD top bar, palette, hint line, notification fade | one status line (M10.3) | left behind (UI); notices stay 2 s without the fade |
+
+- **Remaining differences, all deliberate and listed above:** tools go back to idle on a new sim (`SimulationReset`; Godot kept a stale stop id); the route tool clears itself when a lane of its route goes; the bulldoze tool looks the lot under the cursor up when the cursor changes cell or every 30 frames (the sweep itself is live); the road preview has no one-way arrows; the sim saves live in another folder. None changes what the same input does to the sim.
+
 ## Deviations
 
 None yet.
