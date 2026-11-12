@@ -9,6 +9,7 @@ use crate::events::*;
 use crate::game::{self, Announce};
 use crate::input::{Action, ActionInput, GameInputPlugin};
 use crate::runner::{RunnerEvent, SimHandle};
+use crate::tools::ToolsPlugin;
 
 pub struct GamePlugin {
     /// Step the sim on a worker thread (see `SimHandle::new`).
@@ -27,7 +28,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         // A new game starts on an empty map with its highway (`Game._ready`).
         app.insert_resource(SimHandle::new(game::empty_map(), self.threaded))
-            .add_plugins((EventsPlugin, GameInputPlugin, MapCameraPlugin))
+            .add_plugins((EventsPlugin, GameInputPlugin, MapCameraPlugin, ToolsPlugin))
             .add_systems(PreUpdate, advance_sim)
             .add_systems(Update, (sim_keys, log_hours));
     }

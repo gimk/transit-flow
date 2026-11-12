@@ -23,6 +23,7 @@ pub mod lots;
 pub mod moving;
 pub mod overlays;
 pub mod roads;
+pub mod tool_preview;
 pub mod transit;
 pub mod zones;
 
@@ -63,6 +64,8 @@ pub mod z {
     pub const LIGHTS: f32 = 50.0;
     /// Debug overlays: lane overlay, heatmap (M9.3).
     pub const OVERLAYS: f32 = 60.0;
+    /// The active tool's preview (M10).
+    pub const TOOL: f32 = 70.0;
 }
 
 /// The one material every shape uses: white, so the mesh's vertex colours show as they are
@@ -111,6 +114,7 @@ impl Plugin for ViewsPlugin {
             transit::TransitViewPlugin,
             lights::LightViewPlugin,
             overlays::OverlayViewPlugin,
+            tool_preview::ToolPreviewPlugin,
         ));
     }
 }

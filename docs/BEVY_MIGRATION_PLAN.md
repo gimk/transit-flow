@@ -1,6 +1,6 @@
 # Transit Flow: Migration from Godot to Bevy
 
-**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. M8.3 (headless screenshot mode) done. M9.1 (shape helpers and static map) and M9.2 (moving things) done. Next: **M9.3** (transit, lights, overlays).
+**Status:** M0–M4 done (M4.9 optional) and R2 passed; the traffic matches Godot tick for tick and runs 11–16× faster. M5 (walking) and M6 (transit: buses match Godot tick for tick) done. M7.1 (citizens: a traced day matches Godot event for event) and M7.2 (Flow, equal to Godot over that day) done. M7.3 (scenarios, saves, Town: the Rust sim is complete, and the Town's day matches Godot event for event) done. R3 passed and signed off by the user: every GDScript sim function is ported and the Town runs 14× faster. M8.1 (runner, snapshot, events) done. M8.2 (camera and input) done. M8.3 (headless screenshot mode) done. M9.1 (shape helpers and static map), M9.2 (moving things) and M9.3 (transit, lights, overlays) done. M10.1 (tool manager, road and bulldoze tools) done. Next: **M10.2** (zone, signal, bus line, route tools).
 
 This plan moves Transit Flow from Godot 4.7 / GDScript to **Rust + Bevy**. Opus, Sonnet and Haiku agents carry it out, one **work package (WP)** per session. It is written for them: every WP says which model runs it, what to read, what to write, and the exact checks that mark it done.
 
@@ -389,10 +389,11 @@ Not migrated (§1): `building_painter.gd`, `nature_renderer.gd`, `night_lights.g
 
 ### M10: Tools and basic commands · parallel-safe with M9 (different files)
 
-- [ ] **M10.1 ToolManager, BuildTool, RoadTool, BulldozeTool** · Sonnet · M8.2
+- [x] **M10.1 ToolManager, BuildTool, RoadTool, BulldozeTool** · Sonnet · M8.2
   - *Read:* `tools/tool_manager.gd`, `build_tool.gd`, `road_tool.gd` (straight + curved, V; road type cycling with R), `bulldoze_tool.gd`, `tests/integration/test_build_tools.gd`.
   - Tools edit the sim only through the `Simulation` command wrappers (§2.4), and their previews come from `plan_road` / `plan_path`. Previews are drawn with gizmos (green / red).
   - *Done when:* the road and bulldoze tests of `test_build_tools.gd` are ported as headless Bevy app tests that drive `Pointer` and the actions.
+  - *Done (2026-11-12):* `tools/` (`mod.rs` manager, trait and shapes; `road.rs`; `bulldoze.rs`) and `views/tool_preview.rs` (gizmos for thin lines, one mesh for the filled shapes, green/red). 14 headless app tests in `tests/tools.rs`, driving the `Pointer`, mouse-button and key messages. `ShowGrid` is on while a snapping tool is active. Decisions in NOTES ("Tools: manager, road and bulldoze (M10.1)").
 - [ ] **M10.2 Zone, signal, bus line, route tools** · Sonnet · M10.1 (`zone_tool.gd`, `signal_tool.gd`, `bus_line_tool.gd`, `route_tool.gd`; the rest of `test_build_tools.gd`, except the palette, top bar, hint-position and debug-menu tests, which go away with the UI)
 - [ ] **M10.3 Status line and debug keys** · Haiku · M10.1
   - The one text line of §2.3, fed by `ViewSnapshot` and the tool events. Every function the debug menu had (`ui/debug_menu.gd`) gets a key: keep the existing F-keys, and give the button-only ones free keys. List them all in `CLAUDE.md`'s migration section.

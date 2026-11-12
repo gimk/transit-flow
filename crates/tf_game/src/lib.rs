@@ -14,4 +14,5 @@ pub mod input;
 pub mod plugin;
 pub mod runner;
 pub mod snapshot;
+pub mod tools;
 pub mod views;
