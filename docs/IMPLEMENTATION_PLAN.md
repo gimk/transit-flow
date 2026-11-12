@@ -3,17 +3,19 @@
 Companion to [game_design_architecture_concept.md](../game_design_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Rust + Bevy 0.20 (ported from Godot 4.7 / GDScript at the end of 2026-11; the phase history below was written for Godot and is kept as it was; the last Godot commit is the git tag `godot-final`, and `docs/BEVY_MIGRATION_PLAN.md` and `docs/migration/NOTES.md` record the port). Everything below up to the Polish track is built and runs in the Bevy build. **Status (Godot era; the port is done and feature-equivalent, bar the art and UI left behind):** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Polish track (graphics and gameplay, a checklist before Phase 10+): buildings, vehicles, people, roads, ground, grid and day / night done. Now: Phase D (dot display, the new art direction): D1 (layer pipeline) and D2 (information layer) done; D-LOD designed, its band switch and alerts done; next D3 (vehicles and lights per band).
+**Engine:** Rust + Bevy 0.20 (ported from Godot 4.7 / GDScript at the end of 2026-11; the phase history below was written for Godot and is kept as it was; the last Godot commit is the git tag `godot-final`, and `docs/BEVY_MIGRATION_PLAN.md` and `docs/migration/NOTES.md` record the port). Everything below up to the Polish track is built and runs in the Bevy build.
+
+**Status (2026-11-12):** the port to Rust + Bevy is done and plays like the Godot build (same simulation tick for tick, every tool and key), drawn with flat shapes and one status line. Built: Phases 0–9 (roads, routing, junctions and lights, the living city, multi-lane and one-way roads, driveways, pedestrians, buses with bays and bus lanes, mode choice, curved roads) and the Town and Bottleneck scenarios. Left behind in the port, to redo in Bevy: the Polish track's art and UI items and Phase D (dot display). **Next: to be chosen by the user**, between redoing the art direction in Bevy and Phase 10+.
 
 ---
 
 ## 1. Guiding Principles
 
-1. **Simulation is separate from presentation.** All traffic, road and zone logic lives in plain `RefCounted` classes with no `Node` dependencies. Scenes only *observe* the sim and draw it. This gives us headless unit tests, deterministic replays, and a clean path to move hot code to C#/GDExtension later.
-2. **Fixed-tick simulation.** The sim advances in fixed steps (start at 20 Hz) driven by an accumulator in the `Game` autoload's `_process`; sim code never sees frame `delta`. Rendering interpolates between ticks. Speed controls (pause / 1× / 2× / 4×) just change how many ticks run per frame.
+1. **Simulation is separate from presentation.** All traffic, road and zone logic lives in the `tf_sim` crate: plain Rust, no Bevy, no rendering. The Bevy app (`tf_game`) only *observes* the sim (through snapshots and events) and draws it. This gives headless tests and deterministic replays, and lets the sim run on its own thread.
+2. **Fixed-tick simulation.** The sim advances in fixed steps of 20 Hz (`Simulation::step`), driven by the runner in `tf_game`, a couple of ticks ahead of the screen on a worker thread; sim code never sees frame `delta`. Rendering interpolates between ticks. Speed controls (pause / 1× / 2× / 4×) just change how many ticks run per frame.
 3. **"Everything is a lane."** The concept's "a grid road is a 2-point curve" idea, pushed one step further: *both* road lanes *and* the turning paths inside intersections are `Lane` objects holding a `Curve2D`. A vehicle's route is just a list of lanes. Curves, ramps, roundabouts and bus lanes all reuse the same movement code.
 4. **Debug views from day one.** Lane IDs, route lines, per-lane occupancy, and trip times are visible via toggleable overlays. A traffic game is impossible to tune blind.
-5. **Data is serializable from day one.** The road network and zones serialize to a `Dictionary` → JSON. Saving/loading test layouts is also how we build repeatable test scenarios.
+5. **Data is serializable from day one.** The road network, zones, lots and transit serialize to JSON (`Simulation::to_dict` / `from_dict`). Saving/loading test layouts is also how we build repeatable test scenarios.
 
 ---
 
