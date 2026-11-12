@@ -407,8 +407,9 @@ Not migrated (§1): `building_painter.gd`, `nature_renderer.gd`, `night_lights.g
 
 ### M12: Cutover (only after the user has played the Rust build and agreed)
 
-- [ ] **M12.1 Remove Godot** · Sonnet · R4 + user sign-off
+- [x] **M12.1 Remove Godot** · Sonnet · R4 + user sign-off
   - Tag the last Godot commit `godot-final`. Delete the Godot project (`*.gd`, `*.tscn`, `*.gdshader`, `*.uid`, `project.godot`, `addons/`, `data/*.tres`, `icon.svg` if unused, `.godot` ignore rules), plus `migration/export_golden.gd` and `run_baseline.gd`. Keep `migration/golden/*.json` as regression data used by the tests.
+  - *Done (2026-11-12):* tagged `godot-final` (the last commit with the Godot project); removed every `*.gd`, `*.tscn`, `*.gdshader`, `*.uid`, `*.import`, `*.tres`, `project.godot`, `addons/` (GUT), `.gutconfig.json`, `icon.svg`, the Godot folders, the `.godot` ignore rules, both `.gdignore` files, and the scripts in `migration/` (`export_golden.gd`, `run_baseline.gd`, `probes/`). Kept `migration/golden/*.json` and `migration/baseline.md`; `migration/README.md` says which Godot script produced which file (they live only in `godot-final`). 346 tests before and after; `scripts/check.sh` passes and `cargo play` starts.
 - [ ] **M12.2 Rewrite the docs** · Sonnet · M12.1
   - `CLAUDE.md`: commands (`cargo`, screenshot mode, benchmark), the architecture rules translated (§2.2–§2.4 replace the Godot-specific ones: `dispose()`, signal lambdas, `TileMapLayer`, GUT gotchas, `.uid` files), layout, code style (rustfmt, clippy, doc comments). `IMPLEMENTATION_PLAN.md`: engine line, §2.1 layers, §5 risks (performance resolved, with M4.8's numbers), "Defaults"; the polish track's art items and Phase D marked "left behind in the migration, to redo in Bevy". Update the design doc's architecture sections. Then mark this plan **Done**.
 
