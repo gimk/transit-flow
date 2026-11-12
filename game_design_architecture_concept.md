@@ -51,51 +51,50 @@ To recreate that satisfying *Cities: Skylines* flow, the game runs on a visual D
 
 ---
 
-## 5. Technical Architecture in Godot 4.x (2D Stylized)
+## 5. Technical Architecture in Rust + Bevy (2D Stylized)
 
-Choosing **2D Top-Down** with a **Grid-now, Curves-later** approach is the smartest possible decision. However, to make sure you don't have to rewrite your entire game when you switch from a Grid to Bezier Curves later, we must design the underlying data structure so that **a straight grid road is treated as just a 2-point curve**.
+(The first version of this document planned the game in Godot 4; it was built that way and then ported to Rust + Bevy. The ideas below are unchanged; the engine words are not.) **Layout:** a Cargo workspace with `tf_sim` (the simulation, pure Rust, no engine) and `tf_game` (the Bevy app: threaded sim runner, views, tools, input). See `CLAUDE.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
-### 1. The Secret to "Grid Now, Curves Later": `Curve2D` Everywhere
-Do **not** use Godot's `TileMapLayer` for your vehicle movement logic! If you program cars to move from tile $(X_1, Y_1)$ to $(X_2, Y_2)$, adding curved roads later will require throwing away 100% of your code.
-Instead, build a **Graph-Based Road System** from Day 1:
-*   **Snap to Grid (UI Only):** When the player clicks to build a road in Phase 1, snap their mouse cursor to a 2D grid (e.g., $64\times64$ pixel increments) so building is clean and easy, and zones fit nicely inside grid blocks.
-*   **Under the Hood (`Curve2D`):** Even if the player draws a straight horizontal road on the grid, store that road lane in memory as a `Curve2D` with a Start Point and an End Point.
-*   **Why this is magical:** 
-	*   `Curve2D.get_baked_length()` gives you the exact length of the lane (whether it's a straight grid line now, or a sweeping S-curve highway ramp later).
-	*   `Curve2D.sample_baked_with_rotation(distance_in_pixels)` gives you the exact `Transform2D` (X/Y position and rotation angle) of a car at any distance along that lane!
-	*   **Rendering:** You can pass `Curve2D.get_baked_points()` directly into a `Line2D` node with a repeating road texture. In 10 lines of code, you get crisp 2D roads that automatically support curves whenever you are ready to unlock the mouse from the grid!
+Choosing **2D Top-Down** with a **Grid-now, Curves-later** approach is the smartest possible decision. To avoid rewriting the game when switching from a grid to curves, the underlying data structure treats **a straight grid road as just a 2-point curve**.
+
+### 1. The Secret to "Grid Now, Curves Later": a Polyline Curve Everywhere
+Do **not** use a tilemap for vehicle movement! If cars move from tile $(X_1, Y_1)$ to $(X_2, Y_2)$, adding curved roads later means throwing away 100% of the code. Instead, build a **Graph-Based Road System** from Day 1:
+*   **Snap to Grid (UI Only):** When the player builds a road, the cursor snaps to a 2D grid (64×64 pixel increments) so building is clean and zones fit inside grid blocks. The sim itself works in world pixels.
+*   **Under the Hood (`Curve2D`):** Every lane is stored as a curve (a baked polyline, `geom::Curve2D` / `Polyline` in `tf_sim`) with a start and an end point, even a straight road.
+*   **Why this is magical:**
+	*   The baked length gives the exact length of the lane, straight or a sweeping S-curve ramp.
+	*   Sampling at a distance along the lane gives the exact position and rotation of a car there.
+	*   **Rendering:** the baked points go straight into a mesh of the road, so curves work as soon as the player is let off the grid.
 
 ### 2. Handling Bridges, Tunnels, and Overpasses in 2D
-Since you want highway interchanges and subways in a 2D game, how do two roads cross without creating an intersection?
-*   Every **Intersection Node** and **Road Segment** has an integer property: `elevation_layer` (`-1` = Subway/Tunnel, `0` = Ground, `1` = Elevated Bridge, `2` = High Overpass).
+Every **Intersection Node** and **Road Segment** has an integer property: `elevation_layer` (`-1` = Subway/Tunnel, `0` = Ground, `1` = Elevated Bridge, `2` = High Overpass).
 *   Two roads only create an intersection if they cross on the **same `elevation_layer`**.
-*   Visually in 2D, you just set the `z_index` of the `Line2D` and cars to match their `elevation_layer`, add a subtle drop-shadow shader to Layer `1`, and render Layer `-1` as a semi-transparent dashed line when the player opens the "Underground View"!
+*   Visually in 2D, the layer sets the draw depth of the road and the cars on it, with a subtle shadow on layer `1`, and layer `-1` shown dashed and translucent in an "Underground View". (The data exists; the drawing is still to do.)
 
-### 3. Pathfinding & Dynamic Traffic Avoidance (`AStar2D`)
-*   Every **Lane Entry/Exit** at an intersection is a point in `AStar2D`.
-*   Every **Lane** (`Curve2D`) connecting two intersections is a directional segment in `AStar2D`.
-*   **Speed & Congestion Weighting:** Curved highway ramps will naturally be shorter or have higher speed limits ($V_{\text{max}}$) than sharp $90^\circ$ grid turns. You can calculate the `AStar2D` weight of a road segment dynamically every few seconds:
+### 3. Pathfinding & Dynamic Traffic Avoidance (A*)
+*   Every **lane entry/exit** at an intersection is a node of the lane graph, and every **lane** connecting two of them is a directional edge (`LaneGraph`, with our own A* in `routing/astar.rs`).
+*   **Speed & Congestion Weighting:** a lane's weight is recomputed every few seconds from the congestion measured on it:
 	$$\text{Segment Weight} = \frac{\text{Curve Length}}{\text{Speed Limit}} \times \left(1 + \text{Congestion Penalty}\right)$$
-	When a grid road gets jammed, its weight spikes, and new cars will automatically route onto your bypass highways or take the bus!
+ight)$$
+	When a grid road gets jammed, its weight spikes, and new cars route onto bypasses or take the bus.
 
-### 4. Rendering Thousands of 2D Vehicles (`MultiMeshInstance2D`)
-*   Store all vehicles in a pure GDScript/C# array of lightweight data objects.
-*   Each frame, a car simply increases its `distance_along_curve += current_speed * delta`.
-*   To prevent cars from driving through each other, a car just checks the `distance_along_curve` of the car directly ahead of it in the same lane array. If $\Delta d < \text{safe\_following\_distance}$, it slows down or stops. Zero 2D physics or `Area2D` collision nodes needed!
-*   Draw all cars in a single batch using `MultiMeshInstance2D` (using `set_instance_transform_2d` and `set_instance_color`).
+### 4. Simulating and Rendering Thousands of 2D Vehicles
+*   Vehicles are lightweight data records in the sim (`VehicleSystem`, no ECS, no physics engine): each tick a car advances `distance_along_lane += speed * dt`, and checks the car ahead in the same lane's queue (`Lane.queue`) to keep a safe following distance. Zero collision shapes.
+*   The sim runs at a fixed 20 Hz on a **worker thread**, a couple of ticks ahead of the screen. After each tick it captures a `ViewSnapshot`; the render loop interpolates between two snapshots, so frames stay smooth and the sim can't stall them.
+*   All cars are drawn as one batched mesh, rewritten in place each frame. At 2 000 vehicles a tick costs about 1.7 ms.
 
 ---
 
 ## 6. Recommended Step-by-Step Prototype Roadmap (MVP)
 
 1.  **Phase 1: Snapped-Grid `Curve2D` Roads & A Single Car:** 
-	*   Create a 2D scene where clicking two grid points spawns a `Line2D` backed by a `Curve2D` (one lane going forward, one lane going back).
-	*   Place a Green square (Residential) and a Yellow square (Industrial). Spawn a car sprite that queries `AStar2D`, moves along the `Curve2D` lanes using `sample_baked_with_rotation()`, waits at work, and drives home.
+	*   Create a 2D scene where clicking two grid points builds a road backed by lane curves (one lane going forward, one lane going back).
+	*   Place a Green square (Residential) and a Yellow square (Industrial). Spawn a car sprite that queries the router, moves along the lane curves, waits at work, and drives home.
 2.  **Phase 2: Intersections & Queuing:** 
-	*   When two roads cross on the grid, split their `Curve2D` segments and insert an Intersection Node.
+	*   When two roads cross on the grid, split their road segments and insert an Intersection Node.
 	*   Make cars stop behind the car in front of them, and add a basic 4-way traffic light timer. Watch your first traffic jam form!
 3.  **Phase 3: The 3-Zone Loop + External Connection:** 
 	*   Add Commercial zones (Blue) and a Map Edge Highway connection. Implement the morning/midday/evening schedule for Citizens vs. Cargo Trucks.
 4.  **Phase 4: Unlocking Curves & Bus Lines:** 
-	*   Add a toggle to let the player bend the `Curve2D` control points when drawing a road (instant curved roads!).
+	*   Add a toggle to let the player bend the road's control points when drawing a road (instant curved roads!).
 	*   Allow the player to click stops on existing roads to create a Bus Route.

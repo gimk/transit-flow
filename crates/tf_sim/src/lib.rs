@@ -1,12 +1,10 @@
-//! Transit Flow simulation: the port of the Godot project's `sim/` folder.
+//! Transit Flow simulation: the port of the Godot project's `sim/` folder (last seen in the git tag `godot-final`).
 //!
 //! Pure data and logic, stepped at a fixed tick, with no engine dependency, so it runs
 //! headless in tests and benchmarks. The game (`tf_game`) only reads it through view
 //! snapshots and changes it through command methods. Porting rules and the
 //! architecture are in `docs/BEVY_MIGRATION_PLAN.md`; how to port a class is in
 //! `docs/migration/PORTING_GUIDE.md`.
-//!
-//! Most systems are stubs until their work package ports them (see the plan's §6).
 
 pub mod city;
 pub mod clock;

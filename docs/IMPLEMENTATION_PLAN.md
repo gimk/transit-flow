@@ -1,9 +1,9 @@
 # Transit Flow — Implementation Plan
 
-Companion to [game_design_godot_architecture_concept.md](../game_design_godot_architecture_concept.md).
+Companion to [game_design_architecture_concept.md](../game_design_architecture_concept.md).
 That document says *what* the game is. This one says *how we build it, in what order, and how we know each step is done*.
 
-**Engine:** Godot 4.7 (Forward+), GDScript. **Status:** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Polish track (graphics and gameplay, a checklist before Phase 10+): buildings, vehicles, people, roads, ground, grid and day / night done. Now: Phase D (dot display, the new art direction): D1 (layer pipeline) and D2 (information layer) done; D-LOD designed, its band switch and alerts done; next D3 (vehicles and lights per band).
+**Engine:** Rust + Bevy 0.20 (ported from Godot 4.7 / GDScript at the end of 2026-11; the phase history below was written for Godot and is kept as it was; the last Godot commit is the git tag `godot-final`, and `docs/BEVY_MIGRATION_PLAN.md` and `docs/migration/NOTES.md` record the port). Everything below up to the Polish track is built and runs in the Bevy build. **Status (Godot era; the port is done and feature-equivalent, bar the art and UI left behind):** Phase 3 done (3a–3c), plus the Town scenario, two-sided lot access and junction realism round 1. Phase 4 (tool palette) done. Phases 5, 6a (driveways) and 7 (pedestrians, crosswalks, walking trips) done. Phase 8 (8a trips as legs, car availability, parking, walk-or-drive choice; 8b buses and the bus in mode choice; 8c bus bays and bus lanes) and UI pass 1 done. Phase 9 (curved roads) done. Polish track (graphics and gameplay, a checklist before Phase 10+): buildings, vehicles, people, roads, ground, grid and day / night done. Now: Phase D (dot display, the new art direction): D1 (layer pipeline) and D2 (information layer) done; D-LOD designed, its band switch and alerts done; next D3 (vehicles and lights per band).
 
 ---
 
@@ -23,22 +23,25 @@ That document says *what* the game is. This one says *how we build it, in what o
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ UI (HUD, toolbar, demand bar, flow %, clock, speed controls) │
+│ UI (status line: time, speed, Flow %, vehicles, tool, hint)  │  ← bevy_ui text; the HUD panels were left behind
 ├──────────────────────────────────────────────────────────────┤
-│ Tools  (RoadTool, ZoneTool, BulldozeTool, SignalTool …)      │  ← mouse input, grid snapping, previews
+│ Tools  (ToolManager: Road, Bulldoze, Zone x4, Signal, Bus    │  ← read Pointer + ActionInput, grid snapping,
+│         line, Route)                                         │    previews; tf_game
 ├──────────────────────────────────────────────────────────────┤
-│ View   (RoadRenderer, VehicleRenderer[MultiMesh], ZoneLayer, │  ← reads sim state, never writes it
-│         Overlays)                                            │
+│ Views  (roads, lots, zones, moving things, transit, lights,  │  ← flat shapes; read ViewSnapshot, RoadsView and
+│         overlays: Bevy systems)                              │    messages, never the sim; tf_game
 ├──────────────────────────────────────────────────────────────┤
-│ Sim    RoadNetwork → LaneGraph → Router                      │  ← pure data + logic, unit-testable
-│        VehicleSystem, IntersectionControllers                │
-│        ZoneSystem, DemandSystem, TripScheduler, FlowMetric   │
+│ Runner (threaded sim, SimHandle, snapshots, messages)        │  ← tf_game
 ├──────────────────────────────────────────────────────────────┤
-│ Core   Game (autoload: runs sim ticks), Events bus (autoload)│
+│ Sim    RoadNetwork → LaneGraph → Router                      │  ← tf_sim: pure Rust, no Bevy, unit-testable
+│        VehicleSystem, TrafficLights, PedestrianSystem,       │
+│        TransitSystem, ZoneSystem, CitizenSystem, FlowMetric  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Tools mutate the sim only through `RoadNetwork` / `ZoneSystem` commands (`add_road`, `remove_segment`, `paint_zone` …). This is also the natural hook for undo/redo later.
+Two crates: `tf_sim` (the simulation, plain structs, stepped by `Simulation::step()` at 20 Hz) and `tf_game` (the Bevy app). Sim events go through an `Outbox` and are dispatched by `Simulation::call` in a fixed listener order; the views get them as Bevy messages. See `CLAUDE.md` for the rules.
+
+Tools mutate the sim only through `RoadNetwork` / `ZoneSystem` commands (`add_road`, `remove_segment`, `paint` ...). This is also the natural hook for undo/redo later.
 
 ### 2.2 Road data model
 
@@ -98,22 +101,17 @@ Tools mutate the sim only through `RoadNetwork` / `ZoneSystem` commands (`add_ro
 
 ## 3. Project Layout
 
+The Rust workspace (the Godot layout of the early phases is in the `godot-final` tag):
+
 ```
-res://
-  core/            game.gd, events.gd (autoloads), grid.gd
-  sim/
-    roads/         road_network.gd, road_node.gd, road_segment.gd, lane.gd, road_type.gd, lane_builder.gd
-    routing/       lane_graph.gd (AStar2D subclass), router.gd (route cache)
-    traffic/       vehicle_system.gd, intersection_controllers/*.gd
-    city/          zone_system.gd, demand_system.gd, trip_scheduler.gd, flow_metric.gd
-    sim_clock.gd   (in-game time of day, advanced by ticks)
-    simulation.gd  (owns all systems, step(), save/load)
-  view/            road_renderer.gd, vehicle_renderer.gd, zone_layer.gd, overlays/*.gd
-  tools/           tool_manager.gd, road_tool.gd, zone_tool.gd, bulldoze_tool.gd
-  ui/              hud.tscn, toolbar.tscn, …
-  data/road_types/ local_2lane.tres, avenue_4lane.tres, …
-  scenes/          main.tscn, sandbox/*.tscn
-  tests/           unit tests (GUT) + saved scenario JSONs
+Cargo.toml, rust-toolchain.toml, .cargo/config.toml (cargo play), scripts/check.sh
+crates/tf_sim/     the simulation library: clock, simulation, events, rng, geom/, roads/, routing/,
+                   city/, traffic/, walking/, transit/, debug/ (scenarios, checks), save, bin/ (benchmarks)
+  data/road_types/ one .ron file per road type
+  tests/           integration, golden and trace tests
+crates/tf_game/    the Bevy app: runner, snapshot, input, camera, draw, tools/, views/, status line, capture, bench
+migration/         golden/*.json and baseline.md (Godot reference data), README.md
+docs/              this plan, the migration plan and its notes
 ```
 
 ---
@@ -404,6 +402,8 @@ Today a trip starts and ends instantly on the lane in front of the lot. Real dep
 - Found along the way: at a permissive light on a busy avenue, a left-turning truck could wait 32 s for a gap. Turners who have waited 5 s may now go up to 2 s after their light turns red, if the junction is clear (a 2 s amber for everyone did it too, but cost every light capacity). Dashed lines now stay dashed round curves.
 
 ### Polish track — graphics and gameplay (from 2026-10-22, before new systems)
+**Left behind in the migration (2026-11-11), to redo in Bevy:** the art items below (buildings, vehicles, people, roads, ground, day / night, effects) and the UI items (palette, HUD, debug panel) were Godot shaders and scenes and were not ported; the Bevy build draws flat shapes and one status line. The gameplay items are all in the Rust build.
+
 The simulation is ahead of how the game looks and plays: everything is drawn with flat rectangles, lines and dots, and the only way to understand what happens is the debug panel. This track makes the existing systems readable and pleasant to play, without adding new ones. Order within each group is a suggested priority.
 
 **World visuals**
@@ -467,6 +467,8 @@ The simulation is ahead of how the game looks and plays: everything is drawn wit
 - [ ] Performance budget for large player cities (thousands of vehicles plus pedestrians) with the new visuals.
 
 ### Phase D — Dot display: a minimalist, cassette-futurist look (from 2026-10-26)
+**Left behind in the migration (2026-11-11), to redo in Bevy:** the whole dot display (layers, composite shader, levels of detail, alerts) was Godot-specific and is not ported; the text below is the design to redo it from. It is in the `godot-final` tag.
+
 The game is redrawn as an amber LED dot matrix, in the spirit of Mini Metro: only what matters (roads, what moves, lights, the transit network, problems) shows, the rest steps back. Chosen from mockups (phosphor glyphs, amber dot matrix, ANSI colour): the amber dot matrix, at 3-4 screen px per dot. A first try as one shader over the existing graphics showed its limits: it only sees colours, so a bus lane, a red car and a brake light can't be told apart, and the assets (textures, roof details, grass grain) turn into noise. So the look is rebuilt as a pipeline, and the assets are redrawn for it.
 
 **Design**
@@ -526,15 +528,15 @@ The game is redrawn as an amber LED dot matrix, in the spirit of Mini Metro: onl
 | Risk | Mitigation |
 |---|---|
 | **Intersection deadlocks / gridlock** that the player can't fix | Don't-block-the-box from Phase 2b; deadlock detector in debug (vehicle stopped > N s with stopped vehicle ahead in a cycle); patience despawn as the last-resort release valve. |
-| **GDScript performance** at thousands of vehicles | Done (2026-10-20): option (b), the sim steps on a worker thread a couple of ticks ahead of the screen, which draws interpolated `ViewSnapshot`s: frames stay at 16.7 ms even at 2000 vehicles (before: one frame in three over 20 ms at 1000, 230 ms frames at 2000 / 4×), and when the sim can't keep up it runs slower (HUD shows the real speed) instead of stalling frames. Vsync is now "enabled" (it was "adaptive", which tears when frames run late). Ticks run ~40% slower on the worker than headless on this laptop CPU (likely power sharing with the render thread). Measured in Phase 2b: ~7 µs/vehicle/tick, so 2k cars don't hold 60 FPS. Options, cheapest first: (a) lower the tick rate to 10 Hz (halves cost; rendering already interpolates); (b) run the sim tick on a worker thread with a snapshot for rendering (removes frame hitches, not total cost); (c) port `VehicleSystem` to **C#** (needs the Godot .NET build + .NET SDK; typically 5–20× faster for this kind of loop); (d) port it to a C++ **GDExtension** (fastest, heaviest toolchain). The `VehicleSystem` API boundary stays the same in all cases. |
+| **Performance** at thousands of vehicles | **Resolved by the port to Rust + Bevy (M4.8, R3).** In GDScript (~7 µs per vehicle per tick) 2 000 vehicles did not fit a frame, even with the sim on a worker thread (Phase 2b decision, 2026-10-20). The Rust sim costs 1.65 ms per tick at 2 000 vehicles against 26.5 ms in GDScript, the Town runs 14x faster, and the threaded runner holds 60 FPS with the Town plus 2 000 stress vehicles (main-thread update about 1.5 ms). Further optimisation (M4.9: dense vectors next to the `IndexMap`s) is optional and not needed yet. |
 | **Network edits while vehicles are driving** | All edits go through `RoadNetwork` commands that emit dirty sets; affected vehicles reroute or despawn; edit is applied between ticks only. |
 | **Curves arriving late breaks assumptions** | Lanes are polyline `Curve2D` from day 1; Phase 1 tests include a hand-made curved segment even before the curve tool exists. |
-| **Agent count grows with pedestrians and buses** (Phases 7–8) | Performance gate at the start of Phase 7: measure, then decide between a separate cheap pedestrian system and porting the hot loops (C#/GDExtension, see above). Pedestrians are lightweight agents; they only interact with cars at crosswalks. |
+| **Agent count grows with pedestrians and buses** (Phases 7–8) | Performance gate at the start of Phase 7: measure, then decide between a separate cheap pedestrian system and optimising the hot loops (settled by the Rust port, see above). Pedestrians are lightweight agents; they only interact with cars at crosswalks. |
 | **Fun is unproven** | Explicit playtest checkpoint at end of Phase 2c, before investing in zones/economy. |
 
 ### Defaults I've assumed (change any of these early if you disagree)
-- **GDScript** for everything, with a possible C# port of the sim core gated on the Phase 2b benchmark.
+- **Rust** for everything: `tf_sim` (no engine) and `tf_game` (Bevy). (It was GDScript until the port, 2026-11.)
 - **Right-hand traffic.**
 - **64 px grid**, 2-lane local road as the only road type until Phase 5.
-- **GUT** as the unit-test framework.
+- **`cargo test`** for tests (unit tests next to the code, integration tests in `crates/*/tests`); `scripts/check.sh` is the gate.
 - **Trip-based citizens** (lightweight records) rather than fully simulated people.
