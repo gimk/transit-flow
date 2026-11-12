@@ -1,0 +1,5 @@
+# `cargo play` runs the game (the Bevy app in crates/tf_game), with Bevy linked
+# dynamically for faster rebuilds. Arguments after `--` go to the game, e.g.
+# `cargo play -- --scenario town --frames 60 --screenshot out.png`.
+[alias]
+play = "run -p tf_game --features dev"
