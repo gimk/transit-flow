@@ -23,7 +23,11 @@ use crate::runner::SimHandle;
 use crate::views::grid::ShowGrid;
 
 pub mod bulldoze;
+pub mod bus_line;
 pub mod road;
+pub mod route;
+pub mod signal;
+pub mod zone;
 
 /// Something a tool draws in the world, in sim coordinates (y down).
 #[derive(Clone, Debug, PartialEq)]
@@ -169,6 +173,13 @@ impl Default for ToolManager {
     fn default() -> Self {
         Self {
             tools: vec![
+                Box::new(zone::ZoneTool::residential()),
+                Box::new(zone::ZoneTool::commercial()),
+                Box::new(zone::ZoneTool::industrial()),
+                Box::new(zone::ZoneTool::dezone()),
+                Box::new(signal::SignalTool::default()),
+                Box::new(bus_line::BusLineTool::default()),
+                Box::new(route::RouteTool::default()),
                 Box::new(road::RoadTool::default()),
                 Box::new(bulldoze::BulldozeTool::default()),
             ],
