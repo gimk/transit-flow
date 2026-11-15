@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). **Next: Phase 1** (space model and first level).
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). **Next: Phase 2** (agent core: cars).
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -290,6 +290,15 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Views: draw a level from its data. Camera framed on the level. `--level <id>` in screenshot mode.
 
 **Done when:** a screenshot shows the test level from its file; a strip change through a command rebuilds lanes and movements; a round trip of level + design is identical; the old game still runs.
+
+**Done (2026-11-16).** Code: `tf_sim::street` (`space`, `level`, `design`, `lanes`, `model`), `geom::polygon`, `data/levels/carrefour_ecole.ron`; `tf_game::level` and `views::street`; `--level <id>` in screenshot mode. Tests: `tf_sim/tests/street_space.rs`, `tf_game/tests/street_view.rs`. Choices made where this plan was open or did not fit the freeze:
+
+- The old `roads/lane.rs` and `lane_builder.rs` (ADAPT) are not edited while the old game is frozen. The street model has its own `StreetLane` (with width, access mask and lateral position) and calls the `lane_builder` helpers as they are. The adaptation in place waits for Phase 5.
+- Movements are always generated from rules, also for the level's defaults: the level gives only default **turn bans** (and signs, control). Rules per lane group (bicycle, bus, general): straight keeps its position, right from the rightmost lane, left from the leftmost; a group with no lane on the next arm falls back (bicycle to general or bus lane, bus to general, general to a bicycle lane for its cyclists only). The access of a movement is what both lanes allow, minus the bans. No U-turns.
+- Lanes stop where the centerline leaves the junction polygon. The walkable corners between sidewalks are authored as plazas in the level file (no automatic corner geometry yet).
+- The `Street` is not in `Simulation` yet (no tick, no `Outbox`): `Street::apply` returns a `StreetChange` and bumps `version`. Phase 2 builds the run sim around it.
+- Views draw the level at `PX_PER_M` = 8 world pixels per metre, so the camera's zoom steps stay as they are. The screenshot of a level still shows the old status line (on an empty old map).
+- The level format has gates and demand per slice, but no archetype mix yet (Phase 2 / 8); gates are not drawn.
 
 ### Phase 2 — Agent core: cars (L)
 - Bodies, the perceive / decide / act loop, per-agent random streams, the spatial grid.
