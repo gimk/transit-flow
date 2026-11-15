@@ -8,6 +8,7 @@ use crate::camera::MapCameraPlugin;
 use crate::events::*;
 use crate::game::{self, Announce};
 use crate::input::{Action, ActionInput, GameInputPlugin};
+use crate::level::LevelPlugin;
 use crate::runner::{RunnerEvent, SimHandle};
 use crate::status::StatusLinePlugin;
 use crate::tools::ToolsPlugin;
@@ -35,6 +36,7 @@ impl Plugin for GamePlugin {
                 MapCameraPlugin,
                 ToolsPlugin,
                 StatusLinePlugin,
+                LevelPlugin,
             ))
             .add_systems(PreUpdate, advance_sim)
             .add_systems(Update, sim_keys);

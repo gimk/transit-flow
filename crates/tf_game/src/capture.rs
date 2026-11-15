@@ -6,6 +6,9 @@
 //!
 //! `--overlay heatmap|lanes` sends `DebugOverlayToggleRequested` (once, on frame 1); the
 //! overlays arrive in M9 and only have to listen for it.
+//!
+//! `--level <id>` in place of `--scenario` shows a level of the street game (pivot plan
+//! Phase 1) on an empty old map, framed by `level::LevelPlugin`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,6 +22,7 @@ use tf_sim::clock::SimClock;
 use crate::camera::{ZOOM_LEVELS, nearest_level};
 use crate::events::DebugOverlayToggleRequested;
 use crate::game::{self, Announce};
+use crate::level::LoadedLevel;
 use crate::runner::SimHandle;
 
 /// Window size in this mode (logical px, scale factor forced to 1) so PNGs compare.
@@ -27,9 +31,10 @@ pub const WINDOW_SIZE: (u32, u32) = (1280, 720);
 pub const CAPTURE_TIMEOUT_FRAMES: u32 = 600;
 pub const FRAME_DT: Duration = Duration::from_micros(16_667);
 
-pub const USAGE: &str = "usage: transit-flow [--scenario <empty|bottleneck|bottleneck-bus|town> --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>]]
+pub const USAGE: &str = "usage: transit-flow [(--scenario <empty|bottleneck|bottleneck-bus|town> | --level <id>) --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>]]
   no arguments: run the game
   --scenario    map to load (empty = the start map)
+  --level       street game level to show instead (carrefour-ecole); not with --hour
   --frames      frames to run before the screenshot (>= 1, at a fixed 1/60 s each)
   --screenshot  PNG file to write; the program then exits
   --hour        advance the sim to this hour of the day (0-24) before the first frame
@@ -44,9 +49,17 @@ pub enum Scenario {
     Town,
 }
 
+/// What the screenshot shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    Scenario(Scenario),
+    /// A level of the street game, by id.
+    Level(String),
+}
+
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct CaptureOptions {
-    pub scenario: Scenario,
+    pub target: Target,
     pub frames: u32,
     pub screenshot: PathBuf,
     pub hour: Option<f64>,
@@ -65,7 +78,7 @@ pub enum Cli {
 /// Parses the arguments after the program name.
 pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
     let mut args = args.into_iter();
-    let (mut scenario, mut frames, mut screenshot) = (None, None, None);
+    let (mut scenario, mut level, mut frames, mut screenshot) = (None, None, None, None);
     let (mut hour, mut zoom, mut overlay) = (None, None, None);
     let mut any = false;
     while let Some(flag) = args.next() {
@@ -80,6 +93,13 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
                     "town" => Scenario::Town,
                     other => return Err(format!("unknown scenario '{other}'")),
                 });
+            }
+            "--level" => {
+                let id = value("--level")?;
+                if !tf_sim::street::level::level_ids().any(|known| known == id) {
+                    return Err(format!("unknown level '{id}'"));
+                }
+                level = Some(id);
             }
             "--frames" => {
                 let text = value("--frames")?;
@@ -122,8 +142,15 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
     if !any {
         return Ok(Cli::Play);
     }
+    let target = match (scenario, level) {
+        (Some(scenario), None) => Target::Scenario(scenario),
+        (None, Some(level)) if hour.is_none() => Target::Level(level),
+        (None, Some(_)) => return Err("--hour cannot be used with --level".into()),
+        (Some(_), Some(_)) => return Err("give --scenario or --level, not both".into()),
+        (None, None) => return Err("--scenario or --level is required".into()),
+    };
     Ok(Cli::Capture(CaptureOptions {
-        scenario: scenario.ok_or("--scenario is required")?,
+        target,
         frames: frames.ok_or("--frames is required")?,
         screenshot: screenshot.ok_or("--screenshot is required")?,
         hour,
@@ -201,8 +228,19 @@ fn setup_scenario(
     options: Res<CaptureOptions>,
     mut handle: ResMut<SimHandle>,
     mut announce: Announce,
+    mut level: ResMut<LoadedLevel>,
 ) {
-    match options.scenario {
+    let scenario = match &options.target {
+        Target::Scenario(scenario) => *scenario,
+        Target::Level(id) => {
+            // An empty old map (no highway) under the level.
+            handle.replace(Simulation::new());
+            level.street = Some(LoadedLevel::load(id).expect("level ids are checked on parsing"));
+            level.zoom = options.zoom;
+            return;
+        }
+    };
+    match scenario {
         Scenario::Empty => game::new_empty_game(&mut handle, &mut announce),
         Scenario::Bottleneck => game::load_bottleneck_scenario(&mut handle, &mut announce),
         Scenario::BottleneckBus => {
@@ -282,12 +320,58 @@ mod tests {
         ])
         .unwrap();
         let Cli::Capture(o) = cli else { panic!() };
-        assert_eq!(o.scenario, Scenario::BottleneckBus);
+        assert_eq!(o.target, Target::Scenario(Scenario::BottleneckBus));
         assert_eq!(o.frames, 30);
         assert_eq!(o.screenshot, PathBuf::from("a.png"));
         assert_eq!(o.hour, Some(8.5));
         assert_eq!(o.zoom, Some(0.5));
         assert_eq!(o.overlay, Some("lanes"));
+    }
+
+    #[test]
+    fn level_command_parses() {
+        let cli = parse(&[
+            "--level",
+            "carrefour-ecole",
+            "--frames",
+            "3",
+            "--screenshot",
+            "l.png",
+        ]);
+        let Ok(Cli::Capture(o)) = cli else { panic!() };
+        assert_eq!(o.target, Target::Level("carrefour-ecole".into()));
+        for args in [
+            &[
+                "--level",
+                "nowhere",
+                "--frames",
+                "3",
+                "--screenshot",
+                "l.png",
+            ][..],
+            &[
+                "--level",
+                "carrefour-ecole",
+                "--scenario",
+                "town",
+                "--frames",
+                "3",
+                "--screenshot",
+                "l.png",
+            ],
+            &[
+                "--level",
+                "carrefour-ecole",
+                "--hour",
+                "8",
+                "--frames",
+                "3",
+                "--screenshot",
+                "l.png",
+            ],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

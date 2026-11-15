@@ -23,6 +23,7 @@ pub mod lots;
 pub mod moving;
 pub mod overlays;
 pub mod roads;
+pub mod street;
 pub mod tool_preview;
 pub mod transit;
 pub mod zones;
@@ -38,6 +39,12 @@ pub mod z {
     pub const ZONES: f32 = 2.0;
     /// Buildings and their parking.
     pub const LOTS: f32 = 3.0;
+    /// The street game's level (pivot plan): ground and blocks, strip surfaces, markings
+    /// and movements, then obstacles. Under the old roads, which a level never has.
+    pub const STREET_GROUND: f32 = 4.0;
+    pub const STREET_SURFACE: f32 = 4.2;
+    pub const STREET_MARKINGS: f32 = 4.4;
+    pub const STREET_THINGS: f32 = 4.6;
     /// A road is drawn in layers, so segments meeting at a node blend: the sidewalks of all
     /// roads, then all kerbs, then all asphalt, then bus lanes, then lane lines.
     pub const ROAD_SIDEWALK: f32 = 10.0;
@@ -115,6 +122,7 @@ impl Plugin for ViewsPlugin {
             lights::LightViewPlugin,
             overlays::OverlayViewPlugin,
             tool_preview::ToolPreviewPlugin,
+            street::StreetViewPlugin,
         ));
     }
 }
