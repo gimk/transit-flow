@@ -5,7 +5,7 @@ That document says *what* the game is. This one says *how we build it, in what o
 
 **Engine:** Rust + Bevy 0.20 (ported from Godot 4.7 / GDScript at the end of 2026-11; the phase history below was written for Godot and is kept as it was; the last Godot commit is the git tag `godot-final`, and `docs/BEVY_MIGRATION_PLAN.md` and `docs/migration/NOTES.md` record the port). Everything below up to the Polish track is built and runs in the Bevy build.
 
-**Status (2026-11-12):** the port to Rust + Bevy is done and plays like the Godot build (same simulation tick for tick, every tool and key), drawn with flat shapes and one status line. Built: Phases 0–9 (roads, routing, junctions and lights, the living city, multi-lane and one-way roads, driveways, pedestrians, buses with bays and bus lanes, mode choice, curved roads) and the Town and Bottleneck scenarios. Left behind in the port, to redo in Bevy: the Polish track's art and UI items and Phase D (dot display). **Next: to be chosen by the user**, between redoing the art direction in Bevy and Phase 10+.
+**Status (2026-11-16):** replaced by the pivot plan, [URBANISM_PIVOT_PLAN.md](URBANISM_PIVOT_PLAN.md). This document stays as the record of the city builder (last commit: git tag `city-builder-final`). Its last state: the port to Rust + Bevy was done and played like the Godot build; Phases 0–9 and the Town and Bottleneck scenarios were built.
 
 ---
 

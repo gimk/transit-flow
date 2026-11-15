@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-15):** draft, not started. This plan replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap when the user approves it. The old plan stays as the record of the city builder.
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). **Next: Phase 1** (space model and first level).
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -412,6 +412,8 @@ Candidates, from simple to hard. The final list and order are decided in Phase 9
 | 7 | Source and licence of map references | Phase 9 | Hand-drawn simplifications |
 | 8 | Art direction | Phase 10 | Flat shapes |
 | 9 | Game language (French terms, French and English UI) | Phase 10 | English UI with French place names |
+
+**Phase 0 (2026-11-16):** no open point blocks Phase 1. Every point uses its default until the user decides otherwise.
 
 ---
 
