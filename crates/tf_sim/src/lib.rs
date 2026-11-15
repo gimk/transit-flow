@@ -5,6 +5,9 @@
 //! snapshots and changes it through command methods. Porting rules and the
 //! architecture are in `docs/BEVY_MIGRATION_PLAN.md`; how to port a class is in
 //! `docs/migration/PORTING_GUIDE.md`.
+//!
+//! `street` is the new street design game (`docs/URBANISM_PIVOT_PLAN.md`), written next to
+//! the old city builder, which stays frozen until the pivot's Phase 5 removes it.
 
 pub mod city;
 pub mod clock;
@@ -18,6 +21,7 @@ pub mod roads;
 pub mod routing;
 pub mod save;
 pub mod simulation;
+pub mod street;
 pub mod traffic;
 pub mod transit;
 pub mod walking;

@@ -1,0 +1,155 @@
+// "Carrefour école": fictional test and tutorial level (pivot plan §8, Phase 1).
+// Two small 11e-style streets cross; a primary school stands on the north-east corner.
+// Metres, y down. Profiles list strips from the left building line to the right one,
+// looking along the centerline (from -> to). Access bits: 1 pedestrian, 2 bicycle,
+// 4 car, 8 bus, 16 delivery.
+(
+    id: "carrefour-ecole",
+    name: "Carrefour école",
+    place: "Fictional, Paris 11e style",
+    history: "Two narrow streets meet in front of a primary school. At 8:20 the children arrive from every side, while cars cut through the quarter.",
+    difficulty: 1,
+    bounds: (min: (0.0, 0.0), max: (150.0, 150.0)),
+    blocks: [
+        [(0.0, 0.0), (69.0, 0.0), (69.0, 68.5), (0.0, 68.5)],
+        [(81.0, 0.0), (150.0, 0.0), (150.0, 68.5), (81.0, 68.5)],
+        [(0.0, 81.5), (69.0, 81.5), (69.0, 150.0), (0.0, 150.0)],
+        [(81.0, 81.5), (150.0, 81.5), (150.0, 150.0), (81.0, 150.0)],
+    ],
+    nodes: [
+        (id: 0, position: (75.0, 75.0)),
+        (id: 1, position: (0.0, 75.0)),
+        (id: 2, position: (150.0, 75.0)),
+        (id: 3, position: (75.0, 0.0)),
+        (id: 4, position: (75.0, 150.0)),
+    ],
+    segments: [
+        // Rue de l'École, two-way, 13 m: the school sidewalk is on the north side.
+        (
+            id: 1, name: "Rue de l'École", from: 1, to: 0, speed_limit_kmh: 30.0,
+            profile: [
+                (use: Sidewalk, width: 3.0, right: Kerb),
+                (use: CarLane, width: 3.0, direction: Backward, left: Kerb, right: Paint),
+                (use: CarLane, width: 3.0, direction: Forward, left: Paint),
+                (use: Parking, width: 2.0),
+                (use: Sidewalk, width: 2.0, left: Kerb),
+            ],
+        ),
+        (
+            id: 2, name: "Rue de l'École", from: 0, to: 2, speed_limit_kmh: 30.0,
+            profile: [
+                (use: Sidewalk, width: 3.0, right: Kerb),
+                (use: CarLane, width: 3.0, direction: Backward, left: Kerb, right: Paint),
+                (use: CarLane, width: 3.0, direction: Forward, left: Paint),
+                (use: Parking, width: 2.0),
+                (use: Sidewalk, width: 2.0, left: Kerb),
+            ],
+        ),
+        // Rue du Marché, one-way southbound with a contraflow bicycle lane, 12 m.
+        // Looking south, the left building line is the east one.
+        (
+            id: 3, name: "Rue du Marché", from: 3, to: 0, speed_limit_kmh: 30.0,
+            profile: [
+                (use: Sidewalk, width: 2.5, right: Kerb),
+                (use: BikeLane, width: 1.5, direction: Backward, left: Kerb, right: Paint),
+                (use: CarLane, width: 3.5, direction: Forward, left: Paint),
+                (use: Parking, width: 2.0),
+                (use: Sidewalk, width: 2.5, left: Kerb),
+            ],
+        ),
+        (
+            id: 4, name: "Rue du Marché", from: 0, to: 4, speed_limit_kmh: 30.0,
+            profile: [
+                (use: Sidewalk, width: 2.5, right: Kerb),
+                (use: BikeLane, width: 1.5, direction: Backward, left: Kerb, right: Paint),
+                (use: CarLane, width: 3.5, direction: Forward, left: Paint),
+                (use: Parking, width: 2.0),
+                (use: Sidewalk, width: 2.5, left: Kerb),
+            ],
+        ),
+    ],
+    junctions: [
+        (
+            node: 0,
+            polygon: [(69.0, 68.5), (81.0, 68.5), (81.0, 81.5), (69.0, 81.5)],
+            control: PriorityToRight,
+        ),
+    ],
+    // The four corners between the sidewalks.
+    plazas: [
+        [(69.0, 68.5), (71.5, 68.5), (71.5, 71.5), (69.0, 71.5)],
+        [(78.5, 68.5), (81.0, 68.5), (81.0, 71.5), (78.5, 71.5)],
+        [(69.0, 79.5), (71.5, 79.5), (71.5, 81.5), (69.0, 81.5)],
+        [(78.5, 79.5), (81.0, 79.5), (81.0, 81.5), (78.5, 81.5)],
+    ],
+    obstacles: [
+        (kind: Tree, shape: Circle((center: (25.0, 70.0), radius: 0.7))),
+        (kind: Tree, shape: Circle((center: (45.0, 70.0), radius: 0.7))),
+        (kind: Tree, shape: Circle((center: (105.0, 70.0), radius: 0.7))),
+        (kind: Tree, shape: Circle((center: (125.0, 70.0), radius: 0.7))),
+        (kind: Bench, shape: Polygon([(92.0, 68.9), (94.0, 68.9), (94.0, 69.4), (92.0, 69.4)])),
+    ],
+    gates: [
+        (id: "west", position: (0.0, 75.0), segment: 1, access: 23),
+        (id: "east", position: (150.0, 75.0), segment: 2, access: 23),
+        (id: "north", position: (75.0, 0.0), segment: 3, access: 23),
+        (id: "south", position: (75.0, 150.0), segment: 4, access: 23),
+        (id: "school", position: (100.0, 68.5), segment: 2, access: 1),
+    ],
+    demand: [
+        (
+            name: "Morning rush",
+            duration_s: 75.0,
+            flows: [
+                (mode: Car, from: "west", to: "east", per_hour: 220),
+                (mode: Car, from: "east", to: "west", per_hour: 160),
+                (mode: Car, from: "north", to: "south", per_hour: 140),
+                (mode: Car, from: "north", to: "east", per_hour: 60),
+                (mode: Bicycle, from: "south", to: "north", per_hour: 90),
+                (mode: Bicycle, from: "west", to: "east", per_hour: 70),
+                (mode: Pedestrian, from: "south", to: "school", per_hour: 260),
+                (mode: Pedestrian, from: "west", to: "school", per_hour: 180),
+                (mode: Pedestrian, from: "north", to: "south", per_hour: 120),
+            ],
+        ),
+        (
+            name: "Midday",
+            duration_s: 60.0,
+            flows: [
+                (mode: Car, from: "west", to: "east", per_hour: 120),
+                (mode: Car, from: "east", to: "west", per_hour: 110),
+                (mode: Car, from: "north", to: "south", per_hour: 80),
+                (mode: Van, from: "north", to: "south", per_hour: 20),
+                (mode: Bicycle, from: "south", to: "north", per_hour: 50),
+                (mode: Pedestrian, from: "east", to: "west", per_hour: 150),
+            ],
+        ),
+        (
+            name: "Evening rush",
+            duration_s: 75.0,
+            flows: [
+                (mode: Car, from: "east", to: "west", per_hour: 240),
+                (mode: Car, from: "west", to: "east", per_hour: 170),
+                (mode: Car, from: "north", to: "south", per_hour: 150),
+                (mode: Bicycle, from: "south", to: "north", per_hour: 110),
+                (mode: Bicycle, from: "east", to: "west", per_hour: 60),
+                (mode: Pedestrian, from: "school", to: "south", per_hour: 220),
+                (mode: Pedestrian, from: "school", to: "west", per_hour: 160),
+            ],
+        ),
+        (
+            name: "Night",
+            duration_s: 45.0,
+            flows: [
+                (mode: Car, from: "west", to: "east", per_hour: 50),
+                (mode: Car, from: "north", to: "south", per_hour: 30),
+                (mode: Bicycle, from: "south", to: "north", per_hour: 15),
+                (mode: Pedestrian, from: "east", to: "west", per_hour: 30),
+            ],
+        ),
+    ],
+    constraints: [MinSidewalkWidth(1.8)],
+    tools: ["zebra", "speed_limit", "bollards", "signals"],
+    stars: [60.0, 80.0],
+    seed: 1,
+)
