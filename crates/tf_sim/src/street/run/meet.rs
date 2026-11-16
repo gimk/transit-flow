@@ -166,9 +166,20 @@ impl StreetRun {
                 continue;
             }
             for car in self.agents.values() {
+                if self.touching.contains(&(car.id, walker.id)) {
+                    continue;
+                }
                 // A standing vehicle is solid for walkers (they are pushed out of it, see
-                // `crowd`): only a moving one makes a contact.
-                if car.speed < STANDING_VEHICLE || self.touching.contains(&(car.id, walker.id)) {
+                // `crowd`): it makes a contact only if a walker is still inside it (it
+                // stopped over one, or a wall kept one from getting out).
+                if car.speed < STANDING_VEHICLE {
+                    let body = body_of(car, car.pos, car.dir);
+                    let local = walker.pos - body.center;
+                    let inside = local.dot(body.dir).abs() < body.half_length
+                        && local.dot(body.dir.perp()).abs() < body.half_width;
+                    if inside {
+                        hits.push((car.id, walker.id, walker.pos, 0.0));
+                    }
                     continue;
                 }
                 let reach = (car.length * 0.5) as f32 + walker.radius + MEET_REACH;

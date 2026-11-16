@@ -61,8 +61,8 @@ pub const STOPPED_SPEED: f64 = 0.3;
 pub const AT_LINE: f64 = 4.0;
 /// After people on foot held it at its line, a driver gives way to everyone for this
 /// long: the others ignored it meanwhile, and see it moving only after their reaction
-/// time (careful drivers react within 1.2 s), seconds.
-pub const HELD_DEFER_S: f64 = 1.5;
+/// time (the slowest archetype reacts within 1.6 s), seconds.
+pub const HELD_DEFER_S: f64 = 2.0;
 
 /// What is fixed about a movement for a run.
 #[derive(Clone, Debug, PartialEq)]
@@ -756,6 +756,19 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     // People on foot: in the path, at a zebra, behind a hidden kerb.
     if let Some(peds) = world.peds {
         let view = yielding::walker_view(agent, snapshot, peds, false, tau);
+        // Standing at its line for people on the zebra before it (they hold it, even when
+        // the line holds it too): the drivers who give way to it do not wait for it
+        // (stage C review, finding 4).
+        if view.blocker.is_some()
+            && view.target <= target
+            && v < STOPPED_SPEED
+            && agent
+                .approach
+                .as_ref()
+                .is_some_and(|approach| !approach.committed && approach.line_d - agent.d < AT_LINE)
+        {
+            decision.held_by_walkers = true;
+        }
         if view.target < target {
             target = view.target;
             blocker = view.blocker;

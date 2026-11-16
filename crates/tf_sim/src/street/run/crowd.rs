@@ -254,13 +254,22 @@ fn push_out_of_vehicle(body: &Body, p: Vec2, before: Vec2, r: f32) -> Vec2 {
     if dist > 1e-6 && !circle_inside(body, p) {
         return q + d / dist * r;
     }
-    // The centre went inside: back out through the side it came from.
+    // The centre went inside: back out through the side it came from, or, when it was
+    // inside already, through the nearest side.
     let q = nearest_on_body(body, before);
     let d = before - q;
     if d.length() > 1e-6 {
-        q + d.normalize() * r
+        return q + d.normalize() * r;
+    }
+    let local = p - body.center;
+    let side = body.dir.perp();
+    let (along, across) = (local.dot(body.dir), local.dot(side));
+    let to_end = body.half_length - along.abs();
+    let to_side = body.half_width - across.abs();
+    if to_end < to_side {
+        p + body.dir * (along.signum() * (to_end + r))
     } else {
-        before
+        p + side * (across.signum() * (to_side + r))
     }
 }
 
@@ -878,6 +887,23 @@ impl StreetRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_walker_found_inside_a_standing_vehicle_is_pushed_out_of_it() {
+        // Stage C review, finding 3: both where it is and where it was are inside.
+        let body = Body {
+            center: Vec2::ZERO,
+            dir: Vec2::X,
+            half_length: 2.15,
+            half_width: 0.9,
+        };
+        let out = push_out_of_vehicle(&body, Vec2::new(0.5, 0.6), Vec2::new(0.4, 0.5), 0.25);
+        assert!(!circle_inside(&body, out), "{out:?}");
+        assert!(
+            (nearest_on_body(&body, out) - out).length() >= 0.25 - 1e-4,
+            "{out:?}"
+        );
+    }
 
     #[test]
     fn the_fundamental_diagram_slows_walkers_as_density_grows() {

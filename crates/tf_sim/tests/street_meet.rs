@@ -76,6 +76,39 @@ fn walker_contacts(run: &StreetRun) -> Vec<(Vec<CauseKind>, Outcome)> {
         .collect()
 }
 
+/// No walker's centre is inside a vehicle body unless a contact between the two was
+/// logged (stage C review, finding 3).
+fn assert_nobody_inside_a_vehicle(run: &StreetRun, what: &str) {
+    for car in run.agents.values() {
+        for walker in run.walkers.values() {
+            let local = walker.pos - car.pos;
+            let inside = local.dot(car.dir).abs() < (car.length as f32) / 2.0
+                && local.dot(car.dir.perp()).abs() < (car.width as f32) / 2.0;
+            if !inside {
+                continue;
+            }
+            let touched = run.events().iter().any(|e| {
+                matches!(e.event, StreetEvent::Contact { a, b, .. }
+                    if a == car.id && b == walker.id)
+            });
+            assert!(
+                touched,
+                "{what}, tick {}: {:?} is inside {:?} with no contact",
+                run.tick, walker.id, car.id
+            );
+        }
+    }
+}
+
+/// Steps a run to its end, checking `assert_nobody_inside_a_vehicle` every tick.
+fn run_checked(mut run: StreetRun, what: &str) -> StreetRun {
+    while !run.finished() {
+        run.step();
+        assert_nobody_inside_a_vehicle(&run, what);
+    }
+    run
+}
+
 /// A van parked in the parking strip just before the zebra, for eastbound drivers: it
 /// hides the north kerb of the zebra, where people wait to cross.
 const VAN: &str =
@@ -96,8 +129,7 @@ fn a_hidden_pedestrian_is_never_hit_by_a_careful_driver_at_30() {
     let level = hidden_zebra(30.0);
     let mut crossings = 0;
     for seed in 1..=20 {
-        let mut run = run(&level, seed, Population::Careful, 1.0);
-        run.run_to_end();
+        let run = run_checked(run(&level, seed, Population::Careful, 1.0), "careful");
         let s = run.summary();
         crossings += s.walkers.crossings;
         assert_eq!(s.walkers.contacts, 0, "seed {seed}: {:?}", s.walkers);
@@ -110,29 +142,31 @@ fn a_hidden_pedestrian_is_never_hit_by_a_careful_driver_at_30() {
 #[test]
 fn a_hidden_pedestrian_can_be_hit_by_an_inattentive_driver() {
     let level = hidden_zebra(30.0);
-    let (mut contacts, mut named) = (0, 0);
+    let mut contacts = 0;
     for seed in 1..=20 {
-        let mut run = run(&level, seed, Population::Careless, 1.0);
-        run.run_to_end();
+        let run = run_checked(run(&level, seed, Population::Careless, 1.0), "careless");
         for (causes, _) in walker_contacts(&run) {
             contacts += 1;
-            assert!(!causes.is_empty(), "seed {seed}: a contact without causes");
-            if causes.iter().any(|c| {
-                matches!(
+            // Every contact names what the hidden zebra is about: the walker hidden from
+            // the driver, the look not made (at the kerb, or away: a distraction), the
+            // speed too high for a hidden kerb, or the yield not made (stage C review,
+            // finding 5).
+            assert!(
+                causes.iter().any(|c| matches!(
                     c,
                     CauseKind::HiddenWalker { .. }
                         | CauseKind::DidNotLook { .. }
-                        | CauseKind::TooFastForSight { .. }
                         | CauseKind::Distracted
-                )
-            }) {
-                named += 1;
-            }
+                        | CauseKind::TooFastForSight { .. }
+                        | CauseKind::DidNotYieldToWalker { .. }
+                )),
+                "seed {seed}: a contact names neither the hidden walker nor the look: \
+                 {causes:?}"
+            );
         }
     }
-    println!("careless: {contacts} contacts, {named} name the hidden walker or the look");
+    println!("careless: {contacts} contacts, all naming the hidden walker or the look");
     assert!(contacts > 0, "careless drivers hit someone over 20 seeds");
-    assert!(named > 0);
 }
 
 /// A careful driver stops for people on the zebra or waiting at it and goes when it is
@@ -153,6 +187,7 @@ fn a_careful_driver_stops_at_a_zebra_and_nobody_waits_for_ever() {
             .expect("the zebra");
         while !run.finished() {
             run.step();
+            assert_nobody_inside_a_vehicle(&run, "zebra queue");
             let polygon = &run.walk_space.areas[zebra].polygon;
             let on_zebra = run.walkers.values().any(|w| polygon.contains(w.pos));
             let standing: Vec<_> = run
@@ -296,8 +331,7 @@ fn careless_people_have_conflicts_and_contacts_with_causes() {
     let level = signal_level(false);
     let (mut contacts, mut conflicts) = (0, 0);
     for seed in 1..=10 {
-        let mut run = run(&level, seed, Population::Careless, 2.0);
-        run.run_to_end();
+        let run = run_checked(run(&level, seed, Population::Careless, 2.0), "careless");
         for (causes, _) in walker_contacts(&run) {
             contacts += 1;
             assert!(!causes.is_empty(), "seed {seed}: a contact without causes");
@@ -403,4 +437,165 @@ fn meetings_are_deterministic() {
     a.run_to_end();
     b.run_to_end();
     assert_eq!(a.events(), b.events());
+}
+
+/// A careless driver who drives onto a zebra while someone has been on it for a while and
+/// is not past its path (a careful driver would have seen it and stopped before the
+/// zebra) is blamed for not
+/// yielding or not looking: the yield a careful driver would have made stays a pending
+/// cause until the front enters the zebra (stage C review, finding 1).
+#[test]
+fn not_yielding_at_a_zebra_is_named_when_the_car_enters_it() {
+    let flows = flow("Pedestrian", "north", "south", 1800)
+        + &flow("Pedestrian", "south", "north", 1800)
+        + &flow("Car", "west", "east", 700)
+        + &flow("Car", "east", "west", 700);
+    let level = street(50.0, true, "", &flows, 150.0);
+    let mut checked = 0;
+    for seed in 1..=20 {
+        let mut run = run(&level, seed, Population::Careless, 1.0);
+        let zebra = (0..run.walk_space.areas.len())
+            .find(|a| matches!(run.walk_space.areas[*a].kind, AreaKind::Crossing { .. }))
+            .expect("the zebra");
+        // (tick to check at, car). A point 1 m behind the front: the run finds where a
+        // route enters the zebra every 0.5 m, so the route's front is in by then, and the
+        // next decision records the causes.
+        let mut due: Vec<(u64, tf_sim::street::AgentId)> = Vec::new();
+        while !run.finished() {
+            run.step();
+            let polygon = run.walk_space.areas[zebra].polygon.clone();
+            let now = run.tick;
+            for car in run.agents.values() {
+                let reach = car.length as f32 / 2.0 - 1.0;
+                let front = car.pos + car.dir * reach;
+                let before = car.prev_pos + car.prev_dir * reach;
+                if !polygon.contains(front) || polygon.contains(before) || car.speed < 1.0 {
+                    continue;
+                }
+                let on_for_long = run.walkers.values().any(|w| {
+                    let on_for = run.events().iter().rev().find_map(|e| match e.event {
+                        StreetEvent::CrossingStarted { agent, .. } if agent == w.id => {
+                            Some((now - e.tick) as f64 * 0.05)
+                        }
+                        _ => None,
+                    });
+                    // Not past the car's path: within its reach (half a car, a body, a
+                    // margin, and `PASSED_MARGIN`), or coming toward its line.
+                    let side = (w.pos - front).dot(car.dir.perp());
+                    let coming = w.vel.dot(car.dir.perp()) * side < 0.0;
+                    let not_past = side.abs() < 0.9 + w.radius + 0.3 + 1.0 || coming;
+                    polygon.contains(w.pos) && not_past && on_for.is_some_and(|s| s >= 2.0)
+                });
+                if on_for_long {
+                    due.push((now + 2, car.id));
+                }
+            }
+            for &(_, id) in due.iter().filter(|(at, _)| *at == now) {
+                let Some(car) = run.agents.get(&id) else {
+                    continue;
+                };
+                checked += 1;
+                assert!(
+                    car.recent.iter().any(|(_, c)| matches!(
+                        c,
+                        CauseKind::DidNotYieldToWalker { .. }
+                            | CauseKind::DidNotLook { .. }
+                            | CauseKind::Distracted
+                    )),
+                    "seed {seed}, tick {now}: {id:?} drove onto the zebra in front of someone \
+                     with no cause: {:?}",
+                    car.recent
+                );
+            }
+        }
+    }
+    println!("{checked} cars drove onto a zebra with someone on it");
+    assert!(checked > 0);
+}
+
+/// A careful driver never stops for ever before a zebra whose kerb stays hidden: it
+/// creeps until it sees the kerb (stage C review, finding 2). Two scenes: a parked van
+/// right at the zebra's edge, and a van standing in the next lane (eastbound traffic
+/// only) that hides the far kerb.
+#[test]
+fn a_careful_driver_creeps_past_a_kerb_that_stays_hidden() {
+    let at_the_edge =
+        "(kind: ParkedVan, shape: Polygon([(52.7, 3.2), (58.5, 3.2), (58.5, 4.8), (52.7, 4.8)])),";
+    let in_the_next_lane = "(kind: ParkedVan, shape: Polygon([(52.7, 8.2), (58.5, 8.2), (58.5, 10.8), (52.7, 10.8)])),";
+    for (scene, van, walkers) in [
+        ("van at the zebra's edge", at_the_edge, "north"),
+        ("van in the next lane", in_the_next_lane, "south"),
+    ] {
+        let to = if walkers == "north" { "south" } else { "north" };
+        let flows = flow("Pedestrian", walkers, to, 900) + &flow("Car", "west", "east", 600);
+        let level = street(30.0, true, van, &flows, 150.0);
+        let mut arrived = 0;
+        for seed in 1..=6 {
+            let run = run_checked(run(&level, seed, Population::Careful, 1.0), scene);
+            let s = run.summary();
+            assert_eq!(s.gave_up, 0, "{scene}, seed {seed}: {s:?}");
+            assert_eq!(
+                s.walkers.gave_up, 0,
+                "{scene}, seed {seed}: {:?}",
+                s.walkers
+            );
+            assert_eq!(s.contacts + s.walkers.contacts, 0, "{scene}, seed {seed}");
+            arrived += s.arrived;
+        }
+        println!("{scene}: {arrived} cars got past");
+        assert!(arrived >= 50, "{scene}: {arrived}");
+    }
+}
+
+/// A car standing at its junction line for people on the zebra before the line is held
+/// by them: the drivers who give way to it do not wait for it (stage C review, finding
+/// 4).
+#[test]
+fn a_car_held_by_people_on_the_zebra_before_its_line_says_so() {
+    use tf_sim::street::run::drive::AT_LINE;
+    let mut checked = 0;
+    for signals in [false, true] {
+        let level = signal_level(signals);
+        for seed in 1..=4 {
+            let mut run = run(&level, seed, Population::Careful, 2.0);
+            let zebras: Vec<usize> = (0..run.walk_space.areas.len())
+                .filter(|a| matches!(run.walk_space.areas[*a].kind, AreaKind::Crossing { .. }))
+                .collect();
+            while !run.finished() {
+                run.step();
+                for car in run.agents.values() {
+                    let Some(approach) = &car.approach else {
+                        continue;
+                    };
+                    if approach.committed || car.speed > 0.05 || approach.line_d - car.d >= AT_LINE
+                    {
+                        continue;
+                    }
+                    // Someone on a zebra right in front of it, in its lane.
+                    let front = car.pos + car.dir * (car.length as f32 / 2.0);
+                    let blocked = run.walkers.values().any(|w| {
+                        let local = w.pos - front;
+                        let ahead = local.dot(car.dir);
+                        zebras
+                            .iter()
+                            .any(|z| run.walk_space.areas[*z].polygon.contains(w.pos))
+                            && ahead > 0.0
+                            && ahead < 4.0
+                            && local.dot(car.dir.perp()).abs() < 1.5
+                    });
+                    if blocked {
+                        checked += 1;
+                        assert!(
+                            car.held_by_walkers,
+                            "signals {signals}, seed {seed}, tick {}: {:?} stands for people \
+                             on the zebra but is not held by them",
+                            run.tick, car.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+    println!("{checked} cars standing for people on the zebra before their line");
+    assert!(checked > 0);
 }

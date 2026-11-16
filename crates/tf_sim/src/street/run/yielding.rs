@@ -13,8 +13,9 @@
 //!   parked van, a bus, a tree), it drives no faster than the speed from which it can
 //!   stop before the zebra after its reaction time, braking at `COMFORT_BRAKE`:
 //!   `v = sqrt(b²τ² + 2bD) - bτ` with D the distance to the zebra less `PED_STOP_MARGIN`
-//!   (the same following formula as for a standing car). Someone stepping out from
-//!   behind the van then always finds a car that can stop.
+//!   (the same following formula as for a standing car), but never below
+//!   `CREEP_SPEED`, so it moves up until it sees a kerb hidden right at the zebra's edge.
+//!   Someone stepping out from behind the van then always finds a car that can stop.
 //! - **Keeps crossings clear**: it does not stop on a zebra behind a queue that leaves
 //!   no room past it, and when it must stop at a junction whose line is just past a
 //!   zebra, it stops before the zebra (where the stop line is in the street).
@@ -38,6 +39,11 @@ use super::sight::{Hider, SightBlockers};
 use super::walk::{AreaKind, WalkSpace};
 use crate::street::ids::AgentId;
 
+/// A driver comes up to a zebra whose kerb stays hidden at this speed until it sees the
+/// kerb, m/s (start value): it stops within about 2 m (its headway of at most 1.8 s at
+/// 1 m/s, and 0.17 m of braking at `COMFORT_BRAKE`), and the in-path rule brakes for
+/// whoever steps out.
+pub const CREEP_SPEED: f64 = 1.0;
 /// A driver stops this far before a zebra it yields at, metres (start value).
 pub const PED_STOP_MARGIN: f64 = 1.0;
 /// When it must stop at a junction line just past a zebra, it stops this far before the
@@ -65,7 +71,7 @@ pub struct CrossingApproach {
     /// The front has entered it (the careful check has been made).
     pub entered: bool,
     /// Coming up to it, the last walker a careful driver would have yielded to and this
-    /// one did not.
+    /// one did not (kept until the front enters the zebra).
     pub pending_yield: Option<AgentId>,
     /// Coming up to it with a hidden kerb, the worst (speed, careful limit), m/s.
     pub worst_fast: Option<(f64, f64)>,
@@ -150,7 +156,9 @@ pub fn walker_view(
             });
             if let Some(hider) = hidden {
                 let room = area.enter - front - PED_STOP_MARGIN;
-                let limit = safe_speed(room, 0.0, tau) * (1.0 + risk);
+                // Never slower than a creep: a kerb hidden right at the zebra's edge stays
+                // hidden until the car has moved up (stage C review, finding 2).
+                let limit = safe_speed(room, 0.0, tau).max(CREEP_SPEED) * (1.0 + risk);
                 if limit < view.target {
                     view.target = limit;
                     view.blocker = None;

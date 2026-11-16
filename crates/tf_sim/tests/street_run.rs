@@ -243,7 +243,7 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// without knowing why it moved.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
     (1, Population::Mixed, 1.0, 0xa2c3_17ad_16ca_4f12),
-    (2, Population::Mixed, 1.0, 0x3266_06cd_4d49_10e7),
+    (2, Population::Mixed, 1.0, 0x9cfc_202d_5974_0427),
     (1, Population::Careless, 4.0, 0xecd8_d0bc_c5fe_3fb8),
     (2, Population::Careless, 4.0, 0x94af_4386_c96c_681d),
 ];

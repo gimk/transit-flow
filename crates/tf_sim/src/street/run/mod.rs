@@ -650,7 +650,11 @@ impl StreetRun {
             if let Some(crossing) = &mut agent.crossing {
                 crossing.entered |= decision.crossing_entered;
                 if let Some((not_yielding, too_fast)) = decision.crossing_pending {
-                    crossing.pending_yield = not_yielding;
+                    // Kept until the front enters the zebra: close to it a careful driver
+                    // could no longer stop, but it would have stopped earlier.
+                    if not_yielding.is_some() {
+                        crossing.pending_yield = not_yielding;
+                    }
                     if let Some((speed, limit)) = too_fast
                         && crossing
                             .worst_fast
