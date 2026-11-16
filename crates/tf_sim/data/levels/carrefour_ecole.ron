@@ -89,6 +89,14 @@
         (kind: Tree, shape: Circle((center: (125.0, 70.0), radius: 0.7))),
         (kind: Bench, shape: Polygon([(92.0, 68.9), (94.0, 68.9), (94.0, 69.4), (92.0, 69.4)])),
     ],
+    // A zebra on each arm, just outside the junction (centres in metres along each
+    // segment from its `from` node; the junction edges are 6 m and 6.5 m from the node).
+    crossings: [
+        (kind: Zebra, segment: 1, at: 67.5, width: 3.0),
+        (kind: Zebra, segment: 2, at: 7.5, width: 3.0),
+        (kind: Zebra, segment: 3, at: 67.0, width: 3.0),
+        (kind: Zebra, segment: 4, at: 8.0, width: 3.0),
+    ],
     gates: [
         (id: "west", position: (0.0, 75.0), segment: 1, access: 23),
         (id: "east", position: (150.0, 75.0), segment: 2, access: 23),

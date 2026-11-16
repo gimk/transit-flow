@@ -11,7 +11,8 @@ use super::design::{Design, DesignCommand};
 use super::ids::StreetLaneId;
 use super::lanes::{self, LaneGroup, StreetLane};
 use super::level::{
-    AreaKind, Bounds, Constraint, JunctionControl, LevelFile, ObstacleKind, Shape, Sign, TurnBan,
+    AreaKind, Bounds, Constraint, CrossingDef, CrossingKind, JunctionControl, LevelFile,
+    ObstacleKind, Shape, Sign, TurnBan,
 };
 use super::signals::SignalPlan;
 use super::space::{Access, Direction, Profile, StripUse};
@@ -84,6 +85,21 @@ pub struct Obstacle {
     pub fixed: bool,
 }
 
+/// A crossing placed on a segment (pivot plan §3.3: crossings come from the player, and
+/// from the level).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Crossing {
+    pub id: i32,
+    pub kind: CrossingKind,
+    pub segment: i32,
+    /// Centre, metres along the centerline from the segment's `from` node.
+    pub at: f32,
+    pub width: f32,
+}
+
+/// A crossing is never narrower than this, metres.
+pub const MIN_CROSSING_WIDTH: f32 = 2.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Area {
     pub id: i32,
@@ -143,11 +159,13 @@ pub struct Street {
     /// The level's walkable areas besides sidewalks (corners, plazas, islands).
     pub plazas: Vec<Polygon>,
     pub obstacles: IndexMap<i32, Obstacle>,
+    pub crossings: IndexMap<i32, Crossing>,
     pub areas: IndexMap<i32, Area>,
     pub constraints: Vec<Constraint>,
     /// Bumped by every successful edit.
     pub version: u64,
     next_lane_id: i32,
+    next_crossing_id: i32,
 }
 
 impl Street {
@@ -162,10 +180,12 @@ impl Street {
             lanes: IndexMap::new(),
             plazas: level.plazas.clone(),
             obstacles: IndexMap::new(),
+            crossings: IndexMap::new(),
             areas: IndexMap::new(),
             constraints: level.constraints.clone(),
             version: 0,
             next_lane_id: 1,
+            next_crossing_id: 1,
         };
         for node in &level.nodes {
             street.nodes.insert(
@@ -251,6 +271,9 @@ impl Street {
         let junction_ids: Vec<i32> = street.junctions.keys().copied().collect();
         for node in junction_ids {
             street.rebuild_movements(node);
+        }
+        for def in &level.crossings {
+            street.add_crossing(def)?;
         }
         Ok(street)
     }
@@ -352,6 +375,24 @@ impl Street {
                 junction.banned_turns.remove(index);
                 self.junction_changed(node)
             }
+            DesignCommand::AddCrossing { crossing } => {
+                let segment = crossing.segment;
+                self.add_crossing(&crossing)?;
+                StreetChange {
+                    node_ids: Vec::new(),
+                    segment_ids: vec![segment],
+                }
+            }
+            DesignCommand::RemoveCrossing { id } => {
+                let crossing = self
+                    .crossings
+                    .shift_remove(&id)
+                    .ok_or_else(|| EditError::Invalid(format!("no crossing {id}")))?;
+                StreetChange {
+                    node_ids: Vec::new(),
+                    segment_ids: vec![crossing.segment],
+                }
+            }
             DesignCommand::SetSign {
                 node,
                 segment,
@@ -367,6 +408,48 @@ impl Street {
         };
         self.version += 1;
         Ok(change)
+    }
+
+    /// Places a crossing: it must lie on the segment between the junction edges and
+    /// overlap no other crossing. On an error nothing changed.
+    fn add_crossing(&mut self, def: &CrossingDef) -> Result<i32, EditError> {
+        let segment = self
+            .segments
+            .get(&def.segment)
+            .ok_or(EditError::UnknownSegment(def.segment))?;
+        let length = lane_builder::polyline_length(&segment.centerline) as f32;
+        let (low, high) = (def.at - def.width * 0.5, def.at + def.width * 0.5);
+        if def.width < MIN_CROSSING_WIDTH
+            || low < segment.start_trim - 1e-3
+            || high > length - segment.end_trim + 1e-3
+        {
+            return Err(EditError::Invalid(format!(
+                "a crossing {} m wide at {} m does not fit on segment {}",
+                def.width, def.at, def.segment
+            )));
+        }
+        let overlaps = self.crossings.values().any(|other| {
+            other.segment == def.segment
+                && (other.at - def.at).abs() < (other.width + def.width) * 0.5
+        });
+        if overlaps {
+            return Err(EditError::Invalid(
+                "the crossing overlaps another one".into(),
+            ));
+        }
+        let id = self.next_crossing_id;
+        self.next_crossing_id += 1;
+        self.crossings.insert(
+            id,
+            Crossing {
+                id,
+                kind: def.kind,
+                segment: def.segment,
+                at: def.at,
+                width: def.width,
+            },
+        );
+        Ok(id)
     }
 
     /// Road lanes of a segment, in strip order.

@@ -2,7 +2,7 @@
 //! level loads from its file, strip edits rebuild lanes and movements, and level + design
 //! round-trip unchanged.
 
-use tf_sim::street::level::{LevelFile, TurnBan, level_ids};
+use tf_sim::street::level::{CrossingDef, CrossingKind, LevelFile, TurnBan, level_ids};
 use tf_sim::street::space::{Access, Direction, StripUse};
 use tf_sim::street::{Design, DesignCommand, EditError, Street, StreetChange};
 
@@ -317,8 +317,100 @@ fn sample_design() -> Design {
             segment: 3,
             sign: tf_sim::street::level::Sign::Yield,
         },
+        DesignCommand::AddCrossing {
+            crossing: mid_block(),
+        },
+        DesignCommand::RemoveCrossing { id: 1 },
     ];
     design
+}
+
+/// A zebra on the school street, 40 m from the junction's edge.
+fn mid_block() -> CrossingDef {
+    CrossingDef {
+        kind: CrossingKind::Zebra,
+        segment: 2,
+        at: 46.0,
+        width: 3.0,
+    }
+}
+
+#[test]
+fn the_level_has_a_zebra_on_each_arm() {
+    let street = street();
+    assert_eq!(street.crossings.len(), 4);
+    let segments: Vec<i32> = street.crossings.values().map(|c| c.segment).collect();
+    assert_eq!(segments, vec![1, 2, 3, 4]);
+    assert_eq!(
+        street.crossings.keys().copied().collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn crossings_are_added_and_removed_by_commands() {
+    let mut street = street();
+    let change = street
+        .apply(&DesignCommand::AddCrossing {
+            crossing: mid_block(),
+        })
+        .expect("a mid-block zebra fits");
+    assert_eq!(change.segment_ids, vec![2]);
+    let added = street.crossings[&5];
+    assert_eq!((added.segment, added.at, added.width), (2, 46.0, 3.0));
+    street
+        .apply(&DesignCommand::RemoveCrossing { id: 2 })
+        .expect("the level's zebra can go");
+    assert_eq!(
+        street.crossings.keys().copied().collect::<Vec<_>>(),
+        vec![1, 3, 4, 5]
+    );
+    assert_eq!(street.version, 2);
+}
+
+#[test]
+fn a_crossing_that_does_not_fit_is_refused() {
+    let mut street = street();
+    let before = street.clone();
+    let refused = [
+        // Over the zebra already at 7.5 m.
+        CrossingDef {
+            at: 9.0,
+            ..mid_block()
+        },
+        // Inside the junction (it starts 6 m from the node).
+        CrossingDef {
+            at: 5.0,
+            ..mid_block()
+        },
+        // Past the end of the segment (75 m long).
+        CrossingDef {
+            at: 74.5,
+            ..mid_block()
+        },
+        CrossingDef {
+            width: 1.0,
+            ..mid_block()
+        },
+        CrossingDef {
+            segment: 99,
+            ..mid_block()
+        },
+    ];
+    for crossing in refused {
+        assert!(
+            street
+                .apply(&DesignCommand::AddCrossing { crossing })
+                .is_err(),
+            "{crossing:?}"
+        );
+    }
+    assert!(
+        street
+            .apply(&DesignCommand::RemoveCrossing { id: 42 })
+            .is_err()
+    );
+    assert_eq!(street, before, "a refused edit changes nothing");
 }
 
 #[test]

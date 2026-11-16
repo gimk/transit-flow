@@ -157,6 +157,37 @@ pub struct ObstacleDef {
     pub shape: Shape,
 }
 
+/// What a crossing is. Raised crossings, refuge islands and crossings with their own
+/// signals come later (pivot plan §4, "Crossings").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CrossingKind {
+    /// A "passage piéton": pedestrians on it have priority (Code de la route R415-11).
+    #[default]
+    Zebra,
+}
+
+/// The default width of a crossing along its street, metres: about a Paris zebra (at
+/// least 2.5 m wide in France).
+pub const DEFAULT_CROSSING_WIDTH: f32 = 3.0;
+
+fn default_crossing_width() -> f32 {
+    DEFAULT_CROSSING_WIDTH
+}
+
+/// A place where pedestrians cross a street by the rules: across every strip between
+/// the sidewalks, centred `at` metres along the segment's centerline from its `from`
+/// node, `width` metres wide along it. A crossing at a junction arm sits just outside
+/// the junction area; one further along is mid-block.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CrossingDef {
+    #[serde(default)]
+    pub kind: CrossingKind,
+    pub segment: i32,
+    pub at: f32,
+    #[serde(default = "default_crossing_width")]
+    pub width: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AreaKind {
     Green,
@@ -234,6 +265,9 @@ pub struct LevelFile {
     /// Fixed furniture the player cannot remove.
     #[serde(default)]
     pub obstacles: Vec<ObstacleDef>,
+    /// Crossings the level starts with; the player's come from the design.
+    #[serde(default)]
+    pub crossings: Vec<CrossingDef>,
     #[serde(default)]
     pub areas: Vec<AreaDef>,
     #[serde(default)]
@@ -328,6 +362,14 @@ impl LevelFile {
                         junction.node
                     ));
                 }
+            }
+        }
+        for crossing in &self.crossings {
+            if !has_segment(crossing.segment) {
+                return invalid(format!(
+                    "a crossing is on unknown segment {}",
+                    crossing.segment
+                ));
             }
         }
         for gate in &self.gates {

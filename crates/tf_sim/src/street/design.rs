@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::level::{Sign, TurnBan};
+use super::level::{CrossingDef, Sign, TurnBan};
 use super::space::{Direction, StripUse};
 
 /// One edit of the street space. Segments and nodes are the level's ids (stable);
@@ -49,6 +49,15 @@ pub enum DesignCommand {
         node: i32,
         segment: i32,
         sign: Sign,
+    },
+    /// Places a crossing; it gets the next crossing id (the level's crossings have the
+    /// ids 1, 2, ... in file order, so ids are stable through a replay).
+    AddCrossing {
+        crossing: CrossingDef,
+    },
+    /// Takes a crossing away (the level's own too), by id.
+    RemoveCrossing {
+        id: i32,
     },
 }
 
