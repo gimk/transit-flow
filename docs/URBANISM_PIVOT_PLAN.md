@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes are not checked on macOS yet (see "Progress notes" below). **Next: Phase 3.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). **Next: Phase 3.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -8,14 +8,15 @@
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
 
-### 2026-11-16: Phase 2 done on the Windows laptop; one check left for the Mac
+### 2026-11-16: Phase 2 checked on the Mac
 
-**State.** Branch `pivot-phase-2`. `scripts/check.sh` passes on the Windows laptop (fmt, clippy, every test of both crates, goldens and replay hashes included). A screenshot with `--run` shows the cars in their style colours, in their lanes, pointing the way they drive.
+**State.** Branch `pivot-phase-2`. `scripts/check.sh` passes on the MacBook Air too (exit 0). The replay hashes made on Windows (`crates/tf_sim/tests/street_run.rs`, and the inline and threaded runner tests in `tf_game`) are the same on macOS, so no platform-independent math library is necessary now. If a hash differs between the platforms later, the cause is probably the float library (`sin`, `cos`, `exp`, `powf` come from the system): find the cause before you accept new values, and the choice of a library such as `libm` is a design decision for the user. `target/` was 7.1 GB after the check.
 
-**To do on the Mac, in this order.**
-1. `git pull`, then `scripts/check.sh`. All replay hashes (`crates/tf_sim/tests/street_run.rs`, and the threaded runner test in `tf_game`) were made on Windows. If one differs on macOS, the cause is probably the float library (`sin`, `cos`, `exp`, `powf` come from the system): find the cause before you accept new values. If the platforms really differ, decide whether `tf_sim::street` must use a platform-independent math library (for example the `libm` crate), so that replays and shared designs give the same run everywhere. That is a design decision for the user.
-2. Optional: look at the cars (`(caffeinate -u -t 120 &); sleep 1`, then `cargo play -- --level carrefour-ecole --run --frames 3600 --zoom 1 --screenshot <scratch>/run.png`).
-3. Disk hygiene (CLAUDE.md): `du -sh target` after the first Bevy build of the session.
+**Optional:** look at the cars (`(caffeinate -u -t 120 &); sleep 1`, then `cargo play -- --level carrefour-ecole --run --frames 3600 --zoom 1 --screenshot <scratch>/run.png`).
+
+### 2026-11-16: Phase 2 done on the Windows laptop
+
+**State.** `scripts/check.sh` passes on the Windows laptop (fmt, clippy, every test of both crates, goldens and replay hashes included). A screenshot with `--run` shows the cars in their style colours, in their lanes, pointing the way they drive.
 
 **Building on the Windows laptop** (GNU Rust toolchain in the user profile, no admin rights, so no MSVC). Before any cargo command: `source ~/rust-gnu-tools/env.sh`. That folder is outside the repo and holds:
 - Rust's own `dlltool.exe` (binutils 2.44) and an assembler `as.exe`. Do not use the `dlltool.exe` 2.47 in `~/mingw-as`: its import libraries miss the `_head_*_dll_imports_lib` symbols, and every Bevy executable fails to link. After you change the `dlltool`, `cargo clean -p` the crates that use raw-dylib (`windows-sys`, `windows*`, `getrandom`, `libloading`, `parking_lot_core`).
