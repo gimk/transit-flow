@@ -2,9 +2,13 @@
 //! crowd model and the pedestrian spawner. Micro-levels are built here as RON text; the
 //! test level "Carrefour école" checks whole trips across junction arms.
 
+use std::collections::BTreeMap;
+
 use glam::Vec2;
+use tf_sim::street::AgentId;
 use tf_sim::street::Design;
 use tf_sim::street::level::{LevelFile, Mode};
+use tf_sim::street::run::drive::DT;
 use tf_sim::street::run::{
     Population, RunOptions, StreetEvent, StreetRun, WalkSpawn, Walker, is_walker,
 };
@@ -13,6 +17,12 @@ use tf_sim::street::run::{
 const OVERLAP_TOLERANCE: f32 = 0.02;
 /// A body may reach this far into an obstacle or a wall, metres.
 const WALL_TOLERANCE: f32 = 0.02;
+/// The forces alone (before the position constraints) may let two bodies this far into
+/// each other in the counterflow, metres: under half the smallest body radius.
+const FORCE_OVERLAP_BOUND: f32 = 0.09;
+/// A lone walker on a free street keeps its desired speed and its free walk time
+/// within this share.
+const LONE_PACE_TOLERANCE: f64 = 0.02;
 
 /// A straight sidewalk from x = 0 to x = `length`, `width` wide, with a gate at each end
 /// ("west", "east"), the given obstacles and pedestrian flows in one slice.
@@ -109,6 +119,50 @@ fn assert_inside(run: &StreetRun, what: &str) {
     }
 }
 
+/// Remembers when each walker came in and its free walk time, so a test can see a
+/// walker that is stuck without giving up (it would only count as "still walking").
+#[derive(Default)]
+struct Arrivals {
+    seen: BTreeMap<AgentId, (f64, f64)>,
+}
+
+impl Arrivals {
+    /// Call after every step.
+    fn watch(&mut self, run: &StreetRun) {
+        for walker in run.walkers.values() {
+            self.seen
+                .entry(walker.id)
+                .or_insert((walker.spawn_tick as f64 * DT, walker.free_time_s));
+        }
+    }
+
+    /// Every walker that came in at least twice its free walk time plus 20 s before the
+    /// end of the run has arrived. Returns (walkers due, walkers arrived).
+    fn check(&self, run: &StreetRun, what: &str) -> (u32, u32) {
+        let end_s = run.tick as f64 * DT;
+        let arrived: Vec<AgentId> = run
+            .events()
+            .iter()
+            .filter_map(|e| match e.event {
+                StreetEvent::WalkEnded { agent, .. } => Some(agent),
+                _ => None,
+            })
+            .collect();
+        let mut due = 0;
+        for (id, (spawn_s, free_s)) in &self.seen {
+            if spawn_s + 2.0 * free_s + 20.0 <= end_s {
+                due += 1;
+                assert!(
+                    arrived.contains(id),
+                    "{what}: {id:?} came in at {spawn_s} s (free walk {free_s:.1} s) and has \
+                     not arrived by {end_s} s"
+                );
+            }
+        }
+        (due, arrived.len() as u32)
+    }
+}
+
 struct CrowdMeasures {
     /// Correlation between the lateral position and the walking direction.
     lane_correlation: f64,
@@ -120,6 +174,8 @@ struct CrowdMeasures {
     gave_up: u32,
     /// Still walking when the run ended (the grace time ran out).
     walking: u32,
+    /// Walkers that had time to arrive (`Arrivals::check`); all of them did.
+    due: u32,
 }
 
 /// Runs a counterflow on a sidewalk and measures it in the middle third.
@@ -132,8 +188,10 @@ fn counterflow(width: f32, per_hour: u32, seed: u64) -> (StreetRun, CrowdMeasure
         (0.0f64, 0.0, 0.0, 0.0, 0.0, 0.0);
     let (mut speed, mut free) = (0.0f64, 0.0f64);
     let mut deepest: f32 = 0.0;
+    let mut arrivals = Arrivals::default();
     while !run.finished() {
         run.step();
+        arrivals.watch(&run);
         deepest = deepest.max(max_overlap(&run));
         assert_inside(&run, "counterflow");
         for walker in run.walkers.values() {
@@ -160,6 +218,7 @@ fn counterflow(width: f32, per_hour: u32, seed: u64) -> (StreetRun, CrowdMeasure
     let var_y = sum_yy / n - (sum_y / n).powi(2);
     let var_s = sum_ss / n - (sum_s / n).powi(2);
     let summary = run.summary();
+    let (due, _) = arrivals.check(&run, "counterflow");
     let measures = CrowdMeasures {
         lane_correlation: cov / (var_y * var_s).sqrt(),
         speed_share: speed / free,
@@ -168,6 +227,7 @@ fn counterflow(width: f32, per_hour: u32, seed: u64) -> (StreetRun, CrowdMeasure
         arrived: summary.walkers.arrived,
         gave_up: summary.walkers.gave_up,
         walking: run.walkers.len() as u32,
+        due,
     };
     (run, measures)
 }
@@ -175,17 +235,19 @@ fn counterflow(width: f32, per_hour: u32, seed: u64) -> (StreetRun, CrowdMeasure
 #[test]
 fn opposite_crowds_on_a_two_metre_sidewalk_form_lanes_and_slow_down_without_overlap() {
     for seed in 1..=3 {
-        let (run, m) = counterflow(2.0, 3600, seed);
+        let (run, m) = counterflow(2.0, 5000, seed);
         let stats = run.walk_stats;
         println!(
             "seed {seed}: lanes {:.2}, speed share {:.2}, overlap {:.4} m, spawned {}, \
-             arrived {}, walking {}, force overlap {:.3} m, held back {}, force flips {}/{}, velocity flips {}/{}",
+             arrived {}, walking {}, due {}, force overlap {:.3} m, held back {}, \
+             force flips {}/{}, velocity flips {}/{}",
             m.lane_correlation,
             m.speed_share,
             m.max_overlap,
             m.spawned,
             m.arrived,
             m.walking,
+            m.due,
             stats.max_force_overlap,
             stats.held_back,
             stats.force_flips,
@@ -195,10 +257,16 @@ fn opposite_crowds_on_a_two_metre_sidewalk_form_lanes_and_slow_down_without_over
         );
         assert!(m.spawned >= 50, "seed {seed}: a crowd needs people");
         assert_eq!(m.gave_up, 0, "seed {seed}: nobody is stuck");
-        assert_eq!(
-            m.arrived + m.walking,
-            m.spawned,
-            "seed {seed}: nobody is lost"
+        assert_eq!(m.walking, 0, "seed {seed}: walkers still on the sidewalk");
+        assert_eq!(m.arrived, m.spawned, "seed {seed}: walkers are missing");
+        // The 20 Hz measures (stage A report): bounded by the constraints, no walker kept
+        // back by a wall, no reversal of motion.
+        assert_eq!(stats.held_back, 0, "seed {seed}");
+        assert_eq!(stats.velocity_flips, 0, "seed {seed}");
+        assert!(
+            stats.max_force_overlap <= FORCE_OVERLAP_BOUND,
+            "seed {seed}: the forces let bodies {} m into each other",
+            stats.max_force_overlap
         );
         assert!(
             m.lane_correlation > 0.6,
@@ -250,9 +318,12 @@ fn a_lone_walker_keeps_its_pace_and_arrives() {
             "{from} -> {to}: {time_s} s for a free time of {free:.1} s, mean speed {mean:.2} \
              of {desired:.2} m/s"
         );
-        assert!(delay_s <= 0.1 * free, "{from} -> {to}: {delay_s} s late");
         assert!(
-            (mean - desired).abs() <= 0.1 * desired,
+            delay_s <= LONE_PACE_TOLERANCE * free,
+            "{from} -> {to}: {delay_s} s late"
+        );
+        assert!(
+            (mean - desired).abs() <= LONE_PACE_TOLERANCE * desired,
             "{from} -> {to}: mean speed {mean} for {desired}"
         );
     }
@@ -272,21 +343,19 @@ fn walkers_go_around_obstacles_and_never_enter_them() {
     for seed in 1..=3 {
         let mut run = new_run(&level, seed, Population::Mixed);
         let mut deepest: f32 = 0.0;
+        let mut arrivals = Arrivals::default();
         while !run.finished() {
             run.step();
+            arrivals.watch(&run);
             assert_inside(&run, "obstacles");
             deepest = deepest.max(max_overlap(&run));
         }
         let s = run.summary().walkers;
-        println!("seed {seed}: {s:?}, overlap {deepest:.4}");
+        let (due, arrived) = arrivals.check(&run, "obstacles");
+        println!("seed {seed}: {s:?}, due {due}, arrived {arrived}, overlap {deepest:.4}");
         assert!(s.spawned >= 20, "seed {seed}: {s:?}");
         assert_eq!(s.gave_up, 0, "seed {seed}: {s:?}");
-        assert_eq!(
-            s.arrived + run.walkers.len() as u32,
-            s.spawned,
-            "seed {seed}: walkers are lost"
-        );
-        assert!(s.arrived * 10 >= s.spawned * 9, "seed {seed}: {s:?}");
+        assert_eq!(s.arrived, s.spawned, "seed {seed}: walkers are missing");
         assert!(
             deepest <= OVERLAP_TOLERANCE,
             "seed {seed}: overlap {deepest}"
@@ -384,15 +453,29 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
     for slice in &mut cars_only.demand {
         slice.flows.retain(|flow| flow.mode != Mode::Pedestrian);
     }
-    for (seed, population) in [(1, Population::Mixed), (2, Population::Careless)] {
-        let mut with = new_run(&level, seed, population);
+    for (seed, population, scale) in [
+        (1, Population::Mixed, 1.0),
+        (2, Population::Careless, 1.0),
+        (1, Population::Careless, 4.0),
+        (2, Population::Careless, 4.0),
+    ] {
+        let options = RunOptions {
+            seed,
+            population,
+            demand_scale: scale,
+        };
+        let mut with = StreetRun::new(&level, &Design::new(&level.id), options).expect("builds");
         let mut deepest: f32 = 0.0;
+        let mut arrivals = Arrivals::default();
         while !with.finished() {
             with.step();
+            arrivals.watch(&with);
             assert_inside(&with, "carrefour");
             deepest = deepest.max(max_overlap(&with));
         }
-        let mut without = new_run(&cars_only, seed, population);
+        let (due, arrived) = arrivals.check(&with, "carrefour");
+        let mut without =
+            StreetRun::new(&cars_only, &Design::new(&level.id), options).expect("builds");
         without.run_to_end();
         let vehicle_events = |run: &StreetRun| -> Vec<StreetEvent> {
             run.events()
@@ -412,20 +495,16 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
         assert_eq!(
             vehicle_events(&with),
             vehicle_events(&without),
-            "seed {seed}"
+            "seed {seed} {population:?} x{scale}"
         );
         let s = with.summary();
         println!(
-            "seed {seed} {population:?}: {:?}, overlap {deepest:.4}",
+            "seed {seed} {population:?} x{scale}: {:?}, due {due}, arrived {arrived}, \
+             overlap {deepest:.4}",
             s.walkers
         );
         assert!(s.walkers.spawned >= 10, "seed {seed}: {:?}", s.walkers);
         assert_eq!(s.walkers.gave_up, 0, "seed {seed}: {:?}", s.walkers);
-        assert_eq!(
-            s.walkers.arrived,
-            s.walkers.spawned - with.walkers.len() as u32,
-            "seed {seed}: walkers are lost"
-        );
         assert!(
             deepest <= OVERLAP_TOLERANCE,
             "seed {seed}: overlap {deepest}"
@@ -452,4 +531,65 @@ fn a_dense_crowd_annoys_more_than_a_light_one() {
     );
     assert!(dense > light);
     assert!(dense_crowded > light_crowded);
+}
+
+#[test]
+fn a_pedestrian_flow_counts_people_not_groups() {
+    // 600 people an hour for 10 minutes: 100 people a run, in groups or alone.
+    let level = sidewalk(30.0, 3.0, "", &walk_flow("west", "east", 600), 600.0);
+    let (mut people, mut groups) = (0, 0);
+    for seed in 1..=10 {
+        let mut run = new_run(&level, seed, Population::Mixed);
+        run.run_to_end();
+        for e in run.events() {
+            if let StreetEvent::WalkerSpawned { agent, group, .. } = e.event {
+                people += 1;
+                if agent == group {
+                    groups += 1;
+                }
+            }
+        }
+    }
+    println!("{people} people in {groups} spawns over 10 runs (1 000 expected)");
+    assert!((900..=1100).contains(&people), "{people} people");
+    assert!(groups < people, "groups come in too");
+}
+
+#[test]
+fn a_thin_barrier_is_never_walked_through() {
+    // A 0.2 m barrier across most of the sidewalk, open at the south side.
+    let barrier = r#"
+        (kind: Barrier, shape: Polygon([(30.0, 0.0), (30.2, 0.0), (30.2, 2.2), (30.0, 2.2)])),
+    "#;
+    let flows = walk_flow("west", "east", 1200) + &walk_flow("east", "west", 1200);
+    let level = sidewalk(60.0, 3.0, barrier, &flows, 40.0);
+    let edges = [
+        (Vec2::new(30.0, 0.0), Vec2::new(30.2, 0.0)),
+        (Vec2::new(30.2, 0.0), Vec2::new(30.2, 2.2)),
+        (Vec2::new(30.2, 2.2), Vec2::new(30.0, 2.2)),
+        (Vec2::new(30.0, 2.2), Vec2::new(30.0, 0.0)),
+    ];
+    for seed in 1..=3 {
+        let mut run = new_run(&level, seed, Population::Mixed);
+        let mut arrivals = Arrivals::default();
+        let mut through = 0;
+        while !run.finished() {
+            run.step();
+            arrivals.watch(&run);
+            assert_inside(&run, "barrier");
+            for walker in run.walkers.values() {
+                let crossed = edges.iter().any(|(a, b)| {
+                    tf_sim::geom::polygon::segment_intersection(walker.prev_pos, walker.pos, *a, *b)
+                        .is_some()
+                });
+                through += usize::from(crossed);
+            }
+        }
+        let (due, arrived) = arrivals.check(&run, "barrier");
+        println!("seed {seed}: due {due}, arrived {arrived}");
+        assert_eq!(through, 0, "seed {seed}: a walker went through the barrier");
+        let s = run.summary().walkers;
+        assert!(s.spawned >= 20, "seed {seed}: people walk past the barrier");
+        assert_eq!(s.arrived, s.spawned, "seed {seed}: walkers are missing");
+    }
 }

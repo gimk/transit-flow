@@ -37,6 +37,7 @@ use super::grid::Grid;
 use super::walk::WalkSpace;
 use super::walker::{Walker, WalkerSeen};
 use super::{CONFLICT_COOLDOWN_S, GIVE_UP_S};
+use crate::geom::polygon::segment_intersection;
 use crate::geom::segment::closest_point_to_segment;
 use crate::street::ids::AgentId;
 
@@ -103,9 +104,6 @@ pub const CROWD_WEIGHT: f64 = 0.5;
 pub const BUMP_COST_S: f64 = 2.0;
 /// Walkers further apart than this are not tested for overlap in a tick, metres.
 const PAIR_REACH: f32 = 1.0;
-/// A wall crossed by less than this is undone (a walker moves about 0.1 m per tick at
-/// most).
-const CROSS_BAND: f32 = 0.3;
 /// Grid cells for walkers, metres: a query of the anticipation range reads about 6 × 6
 /// cells.
 pub const WALKER_CELL: f32 = 2.0;
@@ -150,8 +148,9 @@ pub struct WalkStats {
     /// and all walker ticks with a force above 1 m/s²: their ratio shows oscillation.
     pub force_flips: u32,
     pub force_samples: u32,
-    /// Ticks where a walker moving faster than 0.2 m/s turned by more than 90 degrees
-    /// from the tick before, and all walker ticks above that speed.
+    /// Ticks where a walker moving faster than 0.2 m/s reversed (its velocity turned by
+    /// more than 120 degrees from the tick before; a sidestep in a crush turns by about
+    /// 90), and all walker ticks above that speed.
     pub velocity_flips: u32,
     pub velocity_samples: u32,
 }
@@ -213,13 +212,18 @@ fn wall_contact(p: Vec2, a: Vec2, b: Vec2) -> (Vec2, bool) {
     (q, interior)
 }
 
-/// Pushes a body out of walls and obstacles.
-fn push_out(space: &WalkSpace, mut p: Vec2, r: f32) -> Vec2 {
+/// Pushes a body out of walls and obstacles. A wall the body went through during this
+/// tick (from `before`, where it was at the start of the tick, on the wall's walkable
+/// side) is undone; a body merely near the back of a wall (a thin barrier) stays on its
+/// own side.
+fn push_out(space: &WalkSpace, mut p: Vec2, before: Vec2, r: f32) -> Vec2 {
     for wall in &space.walls {
-        let (q, interior) = wall_contact(p, wall.a, wall.b);
+        let came_through = (before - wall.a).dot(wall.normal) >= 0.0
+            && segment_intersection(before, p, wall.a, wall.b).is_some();
+        let q = closest_point_to_segment(p, wall.a, wall.b);
         let d = p - q;
         let dist = d.length();
-        if interior && d.dot(wall.normal) < 0.0 && dist < CROSS_BAND {
+        if came_through {
             p = q + wall.normal * r;
         } else if dist < r {
             let out = if dist > 1e-6 { d / dist } else { wall.normal };
@@ -302,7 +306,8 @@ impl StreetRun {
             }
         }
         let area = std::f64::consts::PI * f64::from(DENSITY_RADIUS * DENSITY_RADIUS);
-        let density = f64::from(near + 1) / area;
+        // The others only: a walker alone walks at its free speed.
+        let density = f64::from(near) / area;
         let mut pace = speed_share(walker.density) as f32;
         if walker.members.len() > 1 {
             let mut middle = Vec2::ZERO;
@@ -445,7 +450,7 @@ impl StreetRun {
         for _ in 0..CONSTRAINT_PASSES {
             self.part_bodies(&pairs);
             for walker in self.walkers.values_mut() {
-                walker.pos = push_out(&self.walk_space, walker.pos, walker.radius);
+                walker.pos = push_out(&self.walk_space, walker.pos, walker.prev_pos, walker.radius);
             }
         }
         for walker in self.walkers.values_mut() {
@@ -457,7 +462,7 @@ impl StreetRun {
             walker.vel = (walker.pos - walker.prev_pos) / DT as f32;
             if before.length() > 0.2 && walker.vel.length() > 0.2 {
                 stats.velocity_samples += 1;
-                if before.dot(walker.vel) < 0.0 {
+                if before.dot(walker.vel) < -0.5 * before.length() * walker.vel.length() {
                     stats.velocity_flips += 1;
                 }
             }
@@ -486,6 +491,7 @@ impl StreetRun {
         self.walk_stats = stats;
         let tick = self.tick;
         let cooldown = (CONFLICT_COOLDOWN_S / DT).round() as u64;
+        self.bump_last.retain(|_, last| tick - *last < cooldown);
         for (a, b, at) in bumps {
             if self
                 .bump_last

@@ -11,7 +11,7 @@ use super::agent::{Agent, Traits, body_size, chance, vehicle_class};
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::route::{self, RoutePath};
-use super::walker::WalkSpawn;
+use super::walker::{MEAN_GROUP_SIZE, WalkSpawn};
 use super::{StreetRun, mix};
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
@@ -51,7 +51,14 @@ impl StreetRun {
                 if vehicle_class(flow.mode).is_none() && flow.mode != Mode::Pedestrian {
                     continue;
                 }
-                let p = f64::from(flow.per_hour) * self.demand_scale / 3600.0 * DT;
+                // `per_hour` counts people: a pedestrian wish brings a group of
+                // `MEAN_GROUP_SIZE` people on average.
+                let per_wish = if flow.mode == Mode::Pedestrian {
+                    f64::from(MEAN_GROUP_SIZE)
+                } else {
+                    1.0
+                };
+                let p = f64::from(flow.per_hour) * self.demand_scale / 3600.0 * DT / per_wish;
                 if chance(&mut self.flow_state[s][f].rng, p) {
                     self.flow_state[s][f].backlog += 1;
                 }

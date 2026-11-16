@@ -1,7 +1,8 @@
 //! Headless run of one street level (pivot plan §5): the day's traffic on the level's
 //! street, with the empty design or a design file, stepped at 20 Hz. Prints the summary
-//! (vehicles, then pedestrians under `walkers`), the crowd measures and the replay hash; `--events` prints the event log first. Use it to check a design
-//! or a population without the window.
+//! (vehicles, then pedestrians under `walkers`), the crowd measures and the replay
+//! hash; `--events` prints the event log first. Use it to check a design or a
+//! population without the window.
 //! Run: `cargo run -p tf_sim --release --bin run_level -- <level-id> [--design <file.json>]
 //! [--seed <n>] [--population careful|mixed|careless] [--demand-scale <x>] [--events]`.
 

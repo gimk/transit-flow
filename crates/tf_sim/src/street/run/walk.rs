@@ -624,8 +624,11 @@ impl WalkSpace {
             let here = *areas.last().expect("a corridor starts somewhere");
             let next = if portal.areas.0 == here {
                 portal.areas.1
-            } else {
+            } else if portal.areas.1 == here {
                 portal.areas.0
+            } else {
+                // The chain of portals does not join up: no corridor.
+                return None;
             };
             // Left and right as seen walking from `here` into `next`.
             let across = self.areas[next].polygon.centroid() - self.areas[here].polygon.centroid();

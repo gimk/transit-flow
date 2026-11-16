@@ -17,6 +17,7 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use super::agent::Population;
+use super::crowd::ARRIVE_DISTANCE;
 use super::events::StreetEvent;
 use super::walk::{WalkPath, path_length, string_pull};
 use super::{StreetRun, mix};
@@ -31,6 +32,9 @@ pub const WALKER_ID_BASE: i32 = 1_000_000;
 /// in groups: Moussaïd et al. 2010, PLoS ONE 5(4): e10047).
 pub const GROUP_PAIR_SHARE: f32 = 0.20;
 pub const GROUP_THREE_SHARE: f32 = 0.07;
+/// The mean number of people a spawn brings. A pedestrian flow makes this many times
+/// fewer wishes, so its `per_hour` counts people, not groups.
+pub const MEAN_GROUP_SIZE: f32 = 1.0 + GROUP_PAIR_SHARE + 2.0 * GROUP_THREE_SHARE;
 /// Members of a group come in this far apart, metres (start value: side by side with a
 /// small gap).
 pub const GROUP_SPACING: f32 = 0.7;
@@ -285,6 +289,38 @@ impl StreetRun {
         (target, path_length(&points))
     }
 
+    /// Where the walkers of one spawn stand at the entry: side by side across the entry
+    /// line, in rows when it is too narrow.
+    fn entry_positions(&self, entry_index: usize, drawn: &[Drawn], lateral: f32) -> Vec<Vec2> {
+        let size = drawn.len();
+        let entry = &self.walk_space.entries[entry_index];
+        let length = entry.a.distance(entry.b);
+        let along = (entry.b - entry.a).normalize_or_zero();
+        let margin = drawn
+            .iter()
+            .map(|d| d.traits.radius as f32)
+            .fold(0.0, f32::max)
+            + SPAWN_GAP;
+        let per_row = (((length - 2.0 * margin) / GROUP_SPACING).floor() as usize + 1).max(1);
+        let mut positions = Vec::with_capacity(size);
+        for k in 0..size {
+            let (row, col) = (k / per_row, k % per_row);
+            let in_row = per_row.min(size - row * per_row);
+            let half = (in_row - 1) as f32 * 0.5 * GROUP_SPACING;
+            let low = margin + half;
+            let high = length - margin - half;
+            let center = if low <= high {
+                (lateral * length).clamp(low, high)
+            } else {
+                length * 0.5
+            };
+            let t = center + (col as f32 * GROUP_SPACING - half);
+            positions
+                .push(entry.a + along * t + entry.inward * (margin + row as f32 * GROUP_SPACING));
+        }
+        positions
+    }
+
     /// Brings in walkers from gate `from` to gate `to`: one walker, or the group its draws
     /// make (`group_size` overrides the size drawn, for tests). The draws come from the
     /// first walker's stream, so a blocked attempt draws the same again next time.
@@ -315,37 +351,29 @@ impl StreetRun {
         for k in 1..size {
             drawn.push(self.draw_walker(AgentId(first.0 + k as i32)));
         }
-        // Side by side across the entry line, in rows when it is too narrow.
-        let entry = &self.walk_space.entries[entry_index];
-        let length = entry.a.distance(entry.b);
-        let along = (entry.b - entry.a).normalize_or_zero();
-        let margin = drawn
-            .iter()
-            .map(|d| d.traits.radius as f32)
-            .fold(0.0, f32::max)
-            + SPAWN_GAP;
-        let per_row = (((length - 2.0 * margin) / GROUP_SPACING).floor() as usize + 1).max(1);
-        let mut positions = Vec::with_capacity(size);
-        for k in 0..size {
-            let (row, col) = (k / per_row, k % per_row);
-            let in_row = per_row.min(size - row * per_row);
-            let half = (in_row - 1) as f32 * 0.5 * GROUP_SPACING;
-            let low = margin + half;
-            let high = length - margin - half;
-            let center = if low <= high {
-                (lateral * length).clamp(low, high)
-            } else {
-                length * 0.5
-            };
-            let t = center + (col as f32 * GROUP_SPACING - half);
-            positions
-                .push(entry.a + along * t + entry.inward * (margin + row as f32 * GROUP_SPACING));
+        // A group that does not fit at the entry (it is too narrow, or an obstacle stands
+        // there) comes in as its first walker alone; only a crowd at the entry makes the
+        // spawn wait.
+        let mut positions = self.entry_positions(entry_index, &drawn, lateral);
+        let fits = |run: &Self, drawn: &[Drawn], positions: &[Vec2]| {
+            drawn.iter().zip(positions).all(|(d, pos)| {
+                run.walk_space.contains(*pos)
+                    && run.walk_space.obstacle_depth(*pos, d.traits.radius as f32) <= 0.0
+            })
+        };
+        if !fits(self, &drawn, &positions) {
+            if drawn.len() == 1 {
+                return WalkSpawn::NoRoute;
+            }
+            drawn.truncate(1);
+            positions = self.entry_positions(entry_index, &drawn, lateral);
+            if !fits(self, &drawn, &positions) {
+                return WalkSpawn::NoRoute;
+            }
         }
+        let size = drawn.len();
         for (d, pos) in drawn.iter().zip(&positions) {
             let r = d.traits.radius as f32;
-            if !self.walk_space.contains(*pos) || self.walk_space.obstacle_depth(*pos, r) > 0.0 {
-                return WalkSpawn::Blocked;
-            }
             let crowded = self
                 .walkers
                 .values()
@@ -383,7 +411,7 @@ impl StreetRun {
                 group: first,
                 members: members.clone(),
                 spawn_tick: self.tick,
-                free_time_s: f64::from(length) / speed,
+                free_time_s: f64::from((length - ARRIVE_DISTANCE).max(0.0)) / speed,
                 density: 0.0,
                 crowded_ticks: 0,
                 bumps: 0,
