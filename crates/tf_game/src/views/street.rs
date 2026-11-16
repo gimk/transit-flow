@@ -1,13 +1,14 @@
 //! The street game's level, drawn from its data (pivot plan Phase 1): building blocks,
 //! every strip by its use, separators, the junction area and its corners, lane
 //! directions, the movements through the junction (thin lines, a debug look until the
-//! art direction is chosen), obstacles and green areas. Rebuilt whole when
-//! `LoadedLevel` changes; a level is small.
+//! art direction is chosen), obstacles, green areas and the zebra crossings (Phase 3).
+//! Rebuilt whole when `LoadedLevel` changes; a level is small.
 
 use bevy::prelude::*;
+use tf_sim::roads::lane_builder;
 use tf_sim::street::Street;
 use tf_sim::street::level::{AreaKind, ObstacleKind, Shape};
-use tf_sim::street::space::{Separator, StripUse};
+use tf_sim::street::space::{Profile, Separator, Strip, StripUse};
 
 use super::{ViewMaterial, spawn_shape, z};
 use crate::camera::sim_to_bevy;
@@ -31,6 +32,9 @@ pub const KERB_WIDTH: f32 = 0.3;
 pub const MOVEMENT_WIDTH: f32 = 0.15;
 pub const ARROW_SPACING: f32 = 15.0;
 pub const ARROW_SIZE: f32 = 1.0;
+/// A zebra bar's width along the traffic direction, and the gap to the next bar, metres.
+pub const ZEBRA_BAR_WIDTH_M: f32 = 0.5;
+pub const ZEBRA_GAP_M: f32 = 0.5;
 
 pub fn strip_color(use_: StripUse) -> Color {
     match use_ {
@@ -109,6 +113,9 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
             draw_arrows(&mut markings, &lane.polyline());
         }
     }
+    for bar in zebra_bars(street) {
+        markings.polygon(&points(&bar), PAINT_COLOR);
+    }
     for junction in street.junctions.values() {
         for movement in street.movements(junction.node) {
             markings.polyline(
@@ -141,6 +148,57 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
         (markings, z::STREET_MARKINGS),
         (things, z::STREET_THINGS),
     ]
+}
+
+/// One polygon per zebra bar of every crossing, in street metres (y down), for the
+/// markings layer. A bar runs along the traffic direction and so is a band 0.5 m wide
+/// across the crossing, with 0.5 m gaps; the last bar of a crossing may be narrower. The
+/// bars span the carriageway only, from one kerb to the other, because a zebra paints the
+/// road, not the sidewalks.
+pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
+    let mut bars = Vec::new();
+    let period = ZEBRA_BAR_WIDTH_M + ZEBRA_GAP_M;
+    for crossing in street.crossings.values() {
+        let Some(segment) = street.segments.get(&crossing.segment) else {
+            continue;
+        };
+        let Some((left, right)) = carriageway(&segment.profile) else {
+            continue;
+        };
+        let left_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(left));
+        let right_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(right));
+        let start = crossing.at - crossing.width * 0.5;
+        let end = crossing.at + crossing.width * 0.5;
+        let mut at = start;
+        while at < end {
+            let to = (at + ZEBRA_BAR_WIDTH_M).min(end);
+            if to - at > 0.01 {
+                let mut polygon: Vec<Vec2> =
+                    lane_builder::sub_polyline(&left_edge, f64::from(at), f64::from(to));
+                let mut other: Vec<Vec2> =
+                    lane_builder::sub_polyline(&right_edge, f64::from(at), f64::from(to));
+                other.reverse();
+                polygon.extend(other);
+                if polygon.len() >= 3 {
+                    bars.push(polygon);
+                }
+            }
+            at += period;
+        }
+    }
+    bars
+}
+
+/// The span of a profile's carriageway, as offsets from its centerline: from the kerb of
+/// the leftmost strip that is not a foot strip to the kerb of the rightmost one. A level's
+/// profiles put the sidewalks at both ends (a median or a bike lane in the middle is road).
+pub fn carriageway(profile: &Profile) -> Option<(f32, f32)> {
+    let foot = |strip: &Strip| matches!(strip.use_, StripUse::Sidewalk | StripUse::Terrace);
+    let first = profile.strips.iter().position(|strip| !foot(strip))?;
+    let last = profile.strips.iter().rposition(|strip| !foot(strip))?;
+    let (left, _) = profile.strip_span(first);
+    let (_, right) = profile.strip_span(last);
+    Some((left, right))
 }
 
 fn draw_separator(shapes: &mut ShapeBuilder, separator: Separator, edge: &[Vec2]) {
