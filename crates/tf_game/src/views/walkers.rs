@@ -6,7 +6,10 @@
 //! The colour tells the archetype, so the crowd of a level is readable at a glance:
 //! teal for a careful walker, indigo for a commuter, olive for a resident, pink for a
 //! child, brown for an older person, orange for a hurried one (the warm colour, like the
-//! careless driver). A walker waiting at a kerb is darker.
+//! careless driver). A walker waiting at a kerb is darker. A walker hit by a vehicle is
+//! magenta, like a crashed car, and stays where it fell; one that jaywalks (its way
+//! crosses out of a crossing) or stepped off on red wears a red ring, so rule-breaking
+//! reads.
 //!
 //! A body of 0.25 m is 2 px at the default framing of a level: small, but the circle is
 //! drawn with 12 sides, so it still reads at the zoom steps that show one junction arm.
@@ -30,6 +33,10 @@ pub const WALK_ELDERLY_COLOR: SimColor = [0.62, 0.45, 0.30, 1.0];
 pub const WALK_HURRIED_COLOR: SimColor = [0.98, 0.58, 0.10, 1.0];
 /// The mark of the side a walker goes to.
 pub const WALK_MARK_COLOR: SimColor = [0.1, 0.1, 0.12, 1.0];
+/// A walker hit by a vehicle: magenta, like a crashed car, where it fell.
+pub const WALK_HIT_COLOR: SimColor = [1.0, 0.0, 1.0, 1.0];
+/// The ring of a walker breaking the rule: out of a crossing, or on red (stage C).
+pub const WALK_RULE_COLOR: SimColor = [0.92, 0.12, 0.10, 1.0];
 /// Circle sides. 12 keeps a 0.25 m body round at the high zoom steps.
 const SIDES: u32 = 12;
 /// The mark sits this far out along the heading, as a share of the radius, and its size
@@ -37,6 +44,9 @@ const SIDES: u32 = 12;
 const MARK_OFFSET: f32 = 0.75;
 const MARK_LENGTH_M: f32 = 0.15;
 const MARK_WIDTH_SHARE: f32 = 1.2;
+/// The rule-breaker's ring: this far outside the body, this wide, metres.
+const RING_GAP_M: f32 = 0.04;
+const RING_WIDTH_M: f32 = 0.12;
 
 /// The colour of a walker archetype's name (`Walker::archetype`); grey for an unknown one.
 pub fn walker_color(archetype: &str) -> SimColor {
@@ -101,7 +111,9 @@ pub fn draw_walkers(
             None => (pose.pos, pose.dir),
         };
         let base = walker_color(pose.archetype);
-        let color = if pose.waiting {
+        let color = if pose.hit {
+            WALK_HIT_COLOR
+        } else if pose.waiting {
             [
                 base[0] * WAITING_SHADE,
                 base[1] * WAITING_SHADE,
@@ -113,6 +125,15 @@ pub fn draw_walkers(
         };
         let center = sim_to_bevy(level_to_world(pos));
         let radius = pose.radius * PX_PER_M;
+        if pose.off_crossing || pose.walked_on_red {
+            batch.ring(
+                center,
+                radius + (RING_GAP_M + RING_WIDTH_M) * PX_PER_M,
+                RING_WIDTH_M * PX_PER_M,
+                SIDES,
+                WALK_RULE_COLOR,
+            );
+        }
         batch.circle(center, radius, SIDES, color);
         if dir != Vec2::ZERO {
             // The sim turns clockwise on screen (y down); the Bevy world is y up.

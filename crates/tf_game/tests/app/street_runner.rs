@@ -9,7 +9,7 @@ use tf_game::street_runner::{StreetRunner, StreetSnapshot};
 use tf_game::views::agents::AgentViews;
 use tf_game::views::walkers::WalkerView;
 use tf_sim::street::ids::AgentId;
-use tf_sim::street::run::{RunOptions, StreetRun};
+use tf_sim::street::run::{CauseKind, RunOptions, StreetRun};
 use tf_sim::street::{Design, LevelFile};
 
 const LEVEL: &str = "carrefour-ecole";
@@ -140,6 +140,15 @@ fn a_snapshot_copies_the_walkers_in_id_order() {
         assert_eq!(pose.group, walker.group);
         assert_eq!(pose.radius, walker.radius);
         assert_eq!(pose.waiting, walker.kerb_since.is_some());
+        assert_eq!(pose.hit, walker.hit());
+        assert_eq!(pose.off_crossing, walker.off_crossing);
+        assert_eq!(
+            pose.walked_on_red,
+            walker
+                .recent
+                .iter()
+                .any(|(_, cause)| matches!(cause, CauseKind::WalkedOnRed))
+        );
         let area = run.walk_paths[walker.path].areas[walker.area_index];
         assert_eq!(
             pose.on_carriageway,

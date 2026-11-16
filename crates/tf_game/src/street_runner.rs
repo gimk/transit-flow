@@ -21,7 +21,7 @@ use std::thread::JoinHandle;
 use bevy::prelude::*;
 use tf_sim::street::ids::AgentId;
 use tf_sim::street::level::Mode;
-use tf_sim::street::run::{StreetRun, TICK_RATE};
+use tf_sim::street::run::{CauseKind, StreetRun, TICK_RATE};
 
 use crate::runner::{LEAD_TICKS, MAX_TICKS_PER_BATCH, SPEED_MULTIPLIERS};
 
@@ -43,9 +43,12 @@ pub struct AgentPose {
     pub width: f32,
     pub speed: f32,
     pub frustration: f32,
+    /// Stopped for others: at its own line, or held by people on foot.
     pub waiting: bool,
     pub crashed: bool,
     pub distracted: bool,
+    /// A driver stopped at its junction line by pedestrians (stage C).
+    pub held_by_walkers: bool,
 }
 
 /// One pedestrian as the views need it (pivot plan Phase 3): `pos` and `prev_pos` are the
@@ -67,6 +70,12 @@ pub struct WalkerPose {
     pub waiting: bool,
     /// On a carriageway (a crossing or out of one).
     pub on_carriageway: bool,
+    /// Its way crosses a carriageway out of a crossing (stage C: it jaywalks).
+    pub off_crossing: bool,
+    /// It stepped off on red within the run's recent-cause window.
+    pub walked_on_red: bool,
+    /// Hit by a vehicle: it lies where it fell until the run takes it away.
+    pub hit: bool,
 }
 
 /// The agents after one tick, in id order (so a pose is found by binary search).
@@ -95,9 +104,10 @@ impl StreetSnapshot {
                 width: agent.width as f32,
                 speed: agent.speed as f32,
                 frustration: agent.frustration as f32,
-                waiting: agent.wait_ticks > 0,
+                waiting: agent.wait_ticks > 0 || agent.held_by_walkers,
                 crashed: agent.crashed(),
                 distracted: run.tick < agent.distracted_until,
+                held_by_walkers: agent.held_by_walkers,
             })
             .collect();
         agents.sort_by_key(|pose| pose.id);
@@ -119,6 +129,12 @@ impl StreetSnapshot {
                     radius: walker.radius,
                     waiting: walker.kerb_since.is_some(),
                     on_carriageway: area.is_some_and(|kind| kind.is_road()),
+                    off_crossing: walker.off_crossing,
+                    walked_on_red: walker
+                        .recent
+                        .iter()
+                        .any(|(_, cause)| matches!(cause, CauseKind::WalkedOnRed)),
+                    hit: walker.hit(),
                 }
             })
             .collect();
@@ -466,7 +482,8 @@ mod tests {
             let pose = &snapshot.agents[snapshot.index_of(agent.id).expect("found")];
             assert_eq!(pose.pos, agent.pos);
             assert_eq!(pose.archetype, agent.archetype);
-            assert_eq!(pose.waiting, agent.wait_ticks > 0);
+            assert_eq!(pose.waiting, agent.wait_ticks > 0 || agent.held_by_walkers);
+            assert_eq!(pose.held_by_walkers, agent.held_by_walkers);
             assert_eq!(pose.crashed, agent.crashed());
         }
         assert_eq!(snapshot.index_of(AgentId(-1)), None);
