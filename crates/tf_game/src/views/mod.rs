@@ -15,6 +15,7 @@ use bevy::prelude::*;
 
 use crate::draw::ShapeBuilder;
 
+pub mod agents;
 pub mod externals;
 pub mod grid;
 pub mod ground;
@@ -67,6 +68,8 @@ pub mod z {
     pub const VEHICLES: f32 = 40.0;
     /// Pedestrians and waiting riders (M9.2).
     pub const PEDESTRIANS: f32 = 45.0;
+    /// The street run's agents (pivot Phase 2): over the street level, under the old map.
+    pub const AGENTS: f32 = 6.0;
     /// Light bars at junctions (M9.3).
     pub const LIGHTS: f32 = 50.0;
     /// Debug overlays: lane overlay, heatmap (M9.3).
@@ -123,6 +126,7 @@ impl Plugin for ViewsPlugin {
             overlays::OverlayViewPlugin,
             tool_preview::ToolPreviewPlugin,
             street::StreetViewPlugin,
+            agents::AgentViewPlugin,
         ));
     }
 }

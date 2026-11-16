@@ -17,5 +17,6 @@ pub mod plugin;
 pub mod runner;
 pub mod snapshot;
 pub mod status;
+pub mod street_runner;
 pub mod tools;
 pub mod views;

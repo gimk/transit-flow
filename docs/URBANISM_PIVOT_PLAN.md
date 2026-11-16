@@ -1,8 +1,34 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). **Phase 2 in progress:** the headless core for cars is written and tested (see the notes under Phase 2); the threaded runner check and the views are left.
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). **Phase 2 in progress:** the headless core for cars is written and tested (see the notes under Phase 2); the threaded runner and the car view are written and type-checked, but not tested yet (see "Progress notes" below).
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
+
+## Progress notes
+
+The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
+
+### 2026-11-16: Phase 2, threaded runner and car view (Windows laptop, to finish on the Mac)
+
+**State.** Branch `pivot-phase-2`. The Phase 2 code for criteria (c) and (d) is written and **type-checked only** (`cargo check -p tf_game --tests`: no errors, no warnings). No test of it has run, and clippy did not run.
+
+**Why not tested.** The Windows laptop uses the GNU Rust toolchain (no MSVC, no admin rights). `tf_sim` builds and tests there. A `tf_game` (Bevy) executable compiles but does not link: `ld: undefined reference to _head_..._dll_imports_lib` for the Windows system DLLs (`kernel32`, `shell32`, `combase`, ...) in the `windows`, `windows-sys`, `getrandom` and `parking_lot` rlibs. This is a toolchain problem, not a code problem. Run and test `tf_game` on the Mac.
+
+**New files.**
+- `crates/tf_game/src/street_runner.rs`: `StreetRunner` (Bevy resource) runs a `StreetRun` on one worker thread, with the same design as `runner::SimHandle` (the run moves by value over channels, batches of at most `MAX_TICKS_PER_BATCH`, `LEAD_TICKS` ahead, a `StreetSnapshot` after each tick, `view_from` / `view_to` / `view_alpha`, `get_mut` waits for the worker, `threaded: false` runs inline). The frame delta only moves the render clock, which sets how many whole `step()` calls run (rule of section 7.4). `StreetRunPlugin` advances it in `PreUpdate`.
+- `crates/tf_game/src/views/agents.rs`: one batched mesh (`moving::Batch`), rewritten every frame. Each car is an oriented rectangle with a dark mark at the front. The colour shows the archetype: careful blue, resident green-grey, commuter grey, taxi yellow, delivery white, careless red. A waiting car is darker; a crashed car is magenta. Depth `views::z::AGENTS` (6.0).
+- `crates/tf_game/tests/street_runner.rs`: an inline and a threaded run of `carrefour-ecole` through uneven frame deltas and speed changes must give the same `log_hash()` as a headless `run_to_end()` (criterion c). A view test checks that cars are drawn while a run exists and not after `stop()`.
+
+**Changed (wiring only, the old game stays frozen).** `lib.rs` (module), `plugin.rs` (`StreetRunPlugin` in `GamePlugin`), `views/mod.rs` (module, `z::AGENTS`, `AgentViewPlugin`), `capture.rs`: new screenshot flags `--run` (only with `--level`: starts a run of the level with the empty design, inline), `--seed <n>` and `--population <careful|mixed|careless>` (both only with `--run`), with parse tests.
+
+**To do on the Mac, in this order.**
+1. `git pull` the branch, then `scripts/check.sh` (fmt, clippy, all tests). Fix what fails. Clippy has never run on the new files.
+2. Check the replay hashes in `crates/tf_sim/tests/street_run.rs`: they were made on Windows (Phase 2 notes, "Open points"). If they differ on macOS, find out why (float library) before you accept new values.
+3. Look at the cars: `(caffeinate -u -t 120 &); sleep 1`, then `cargo play -- --level carrefour-ecole --run --frames 600 --screenshot <scratch>/run.png`, and also `--population careless`. The cars must show their style colours and point in their direction of travel (if they look turned by 90° or mirrored, the angle sign in `views/agents.rs` is wrong). Criterion (d).
+4. If all is good: mark Phase 2 done in the Status line and in the Phase 2 notes (criteria c and d), remove this entry or shorten it, and commit.
+5. Disk hygiene (CLAUDE.md): `du -sh target` after the first Bevy build of the session.
+
+**Then:** Phase 3 (pedestrians and crowds). Section 5.2 asks to confirm the 20 Hz tick there, with the crowd forces.
 
 ---
 
@@ -316,8 +342,8 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Done when, so far:
   - (a) holds: a careful population has zero contacts over 50 seeds on the test level, also at 4 times the demand and under signals.
   - (b) holds: a careless population has conflicts and contacts, and every contact seen has a cause chain (30 seeds at 3 times the demand).
-  - (c) holds headless only: the same inputs give the same event log hash, and four replay hashes are stored in `street_run.rs`. The threaded runner is not wired yet.
-  - (d) is measured but not visible: top speeds differ by more than 1 m/s in a mixed run. No view draws the agents yet.
+  - (c) holds headless only: the same inputs give the same event log hash, and four replay hashes are stored in `street_run.rs`. The threaded runner (`tf_game::street_runner`) and its hash test are written but not run yet (see "Progress notes").
+  - (d) is measured: top speeds differ by more than 1 m/s in a mixed run. The car view (`views/agents.rs`, colour per archetype) is written but not seen yet (see "Progress notes").
 - How it works: each agent decides from a snapshot of the world as old as its reaction time, and from its own current state. Decisions are collected before any agent moves. A driver follows with the old following-speed formula, with the reaction time taken out. It stops at the line unless the junction check says go, and it brakes for any body in its path. The junction check uses the old critical gaps (2.0 s straight, 1.5 s right, 2.5 s left), then signs, then priority to the right, then "do not block the box". The personality bends these rules: not looking at an approach, not yielding, running a late red, accepting a shorter gap, or looking away for 1 to 2.5 s. When the front of a car passes the line, the careful check runs again. What it would have refused becomes the causes.
 - Conflicts: post-encroachment time under 1.5 s where two movements cross (serious under 0.75 s), and braking harder than 4.5 m/s² for someone (serious from 7 m/s²). Time to collision is not measured yet. Contacts: oriented rectangles tested at three moments of each tick.
 - Signals: fixed-time plans (`SignalPlan`, with phases of approach segments, amber and all-red), taken from the level's junction or from a default made from the arms. No actuation, and no pedestrian or bicycle lamps yet.
