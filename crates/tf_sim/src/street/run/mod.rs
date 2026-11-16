@@ -16,6 +16,7 @@ pub mod events;
 pub mod grid;
 pub mod route;
 mod spawn;
+pub mod walk;
 
 use std::collections::VecDeque;
 

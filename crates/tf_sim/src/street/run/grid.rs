@@ -11,6 +11,7 @@ pub const CELL: f32 = 8.0;
 #[derive(Clone, Debug, Default)]
 pub struct Grid {
     min: Vec2,
+    cell: f32,
     cols: usize,
     rows: usize,
     cells: Vec<Vec<u32>>,
@@ -18,11 +19,17 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(bounds: Bounds) -> Self {
+        Self::with_cell(bounds, CELL)
+    }
+
+    /// A grid with cells of `cell` metres (walkers query a few metres around them).
+    pub fn with_cell(bounds: Bounds, cell: f32) -> Self {
         let size = bounds.size();
-        let cols = (size.x / CELL).ceil().max(1.0) as usize;
-        let rows = (size.y / CELL).ceil().max(1.0) as usize;
+        let cols = (size.x / cell).ceil().max(1.0) as usize;
+        let rows = (size.y / cell).ceil().max(1.0) as usize;
         Self {
             min: bounds.min,
+            cell,
             cols,
             rows,
             cells: vec![Vec::new(); cols * rows],
@@ -32,7 +39,7 @@ impl Grid {
     /// Points outside the bounds go to the nearest edge cell (agents enter and leave
     /// through the edges).
     fn cell_of(&self, point: Vec2) -> (usize, usize) {
-        let local = (point - self.min) / CELL;
+        let local = (point - self.min) / self.cell;
         let col = (local.x.floor().max(0.0) as usize).min(self.cols - 1);
         let row = (local.y.floor().max(0.0) as usize).min(self.rows - 1);
         (col, row)
