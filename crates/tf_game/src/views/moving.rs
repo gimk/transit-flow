@@ -130,6 +130,30 @@ impl Batch {
         }
     }
 
+    /// A filled circle: a hub and `segments` rim vertices (at least 3), `segments`
+    /// triangles.
+    pub fn circle(&mut self, center: Vec2, radius: f32, segments: u32, color: SimColor) {
+        let segments = segments.max(3);
+        let rgba = linear(color);
+        let hub = self.positions.len() as u32;
+        self.positions.push([center.x, center.y, 0.0]);
+        self.colors.push(rgba);
+        let first = self.positions.len() as u32;
+        for k in 0..segments {
+            let a = std::f32::consts::TAU * k as f32 / segments as f32;
+            self.positions.push([
+                center.x + a.cos() * radius,
+                center.y + a.sin() * radius,
+                0.0,
+            ]);
+            self.colors.push(rgba);
+        }
+        for k in 0..segments {
+            self.indices
+                .extend_from_slice(&[hub, first + k, first + (k + 1) % segments]);
+        }
+    }
+
     /// Moves the buffers into `mesh` (and takes its old ones back, to be cleared and
     /// reused next frame), so nothing is allocated once the buffers are big enough.
     pub fn swap_into(&mut self, mesh: &mut Mesh) {

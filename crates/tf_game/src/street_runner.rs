@@ -48,11 +48,33 @@ pub struct AgentPose {
     pub distracted: bool,
 }
 
+/// One pedestrian as the views need it (pivot plan Phase 3): `pos` and `prev_pos` are the
+/// body as the run has it, `dir` the way it walks (its velocity, or its last step while it
+/// stands), so the view can put the mark of the side it goes to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalkerPose {
+    pub id: AgentId,
+    pub archetype: &'static str,
+    /// The first member of its group; its own id when it walks alone.
+    pub group: AgentId,
+    /// Middle of the body, metres, y down.
+    pub pos: Vec2,
+    pub prev_pos: Vec2,
+    /// Unit vector of the way it walks; zero when it has not moved lately.
+    pub dir: Vec2,
+    pub radius: f32,
+    /// It stands at a kerb, waiting for its gap.
+    pub waiting: bool,
+    /// On a carriageway (a crossing or out of one).
+    pub on_carriageway: bool,
+}
+
 /// The agents after one tick, in id order (so a pose is found by binary search).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StreetSnapshot {
     pub tick: u64,
     pub agents: Vec<AgentPose>,
+    pub walkers: Vec<WalkerPose>,
     pub finished: bool,
 }
 
@@ -79,9 +101,32 @@ impl StreetSnapshot {
             })
             .collect();
         agents.sort_by_key(|pose| pose.id);
+        let mut walkers: Vec<WalkerPose> = run
+            .walkers
+            .values()
+            .map(|walker| {
+                let area = run.walk_paths[walker.path]
+                    .areas
+                    .get(walker.area_index)
+                    .map(|&index| run.walk_space.areas[index].kind);
+                WalkerPose {
+                    id: walker.id,
+                    archetype: walker.archetype,
+                    group: walker.group,
+                    pos: walker.pos,
+                    prev_pos: walker.prev_pos,
+                    dir: walk_direction(walker.vel, walker.pos - walker.prev_pos),
+                    radius: walker.radius,
+                    waiting: walker.kerb_since.is_some(),
+                    on_carriageway: area.is_some_and(|kind| kind.is_road()),
+                }
+            })
+            .collect();
+        walkers.sort_by_key(|pose| pose.id);
         Self {
             tick: run.tick,
             agents,
+            walkers,
             finished: run.finished(),
         }
     }
@@ -89,6 +134,23 @@ impl StreetSnapshot {
     /// Where agent `id` is in `agents`.
     pub fn index_of(&self, id: AgentId) -> Option<usize> {
         self.agents.binary_search_by_key(&id, |pose| pose.id).ok()
+    }
+
+    /// Where walker `id` is in `walkers`.
+    pub fn walker_index_of(&self, id: AgentId) -> Option<usize> {
+        self.walkers.binary_search_by_key(&id, |pose| pose.id).ok()
+    }
+}
+
+/// The unit direction a walking body shows: its velocity, or its last step while the
+/// crowd holds it in place (a standing body keeps the heading it came with).
+fn walk_direction(vel: Vec2, step: Vec2) -> Vec2 {
+    if vel.length_squared() > 1e-6 {
+        vel.normalize()
+    } else if step.length_squared() > 1e-8 {
+        step.normalize()
+    } else {
+        Vec2::ZERO
     }
 }
 
