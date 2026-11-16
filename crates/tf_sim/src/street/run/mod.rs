@@ -6,10 +6,15 @@
 //! it.
 //!
 //! A tick goes through these stages, in this order (one private method each): slice,
-//! spawn, prepare, decide, integrate, zones, contacts, removals, snapshot, end.
+//! spawn, prepare, decide, integrate, walk, zones, contacts, removals, snapshot, end.
+//!
+//! Vehicles are `agents` (they follow lanes, `drive`); pedestrians are `walkers` (they
+//! move freely in the walkable space, `walk`, `walker` and `crowd`). In Phase 3 stage A
+//! the two do not meet: no perception and no contact between them.
 
 pub mod agent;
 mod conflicts;
+pub mod crowd;
 pub mod detect;
 pub mod drive;
 pub mod events;
@@ -17,6 +22,7 @@ pub mod grid;
 pub mod route;
 mod spawn;
 pub mod walk;
+pub mod walker;
 
 use std::collections::VecDeque;
 
@@ -27,6 +33,7 @@ use serde::Serialize;
 use agent::chance;
 pub use agent::{Agent, Approach, Population, Traits};
 use conflicts::{ZoneExits, flush_zones};
+pub use crowd::WalkStats;
 use drive::{DT, Decision, MoveInfo, STOPPED_SPEED, Seen, Snapshot, TURN_ACCELERATION, World};
 use events::rounded;
 pub use events::{
@@ -34,6 +41,8 @@ pub use events::{
 };
 use grid::Grid;
 use route::RoutePath;
+use walk::{WalkPath, WalkSpace};
+pub use walker::{WalkSpawn, Walker, is_walker};
 
 use crate::rng::SimRng;
 use crate::roads::lane::Turn;
@@ -111,6 +120,21 @@ pub struct Summary {
     pub total_annoyance: f64,
     pub ticks: u64,
     pub ended: Option<EndReason>,
+    /// The pedestrians (the fields above count vehicles only).
+    pub walkers: WalkSummary,
+}
+
+/// What the pedestrians of a run add up to.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct WalkSummary {
+    pub spawned: u32,
+    pub arrived: u32,
+    pub gave_up: u32,
+    pub mean_delay_s: f64,
+    /// Mean time an arrived walker spent in a dense crowd.
+    pub mean_crowded_s: f64,
+    pub bumps: u32,
+    pub total_annoyance: f64,
 }
 
 /// Agents of one flow of one slice that want to enter, and the stream that makes them.
@@ -121,7 +145,13 @@ struct FlowState {
 
 pub struct StreetRun {
     pub tick: u64,
+    /// The vehicles.
     pub agents: IndexMap<AgentId, Agent>,
+    /// The pedestrians (`walker`: why they are kept apart).
+    pub walkers: IndexMap<AgentId, Walker>,
+    pub walk_space: WalkSpace,
+    pub walk_paths: Vec<WalkPath>,
+    pub walk_stats: WalkStats,
     pub street: Street,
     seed: u64,
     population: Population,
@@ -140,6 +170,11 @@ pub struct StreetRun {
     /// (class bits, from gate, to gate) -> index into `routes`; `None` when no way exists.
     route_cache: IndexMap<(u8, String, String), Option<usize>>,
     next_agent: i32,
+    /// (entry, destination gate) -> index into `walk_paths`; `None` when no way exists.
+    walk_route_cache: IndexMap<(usize, String), Option<usize>>,
+    next_walker: i32,
+    /// The tick of the last bump logged between two walkers.
+    bump_last: IndexMap<(AgentId, AgentId), u64>,
     history: VecDeque<Snapshot>,
     /// (movement, the movement it conflicts with) -> who left the zone of the first
     /// against the second, and when.
@@ -303,10 +338,17 @@ impl StreetRun {
         let first = Snapshot {
             seen: Vec::new(),
             grid: Grid::new(street.bounds),
+            walkers: Vec::new(),
+            walker_grid: Grid::with_cell(street.bounds, crowd::WALKER_CELL),
         };
+        let walk_space = WalkSpace::new(&street, &level.gates);
         Ok(StreetRun {
             tick: 0,
             agents: IndexMap::new(),
+            walkers: IndexMap::new(),
+            walk_space,
+            walk_paths: Vec::new(),
+            walk_stats: WalkStats::default(),
             street,
             seed: options.seed,
             population: options.population,
@@ -322,6 +364,9 @@ impl StreetRun {
             routes: Vec::new(),
             route_cache: IndexMap::new(),
             next_agent: 1,
+            walk_route_cache: IndexMap::new(),
+            next_walker: walker::WALKER_ID_BASE,
+            bump_last: IndexMap::new(),
             history: VecDeque::from([first]),
             zone_exits: IndexMap::new(),
             touching: Vec::new(),
@@ -377,9 +422,11 @@ impl StreetRun {
         self.prepare_stage();
         let decisions = self.decide_stage();
         self.integrate_stage(decisions);
+        self.walk_stage();
         self.zone_stage();
         self.contact_stage();
         self.removal_stage();
+        self.walk_removal_stage();
         self.snapshot_stage();
         self.tick += 1;
         self.end_stage();
@@ -614,7 +661,13 @@ impl StreetRun {
                 crashed: agent.crashed(),
             });
         }
-        self.history.push_back(Snapshot { seen, grid });
+        let (walkers, walker_grid) = self.walker_snapshot();
+        self.history.push_back(Snapshot {
+            seen,
+            grid,
+            walkers,
+            walker_grid,
+        });
         while self.history.len() > HISTORY {
             self.history.pop_front();
         }
@@ -636,7 +689,8 @@ impl StreetRun {
             .iter()
             .flatten()
             .any(|flow| flow.backlog > 0);
-        if self.tick >= total && ((self.agents.is_empty() && !waiting) || self.tick >= grace) {
+        let empty = self.agents.is_empty() && self.walkers.is_empty();
+        if self.tick >= total && ((empty && !waiting) || self.tick >= grace) {
             self.ended = Some(EndReason::Completed);
             self.log(StreetEvent::RunEnded {
                 reason: EndReason::Completed,
@@ -672,10 +726,28 @@ impl StreetRun {
             total_annoyance: 0.0,
             ticks: self.tick,
             ended: self.ended,
+            walkers: WalkSummary::default(),
         };
         let mut delay = 0.0;
+        let (mut walk_delay, mut walk_crowded) = (0.0, 0.0);
         for logged in &self.log {
             match &logged.event {
+                StreetEvent::WalkerSpawned { .. } => s.walkers.spawned += 1,
+                StreetEvent::WalkEnded {
+                    delay_s,
+                    crowded_s,
+                    annoyance,
+                    ..
+                } => {
+                    s.walkers.arrived += 1;
+                    walk_delay += delay_s;
+                    walk_crowded += crowded_s;
+                    s.walkers.total_annoyance += annoyance;
+                }
+                StreetEvent::GaveUp { agent, .. } if is_walker(*agent) => {
+                    s.walkers.gave_up += 1;
+                }
+                StreetEvent::Bump { .. } => s.walkers.bumps += 1,
                 StreetEvent::Spawned { .. } => s.spawned += 1,
                 StreetEvent::TripEnded {
                     delay_s, annoyance, ..
@@ -703,6 +775,10 @@ impl StreetRun {
         }
         if s.arrived > 0 {
             s.mean_delay_s = delay / f64::from(s.arrived);
+        }
+        if s.walkers.arrived > 0 {
+            s.walkers.mean_delay_s = walk_delay / f64::from(s.walkers.arrived);
+            s.walkers.mean_crowded_s = walk_crowded / f64::from(s.walkers.arrived);
         }
         s
     }

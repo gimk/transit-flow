@@ -12,7 +12,9 @@ const LEVEL: &str = "carrefour-ecole";
 /// Frame lengths (real seconds) and speed indexes (x1, x4, pause, x2) that repeat.
 const DELTAS: [f64; 4] = [0.016, 0.033, 0.007, 0.1];
 const SPEEDS: [usize; 4] = [1, 3, 0, 2];
-const MAX_FRAMES: usize = 5_000_000;
+/// `advance` never waits for the worker, so a frame count says nothing about a threaded
+/// run: the guard is real time.
+const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn new_run() -> StreetRun {
     let level = LevelFile::load(LEVEL).expect("loads");
@@ -31,8 +33,9 @@ fn hash_through_runner(threaded: bool) -> u64 {
     let mut runner = StreetRunner::default();
     runner.start(new_run(), threaded);
     let mut frame = 0;
+    let started = std::time::Instant::now();
     while !runner.view_to().finished {
-        assert!(frame < MAX_FRAMES, "the run never finished");
+        assert!(started.elapsed() < MAX_WAIT, "the run never finished");
         if frame % 40 == 0 {
             runner.set_speed(SPEEDS[(frame / 40) % SPEEDS.len()]);
         }

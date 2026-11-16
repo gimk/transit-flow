@@ -1,6 +1,9 @@
 //! Demand: how agents come into a run (pivot plan §5.4). Each flow of a slice has its own
 //! random stream and a backlog of agents that want to enter; an agent enters when the
 //! entry lane has room, so a jammed gate delays people instead of stacking bodies.
+//! Pedestrian flows work the same way: one wish brings one walker or a small group
+//! (`StreetRun::add_walkers`), which enters when the sidewalk at the gate is clear.
+//! Bicycle flows are not simulated yet.
 
 use glam::Vec2;
 
@@ -8,10 +11,11 @@ use super::agent::{Agent, Traits, body_size, chance, vehicle_class};
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::route::{self, RoutePath};
+use super::walker::WalkSpawn;
 use super::{StreetRun, mix};
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
-use crate::street::level::{Flow, Gate};
+use crate::street::level::{Flow, Gate, Mode};
 use crate::street::model::Street;
 use crate::street::space::Access;
 
@@ -44,7 +48,7 @@ impl StreetRun {
         if let Some(s) = self.current_slice {
             for f in 0..self.slices[s].flows.len() {
                 let flow = &self.slices[s].flows[f];
-                if vehicle_class(flow.mode).is_none() {
+                if vehicle_class(flow.mode).is_none() && flow.mode != Mode::Pedestrian {
                     continue;
                 }
                 let p = f64::from(flow.per_hour) * self.demand_scale / 3600.0 * DT;
@@ -61,7 +65,16 @@ impl StreetRun {
                     continue;
                 }
                 let flow = self.slices[s].flows[f].clone();
-                match self.try_spawn(&flow) {
+                let attempt = if flow.mode == Mode::Pedestrian {
+                    match self.add_walkers(&flow.from, &flow.to, None) {
+                        WalkSpawn::Spawned(_) => Attempt::Spawned,
+                        WalkSpawn::Blocked => Attempt::Blocked,
+                        WalkSpawn::NoRoute => Attempt::NoRoute,
+                    }
+                } else {
+                    self.try_spawn(&flow)
+                };
+                match attempt {
                     Attempt::Spawned => self.flow_state[s][f].backlog -= 1,
                     Attempt::NoRoute => self.flow_state[s][f].backlog = 0,
                     Attempt::Blocked => {}

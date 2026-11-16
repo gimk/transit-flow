@@ -1,6 +1,6 @@
 //! Headless run of one street level (pivot plan §5): the day's traffic on the level's
 //! street, with the empty design or a design file, stepped at 20 Hz. Prints the summary
-//! and the replay hash; `--events` prints the event log first. Use it to check a design
+//! (vehicles, then pedestrians under `walkers`), the crowd measures and the replay hash; `--events` prints the event log first. Use it to check a design
 //! or a population without the window.
 //! Run: `cargo run -p tf_sim --release --bin run_level -- <level-id> [--design <file.json>]
 //! [--seed <n>] [--population careful|mixed|careless] [--demand-scale <x>] [--events]`.
@@ -140,6 +140,17 @@ fn run(args: &Args) -> Result<(), String> {
     println!(
         "{}",
         serde_json::to_string_pretty(&summary).expect("a summary always serializes")
+    );
+    let walk = run.walk_stats;
+    println!(
+        "walkers: deepest overlap {:.3} m (from the forces alone {:.3} m), held back {}, \
+         force flips {}/{}, still walking {}",
+        walk.max_overlap,
+        walk.max_force_overlap,
+        walk.held_back,
+        walk.force_flips,
+        walk.force_samples,
+        run.walkers.len()
     );
     println!("log hash: {:016x}", run.log_hash());
 

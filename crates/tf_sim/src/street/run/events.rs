@@ -131,6 +131,34 @@ pub enum StreetEvent {
         outcome: Outcome,
         causes: Vec<Cause>,
     },
+    /// A pedestrian came in (pivot plan Phase 3). `group` is the first member's id, the
+    /// walker's own when it walks alone.
+    WalkerSpawned {
+        agent: AgentId,
+        archetype: String,
+        from: String,
+        to: String,
+        group: AgentId,
+        group_size: u32,
+    },
+    /// A pedestrian reached its destination.
+    WalkEnded {
+        agent: AgentId,
+        time_s: f64,
+        /// Against the walk on an empty sidewalk.
+        delay_s: f64,
+        /// Time spent in a dense crowd (`crowd::DENSE_CROWD`).
+        crowded_s: f64,
+        bumps: u32,
+        /// Delay, crowding and bumps weighted by the walker's patience (pivot plan §5.6).
+        annoyance: f64,
+    },
+    /// Two pedestrians bumped into each other (pivot plan §5.5: annoyance, no injury).
+    Bump {
+        a: AgentId,
+        b: AgentId,
+        position: Vec2,
+    },
     /// A vehicle stopped by a contact is taken away.
     Cleared {
         agent: AgentId,

@@ -12,6 +12,7 @@ use super::agent::{Agent, Approach};
 use super::events::CauseKind;
 use super::grid::Grid;
 use super::route::RoutePath;
+use super::walker::WalkerSeen;
 use crate::roads::lane::Turn;
 use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::level::Sign;
@@ -101,6 +102,9 @@ pub struct Seen {
 pub struct Snapshot {
     pub seen: Vec<Seen>,
     pub grid: Grid,
+    /// The pedestrians, in id order, and their grid (`crowd::WALKER_CELL`).
+    pub walkers: Vec<WalkerSeen>,
+    pub walker_grid: Grid,
 }
 
 pub struct World<'a> {
