@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). **Next: Phase 2** (agent core: cars).
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). **Phase 2 in progress:** the headless core for cars is written and tested (see the notes under Phase 2); the threaded runner check and the views are left.
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -309,6 +309,27 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Headless binary `run_level` (level, design, seed → event log and score parts).
 
 **Done when:** (a) a population with full compliance and attention has zero contacts over 50 seeds on the test level; (b) a careless population produces conflicts, and each contact has a cause chain; (c) the same seed gives the same event log hash, in two runs and on the threaded runner; (d) cars visibly drive with different styles.
+
+**In progress (2026-11-16).** The headless core for cars is in place. The threaded runner check and the views are not done.
+
+- Code: `tf_sim::street::run` (`agent`, `drive`, `spawn`, `conflicts`, `detect`, `events`, `route`, `grid`), `street::signals`, and the binary `run_level` (`cargo run -p tf_sim --release --bin run_level -- <level> [--design f.json] [--seed n] [--population careful|mixed|careless] [--demand-scale x] [--events]`). Tests: `tf_sim/tests/street_run.rs` and unit tests next to the code.
+- Done when, so far:
+  - (a) holds: a careful population has zero contacts over 50 seeds on the test level, also at 4 times the demand and under signals.
+  - (b) holds: a careless population has conflicts and contacts, and every contact seen has a cause chain (30 seeds at 3 times the demand).
+  - (c) holds headless only: the same inputs give the same event log hash, and four replay hashes are stored in `street_run.rs`. The threaded runner is not wired yet.
+  - (d) is measured but not visible: top speeds differ by more than 1 m/s in a mixed run. No view draws the agents yet.
+- How it works: each agent decides from a snapshot of the world as old as its reaction time, and from its own current state. Decisions are collected before any agent moves. A driver follows with the old following-speed formula, with the reaction time taken out. It stops at the line unless the junction check says go, and it brakes for any body in its path. The junction check uses the old critical gaps (2.0 s straight, 1.5 s right, 2.5 s left), then signs, then priority to the right, then "do not block the box". The personality bends these rules: not looking at an approach, not yielding, running a late red, accepting a shorter gap, or looking away for 1 to 2.5 s. When the front of a car passes the line, the careful check runs again. What it would have refused becomes the causes.
+- Conflicts: post-encroachment time under 1.5 s where two movements cross (serious under 0.75 s), and braking harder than 4.5 m/s² for someone (serious from 7 m/s²). Time to collision is not measured yet. Contacts: oriented rectangles tested at three moments of each tick.
+- Signals: fixed-time plans (`SignalPlan`, with phases of approach segments, amber and all-red), taken from the level's junction or from a default made from the arms. No actuation, and no pedestrian or bicycle lamps yet.
+- Severity: the pedestrian death curve (Rosén & Sander 2009) and the serious injury curve (Tefft 2011) are in `events.rs` for Phase 3. For car against car, no published table by speed was found for city speeds. The table is anchored on three points of Lubbe et al. 2024, and the other values are our own starting values.
+- Tick rate: 20 Hz holds for cars (contacts and zero-contact tests are stable). The decision of section 5.2 also needs the crowd forces, so it is confirmed in Phase 3.
+- Speed: the default run of the test level takes about 20 ms headless (about 13 000 times real time, 25 cars). Not measured at 400 agents. Contact detection tests every pair.
+- Open points and limits:
+  - With priority to the right and 4 times the demand, careful drivers from the north wait more than 120 s and give up (41 in 20 seeds), because the west flow leaves no gap. Under signals nobody gives up. The user accepted this on 2026-11-16: it is a problem for the player to solve, and a test pins it.
+  - Careful drivers still brake hard sometimes (about 0.7 events per run).
+  - Agents have no lateral position inside the lane. Sight is not blocked by obstacles or large vehicles. The level's bicycle and pedestrian flows are not simulated. The level file has no archetype mix: a run picks a population (careful, mixed, careless).
+  - The run is not inside `Simulation` and does not use the `Outbox`: `StreetRun` keeps its own event log.
+  - The replay hashes were made on Windows and are not yet checked on macOS. A difference in the float library can change them.
 
 ### Phase 3 — Pedestrians and crowds (L)
 - Walk graph on walkable polygons; social-force movement, groups, density effect, obstacles.

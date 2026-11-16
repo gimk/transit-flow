@@ -5,6 +5,7 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use super::signals::SignalPlan;
 use super::space::{Access, Profile};
 use crate::geom::{Circle, Polygon};
 
@@ -79,7 +80,7 @@ pub enum JunctionControl {
     /// The French default rule.
     #[default]
     PriorityToRight,
-    /// Signal plans arrive in Phase 2; the control is only recorded until then.
+    /// Lights, run by the junction's `signal_plan` (or a default plan made from its arms).
     Signals,
 }
 
@@ -114,6 +115,9 @@ pub struct JunctionDef {
     /// The level's default turn bans; the player's come from the design.
     #[serde(default)]
     pub banned_turns: Vec<TurnBan>,
+    /// Used when `control` is `Signals`; without one the run makes a default plan.
+    #[serde(default)]
+    pub signal_plan: Option<SignalPlan>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

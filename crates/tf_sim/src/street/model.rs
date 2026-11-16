@@ -13,6 +13,7 @@ use super::lanes::{self, LaneGroup, StreetLane};
 use super::level::{
     AreaKind, Bounds, Constraint, JunctionControl, LevelFile, ObstacleKind, Shape, Sign, TurnBan,
 };
+use super::signals::SignalPlan;
 use super::space::{Access, Direction, Profile, StripUse};
 use crate::geom::Polygon;
 use crate::roads::lane::Turn;
@@ -70,6 +71,7 @@ pub struct Junction {
     pub signs: IndexMap<i32, Sign>,
     /// The level's bans, then the player's.
     pub banned_turns: Vec<TurnBan>,
+    pub signal_plan: Option<SignalPlan>,
     pub movement_ids: Vec<StreetLaneId>,
 }
 
@@ -206,6 +208,7 @@ impl Street {
                     control: def.control,
                     signs: def.signs.iter().copied().collect(),
                     banned_turns: def.banned_turns.clone(),
+                    signal_plan: def.signal_plan.clone(),
                     movement_ids: Vec::new(),
                 },
             );
