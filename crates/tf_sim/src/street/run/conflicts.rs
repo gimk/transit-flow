@@ -18,7 +18,7 @@ use crate::rng::SimRng;
 use crate::street::ids::{AgentId, StreetLaneId};
 
 /// Speeding is told when an agent drives this much faster than the limit.
-const SPEEDING_FACTOR: f64 = 1.15;
+pub(super) const SPEEDING_FACTOR: f64 = 1.15;
 /// "Could not stop" is blamed on agents who braked hard this recently.
 const HARD_BRAKE_MEMORY_S: f64 = 3.0;
 /// Bodies further apart than the sum of their half lengths and this are not tested.
@@ -120,7 +120,14 @@ impl StreetRun {
             return;
         }
         self.conflict_last.insert(key, self.tick);
-        let causes = self.causes_between(self.agents.get(&a), self.agents.get(&b));
+        let mut causes = self.causes_between(self.agents.get(&a), self.agents.get(&b));
+        for cause in self
+            .walker_causes(a)
+            .into_iter()
+            .chain(self.walker_causes(b))
+        {
+            push_unique(&mut causes, cause);
+        }
         self.log(StreetEvent::Conflict {
             kind,
             grade,
@@ -252,7 +259,7 @@ impl StreetRun {
     }
 }
 
-fn push_unique(causes: &mut Vec<Cause>, cause: Cause) {
+pub(super) fn push_unique(causes: &mut Vec<Cause>, cause: Cause) {
     if !causes.contains(&cause) {
         causes.push(cause);
     }

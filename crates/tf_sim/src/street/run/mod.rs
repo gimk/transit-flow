@@ -21,10 +21,13 @@ pub mod drive;
 pub mod events;
 pub mod grid;
 pub mod kerb;
+mod meet;
 pub mod route;
+pub mod sight;
 mod spawn;
 pub mod walk;
 pub mod walker;
+pub mod yielding;
 
 use std::collections::VecDeque;
 
@@ -50,7 +53,7 @@ use crate::rng::SimRng;
 use crate::roads::lane::Turn;
 use crate::street::design::Design;
 use crate::street::ids::{AgentId, StreetLaneId};
-use crate::street::level::{Gate, JunctionControl, LevelFile, Sign, Slice};
+use crate::street::level::{Gate, JunctionControl, LevelFile, Mode, Sign, Slice};
 use crate::street::model::{EditError, Street};
 use crate::street::signals::{
     DEFAULT_ALL_RED_S, DEFAULT_AMBER_S, DEFAULT_GREEN_S, Light, SignalPhase, SignalPlan,
@@ -143,6 +146,12 @@ pub struct WalkSummary {
     pub crossings: u32,
     pub off_crossing: u32,
     pub on_red: u32,
+    /// Contacts with vehicles (the vehicle fields above count vehicles against vehicles
+    /// only), and their outcomes for the walkers.
+    pub contacts: u32,
+    pub light_injuries: u32,
+    pub serious_injuries: u32,
+    pub deaths: u32,
     /// Mean time an arrived walker waited at kerbs.
     pub mean_kerb_wait_s: f64,
 }
@@ -182,6 +191,9 @@ pub struct StreetRun {
     route_areas: Vec<Vec<kerb::RouteArea>>,
     /// Crossing areas under signals: (junction, the approaches that conflict).
     walk_signals: IndexMap<usize, (i32, Vec<i32>)>,
+    /// What blocks sight, and the kerb points of each zebra (`yielding`).
+    sight: sight::SightBlockers,
+    kerb_points: IndexMap<usize, Vec<Vec2>>,
     /// (class bits, from gate, to gate) -> index into `routes`; `None` when no way exists.
     route_cache: IndexMap<(u8, String, String), Option<usize>>,
     next_agent: i32,
@@ -196,6 +208,8 @@ pub struct StreetRun {
     /// against the second, and when.
     zone_exits: ZoneExits,
     touching: Vec<(AgentId, AgentId)>,
+    /// Who is in the band of each vehicle route through each road area (`meet`).
+    bands: meet::Bands,
     conflict_last: IndexMap<(ConflictKind, AgentId, AgentId), u64>,
     log: Vec<LoggedEvent>,
     ended: Option<EndReason>,
@@ -359,6 +373,8 @@ impl StreetRun {
         };
         let walk_space = WalkSpace::new(&street, &level.gates);
         let walk_signals = kerb::walk_signal_table(&walk_space, &street, &moves);
+        let sight = sight::SightBlockers::new(&street);
+        let kerb_points = yielding::kerb_points(&walk_space);
         Ok(StreetRun {
             tick: 0,
             agents: IndexMap::new(),
@@ -381,6 +397,8 @@ impl StreetRun {
             routes: Vec::new(),
             route_areas: Vec::new(),
             walk_signals,
+            sight,
+            kerb_points,
             route_cache: IndexMap::new(),
             next_agent: 1,
             walk_route_cache: IndexMap::new(),
@@ -389,6 +407,7 @@ impl StreetRun {
             history: VecDeque::from([first]),
             zone_exits: IndexMap::new(),
             touching: Vec::new(),
+            bands: IndexMap::new(),
             conflict_last: IndexMap::new(),
             log: Vec::new(),
             ended: None,
@@ -444,6 +463,8 @@ impl StreetRun {
         self.walk_stage();
         self.zone_stage();
         self.contact_stage();
+        self.walker_contact_stage();
+        self.walker_pet_stage();
         self.removal_stage();
         self.walk_removal_stage();
         self.snapshot_stage();
@@ -522,6 +543,40 @@ impl StreetRun {
                     });
                 }
             }
+            // The zebra coming up: two draws when it comes up (pivot plan Phase 3 stage C,
+            // `yielding`), after the junction's and before the per-tick ones.
+            if agent
+                .crossing
+                .as_ref()
+                .is_some_and(|crossing| rear >= crossing.exit_d)
+            {
+                agent.crossing = None;
+            }
+            if agent.crossing.is_none() {
+                let next = self.route_areas[agent.route].iter().find(|area| {
+                    area.exit > rear
+                        && matches!(
+                            self.walk_space.areas[area.area].kind,
+                            walk::AreaKind::Crossing { .. }
+                        )
+                });
+                if let Some(area) = next {
+                    let t = agent.traits;
+                    let p = ((1.0 - t.compliance) * (1.0 + 2.0 * agent.frustration)).min(1.0);
+                    let yields = chance(&mut agent.rng, 1.0 - 0.5 * p);
+                    let looks = chance(&mut agent.rng, 1.0 - 0.5 * (1.0 - t.attention));
+                    agent.crossing = Some(yielding::CrossingApproach {
+                        area: area.area,
+                        enter_d: area.enter,
+                        exit_d: area.exit,
+                        yields,
+                        looks,
+                        entered: false,
+                        pending_yield: None,
+                        worst_fast: None,
+                    });
+                }
+            }
             // Both draws every tick, so the stream does not depend on the outcome.
             let looks_away = chance(
                 &mut agent.rng,
@@ -540,12 +595,25 @@ impl StreetRun {
 
     /// Stage 4: every decision is taken from the past, before any agent moves.
     fn decide_stage(&self) -> Vec<Decision> {
+        let walk_lights: IndexMap<usize, bool> = self
+            .walk_signals
+            .keys()
+            .map(|area| (*area, self.walk_light(*area).unwrap_or(true)))
+            .collect();
+        let peds = yielding::PedWorld {
+            space: &self.walk_space,
+            route_areas: &self.route_areas,
+            sight: &self.sight,
+            kerb_points: &self.kerb_points,
+            walk_lights: &walk_lights,
+        };
         let world = World {
             street: &self.street,
             routes: &self.routes,
             moves: &self.moves,
             plans: &self.plans,
             time_s: self.tick as f64 * DT,
+            peds: Some(&peds),
         };
         self.agents
             .values()
@@ -574,6 +642,23 @@ impl StreetRun {
                 }
                 approach.stopped_at_sign |= decision.stopped_at_sign;
                 approach.committed |= decision.committed;
+            }
+            agent.held_by_walkers = decision.held_by_walkers;
+            if decision.held_by_walkers {
+                agent.last_held = Some(tick);
+            }
+            if let Some(crossing) = &mut agent.crossing {
+                crossing.entered |= decision.crossing_entered;
+                if let Some((not_yielding, too_fast)) = decision.crossing_pending {
+                    crossing.pending_yield = not_yielding;
+                    if let Some((speed, limit)) = too_fast
+                        && crossing
+                            .worst_fast
+                            .is_none_or(|(s, l)| speed - limit > s - l)
+                    {
+                        crossing.worst_fast = Some((speed, limit));
+                    }
+                }
             }
             for cause in decision.causes {
                 agent.recent.push((tick, cause));
@@ -678,6 +763,8 @@ impl StreetRun {
                 in_junction,
                 wait_ticks: agent.wait_ticks,
                 crashed: agent.crashed(),
+                hides: matches!(agent.mode, Mode::Van | Mode::Bus),
+                held_by_walkers: agent.held_by_walkers,
             });
         }
         let (walkers, walker_grid) = self.walker_snapshot();
@@ -790,6 +877,15 @@ impl StreetRun {
                     Grade::Light => s.conflicts_light += 1,
                     Grade::Serious => s.conflicts_serious += 1,
                 },
+                StreetEvent::Contact { b, outcome, .. } if is_walker(*b) => {
+                    s.walkers.contacts += 1;
+                    match outcome {
+                        Outcome::LightInjury => s.walkers.light_injuries += 1,
+                        Outcome::SeriousInjury => s.walkers.serious_injuries += 1,
+                        Outcome::Death => s.walkers.deaths += 1,
+                        Outcome::NoInjury => {}
+                    }
+                }
                 StreetEvent::Contact { outcome, .. } => {
                     s.contacts += 1;
                     match outcome {

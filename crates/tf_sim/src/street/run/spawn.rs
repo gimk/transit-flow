@@ -171,6 +171,9 @@ impl StreetRun {
             in_zones: Vec::new(),
             recent: Vec::new(),
             last_hard_brake: None,
+            crossing: None,
+            held_by_walkers: false,
+            last_held: None,
         };
         let route = &self.routes[route_index];
         let world = World {
@@ -179,6 +182,7 @@ impl StreetRun {
             moves: &self.moves,
             plans: &self.plans,
             time_s: self.tick as f64 * DT,
+            peds: None,
         };
         let wanted = drive::desired_speed(&agent, first, &world);
         // The newcomer decides from the world one reaction time ago, where the leader was

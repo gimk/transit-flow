@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use tf_sim::street::level::{JunctionControl, LevelFile, Sign};
+use tf_sim::street::level::{JunctionControl, LevelFile, Mode, Sign};
 use tf_sim::street::run::detect::{Body, overlap};
 use tf_sim::street::run::{ConflictKind, Population, RunOptions, StreetEvent, StreetRun, Summary};
 use tf_sim::street::signals::Light;
@@ -85,9 +85,22 @@ fn body(agent: &tf_sim::street::run::Agent) -> Body {
 
 // --- (a) careful drivers -------------------------------------------------------------
 
+/// The level without its pedestrian flows. Since Phase 3 stage C drivers yield to people
+/// on foot, and steady streams of them at the zebras past the junction exits can starve
+/// an approach (the user's decision of 2026-11-16): the tests whose subject is drivers
+/// among themselves run without walkers. Cars and walkers together are covered by the
+/// stage C tests in `street_meet.rs` (`careful_drivers_and_walkers_never_touch`: no
+/// contact, and a stated bound on those who give up).
+fn without_walkers(mut level: LevelFile) -> LevelFile {
+    for slice in &mut level.demand {
+        slice.flows.retain(|flow| flow.mode != Mode::Pedestrian);
+    }
+    level
+}
+
 #[test]
 fn careful_drivers_never_touch_and_everybody_arrives() {
-    for (seed, s) in summaries(&level(), 1..=50, Population::Careful, 1.0) {
+    for (seed, s) in summaries(&without_walkers(level()), 1..=50, Population::Careful, 1.0) {
         assert_eq!(s.contacts, 0, "seed {seed}: {s:?}");
         assert_eq!(s.arrived, s.spawned, "seed {seed}: {s:?}");
         assert_eq!(s.gave_up, 0, "seed {seed}: {s:?}");
@@ -124,9 +137,15 @@ fn careful_drivers_cope_with_signals() {
     }
 }
 
+/// Without walkers: see `without_walkers`.
 #[test]
 fn careful_drivers_cope_with_signals_on_a_busy_street() {
-    for (seed, s) in summaries(&signal_level(), 1..=20, Population::Careful, 4.0) {
+    for (seed, s) in summaries(
+        &without_walkers(signal_level()),
+        1..=20,
+        Population::Careful,
+        4.0,
+    ) {
         assert_eq!(s.contacts, 0, "seed {seed}: {s:?}");
         assert_eq!(s.gave_up, 0, "seed {seed}: {s:?}");
     }
@@ -223,10 +242,10 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// tests"); if it is not, the change is a bug. Never edit a hash to make a test pass
 /// without knowing why it moved.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x2c01_50a8_2cb9_840d),
-    (2, Population::Mixed, 1.0, 0x388b_07b9_efdf_0b5f),
-    (1, Population::Careless, 4.0, 0xf53e_c7c2_b531_cb79),
-    (2, Population::Careless, 4.0, 0xd2cd_bac1_8750_2a1d),
+    (1, Population::Mixed, 1.0, 0xa2c3_17ad_16ca_4f12),
+    (2, Population::Mixed, 1.0, 0x3266_06cd_4d49_10e7),
+    (1, Population::Careless, 4.0, 0xecd8_d0bc_c5fe_3fb8),
+    (2, Population::Careless, 4.0, 0x94af_4386_c96c_681d),
 ];
 
 #[test]

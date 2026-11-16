@@ -9,13 +9,23 @@
 //!   approach gets green (`SignalPlan::until_conflict`); otherwise it is on red. On red
 //!   it goes only if its kerb draw is below `(1 - compliance) * (1 + 2 * frustration)`,
 //!   the rule bending of the drivers; a fully compliant walker never does.
-//! - **Gap.** Then, lights or not, it looks at the vehicles as they were one reaction
-//!   time ago (the same snapshots drivers decide from) and goes when none would reach
-//!   the road areas it crosses before it is over: the crossing time at its pace, shrunk
-//!   by its risk tolerance and by frustration for those who bend rules
-//!   (`GAP_SHRINK`), plus a margin. Drivers do not yield yet (stage C), so walkers also
-//!   wait for a gap at a zebra, with the smaller `ZEBRA_MARGIN_S`: by French law they
-//!   have priority there.
+//! - **Gap.** Then, lights or not, it looks at the vehicles it can see (`sight`) as they
+//!   were one reaction time ago (the same snapshots drivers decide from) and goes when
+//!   none would reach its crossing line before it is over: the crossing time at its
+//!   pace, shrunk by its risk tolerance and by frustration for those who bend rules
+//!   (`GAP_SHRINK`), plus a margin (`ZEBRA_MARGIN_S` on a zebra, `ROAD_MARGIN_S`
+//!   elsewhere). A standing vehicle counts by the time it would take to get there from
+//!   rest.
+//! - **Trust at a zebra.** Drivers yield on a zebra (`yielding`). A walker stepping on
+//!   one by the rules (not on red) does not wait for a vehicle that can still stop
+//!   comfortably before its line: farther than its braking distance at
+//!   `COMFORT_BRAKE` after `TRUST_REACTION_S`, plus `TRUST_MARGIN`. A vehicle that cannot
+//!   stop holds it back like elsewhere, so a careful walker never steps in front of one.
+//!   A standing vehicle can always stop, but its driver sees the walker only after its
+//!   reaction time: one standing close to the line (`START_REACH`) is trusted only once
+//!   the walker has shown it will cross for `INTENT_SHOWN_S`.
+//! - A walker who steps off in a gap a careful walker (no shrink, no trust it is not owed)
+//!   would not take records `AcceptedShortGap` for the cause chains.
 //!
 //! A vehicle's time to the crossing comes from its route: the route's line through each
 //! road area is sampled once per route (`road_areas_of`), and the part of that line
@@ -24,7 +34,7 @@
 
 use indexmap::IndexMap;
 
-use super::drive::DT;
+use super::drive::{COMFORT_BRAKE, DT, travel_time};
 use super::route::RoutePath;
 use super::walk::{AreaKind, WalkSpace};
 use super::walker::Walker;
@@ -42,8 +52,21 @@ pub const GAP_SHRINK: f64 = 0.5;
 /// values).
 pub const ZEBRA_MARGIN_S: f64 = 0.5;
 pub const ROAD_MARGIN_S: f64 = 1.0;
-/// A vehicle slower than this is standing (waiting at a line): it does not close a gap.
+/// A vehicle slower than this is standing: it counts by its time to start and get there.
 const STANDING_SPEED: f64 = 0.3;
+/// At a zebra, a walker trusts a driver who can stop after this reaction time (more
+/// than the slowest careful driver's, 1.2 s), braking at `COMFORT_BRAKE`, with this much
+/// room left, seconds and metres (start values).
+pub const TRUST_REACTION_S: f64 = 1.5;
+pub const TRUST_MARGIN: f64 = 2.0;
+/// A standing vehicle closer to the walker's line than this could pull away into it
+/// before its driver has seen the walker (`ACCELERATION` during `TRUST_REACTION_S`, plus
+/// `TRUST_MARGIN`), metres.
+pub const START_REACH: f64 =
+    0.5 * super::drive::ACCELERATION * TRUST_REACTION_S * TRUST_REACTION_S + TRUST_MARGIN;
+/// How long a walker shows it will cross (waiting at the kerb) before it trusts a car
+/// standing close: longer than a driver's reaction time, seconds (start value).
+pub const INTENT_SHOWN_S: f64 = 1.5;
 /// Routes are sampled this often to find the road areas they cross, metres.
 const ROUTE_STEP: f64 = 0.5;
 /// A vehicle meets a walker where its route line comes this close to the walker's
@@ -73,6 +96,8 @@ pub enum KerbChoice {
     Go {
         gap_s: Option<f64>,
         on_red: bool,
+        /// A careful walker would not have gone.
+        short_gap: bool,
     },
 }
 
@@ -219,7 +244,11 @@ impl StreetRun {
     pub(super) fn kerb_choice(&self, walker: &Walker) -> Option<KerbChoice> {
         let path = &self.walk_paths[walker.path];
         let k = walker.area_index;
-        if k + 1 >= path.areas.len() || !path.kerbs[k] || walker.cleared_kerb == Some(k) {
+        if walker.hit()
+            || k + 1 >= path.areas.len()
+            || !path.kerbs[k]
+            || walker.cleared_kerb == Some(k)
+        {
             return None;
         }
         let (l, r) = path.portals[k];
@@ -255,27 +284,52 @@ impl StreetRun {
             ROAD_MARGIN_S
         };
         let needed = crossing_s * (1.0 - GAP_SHRINK * bend) + margin;
-        let gap_s = self.vehicle_gap(walker, &roads, far);
-        if gap_s.is_some_and(|gap| gap <= needed) {
+        let careful_needed = crossing_s + margin;
+        let trust = on_zebra && !on_red;
+        let vehicles = self.vehicles_ahead(walker, &roads, far);
+        let holds = |need: f64| {
+            vehicles
+                .iter()
+                .any(|&(time, can_stop)| time <= need && !(trust && can_stop))
+        };
+        if holds(needed) {
             return Some(KerbChoice::Wait);
         }
-        Some(KerbChoice::Go { gap_s, on_red })
+        let gap_s = vehicles.iter().map(|(time, _)| *time).reduce(f64::min);
+        Some(KerbChoice::Go {
+            gap_s,
+            on_red,
+            short_gap: holds(careful_needed),
+        })
     }
 
-    /// The soonest a vehicle reaches the walker's crossing line (from where it stands to
-    /// `far`) on one of `roads`, seen one reaction time ago and brought forward to now at
-    /// the speed it had; `None` when nobody is coming.
-    fn vehicle_gap(&self, walker: &Walker, roads: &[usize], far: glam::Vec2) -> Option<f64> {
+    /// The vehicles the walker sees coming to its crossing line (from where it stands to
+    /// `far`) on one of `roads`, seen one reaction time ago and brought forward to now:
+    /// (seconds until it gets there, whether it can still stop before it).
+    fn vehicles_ahead(
+        &self,
+        walker: &Walker,
+        roads: &[usize],
+        far: glam::Vec2,
+    ) -> Vec<(f64, bool)> {
         let back = ((walker.traits.reaction_s / DT).round() as usize)
             .max(1)
             .min(self.history.len());
         let snapshot = &self.history[self.history.len() - back];
         let age = back as f64 * DT;
-        let mut soonest: Option<f64> = None;
+        let mut found = Vec::new();
         for seen in &snapshot.seen {
             let Some(agent) = self.agents.get(&seen.id) else {
                 continue;
             };
+            let nose = seen.pos + seen.dir * (seen.length as f32 * 0.5);
+            if self
+                .sight
+                .hider(walker.pos, nose, &snapshot.seen, Some(seen.id))
+                .is_some()
+            {
+                continue;
+            }
             let route = &self.routes[agent.route];
             let Some(j) = route.lanes.iter().position(|lane| *lane == seen.lane) else {
                 continue;
@@ -300,16 +354,29 @@ impl StreetRun {
                 if front - seen.length >= leave {
                     continue;
                 }
-                let time = if front >= enter {
-                    0.0
-                } else if seen.speed > STANDING_SPEED {
-                    ((enter - front) / seen.speed - age).max(0.0)
+                let distance = enter - front;
+                let v = seen.speed;
+                let (time, can_stop) = if distance <= 0.0 {
+                    (0.0, false)
+                } else if v > STANDING_SPEED {
+                    let stop = v * v / (2.0 * COMFORT_BRAKE) + v * TRUST_REACTION_S;
+                    (
+                        (distance / v - age).max(0.0),
+                        distance - v * age > stop + TRUST_MARGIN,
+                    )
                 } else {
-                    continue;
+                    let limit = self.street.lanes[&seen.lane].speed_limit;
+                    let shown = walker
+                        .kerb_since
+                        .is_some_and(|since| (self.tick - since) as f64 * DT >= INTENT_SHOWN_S);
+                    (
+                        travel_time(distance, 0.0, limit),
+                        distance > START_REACH || shown,
+                    )
                 };
-                soonest = Some(soonest.map_or(time, |s: f64| s.min(time)));
+                found.push((time, can_stop));
             }
         }
-        soonest
+        found
     }
 }
