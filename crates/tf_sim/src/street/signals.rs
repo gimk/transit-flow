@@ -1,14 +1,19 @@
 //! Signal plans (pivot plan §4, "Signals"): a junction's lights as a fixed cycle of
 //! phases, each giving green to some approaches (the signal groups), then amber, then an
 //! all-red clearance. The light of an approach is a pure function of the run time, so
-//! there is no signal state to save or to keep in step. Actuation (minimum green,
-//! extension, skipping empty phases) and pedestrian and bicycle lamps come later.
+//! there is no signal state to save or to keep in step. Pedestrian lights walk with the
+//! phases that leave their crossing free (`walk`). Actuation (minimum green, extension,
+//! skipping empty phases), push buttons and bicycle lamps come later.
 
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_GREEN_S: f32 = 20.0;
 pub const DEFAULT_AMBER_S: f32 = 3.0;
 pub const DEFAULT_ALL_RED_S: f32 = 2.0;
+/// A pedestrian light stops showing walk this long before the end of its phase's
+/// green, so a walker who starts last is across before the conflicting green (start
+/// value: with the amber and the all-red, 10 s to clear a 7 m street).
+pub const PEDESTRIAN_CLEARANCE_S: f32 = 5.0;
 
 fn default_amber() -> f32 {
     DEFAULT_AMBER_S
@@ -84,6 +89,28 @@ impl SignalPlan {
     }
 }
 
+impl SignalPlan {
+    /// The pedestrian light of a crossing that the traffic of the `conflicting` approaches
+    /// drives over, at `time_s`: walk during the green of a phase that gives none of them
+    /// green, until `PEDESTRIAN_CLEARANCE_S` before that green ends.
+    pub fn walk(&self, conflicting: &[i32], time_s: f64) -> bool {
+        let cycle = self.cycle_s();
+        if cycle <= 0.0 {
+            return false;
+        }
+        let t = time_s.rem_euclid(cycle);
+        let mut start = 0.0;
+        for phase in &self.phases {
+            let walk_end = start + f64::from(phase.green_s - PEDESTRIAN_CLEARANCE_S);
+            if t >= start && t < walk_end {
+                return !phase.green.iter().any(|a| conflicting.contains(a));
+            }
+            start += self.phase_s(phase);
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +129,28 @@ mod tests {
             ],
             amber_s: 3.0,
             all_red_s: 2.0,
+        }
+    }
+
+    #[test]
+    fn walk_shows_only_in_phases_that_leave_the_crossing_free() {
+        let plan = plan();
+        // A crossing that approaches 1 and 2 drive over: walk in the phase of 3 only
+        // (its green is 25 to 35 s), until the clearance before that green ends (30 s).
+        let conflicting = [1, 2];
+        assert!(!plan.walk(&conflicting, 5.0));
+        assert!(!plan.walk(&conflicting, 21.0), "amber of the first phase");
+        assert!(!plan.walk(&conflicting, 24.0), "all-red of the first phase");
+        assert!(plan.walk(&conflicting, 25.1));
+        assert!(plan.walk(&conflicting, 29.9));
+        assert!(!plan.walk(&conflicting, 30.0), "the clearance");
+        for tenth in 0..400 {
+            let t = f64::from(tenth) / 10.0;
+            if plan.walk(&conflicting, t) {
+                for approach in conflicting {
+                    assert!(matches!(plan.light(approach, t), Light::Red(_)), "{t}");
+                }
+            }
         }
     }
 

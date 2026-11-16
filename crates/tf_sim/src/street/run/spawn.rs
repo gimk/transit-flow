@@ -10,6 +10,7 @@ use glam::Vec2;
 use super::agent::{Agent, Traits, body_size, chance, vehicle_class};
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
+use super::kerb;
 use super::route::{self, RoutePath};
 use super::walker::{MEAN_GROUP_SIZE, WalkSpawn};
 use super::{StreetRun, mix};
@@ -105,7 +106,10 @@ impl StreetRun {
             _ => None,
         }
         .map(|lanes| {
-            self.routes.push(RoutePath::new(&self.street, lanes));
+            let route = RoutePath::new(&self.street, lanes);
+            self.route_areas
+                .push(kerb::road_areas_of(&self.street, &self.walk_space, &route));
+            self.routes.push(route);
             self.routes.len() - 1
         });
         self.route_cache.insert(key, found);

@@ -10,6 +10,21 @@
 //! its pedestrians as long as they do not meet (Phase 3 stage A). Ids stay unique in the
 //! event log.
 //!
+//! **Where to cross (pivot plan Phase 3).** Each trip has a rule way (streets crossed
+//! only on crossings) and a free way (a carriageway crossed anywhere), see `walk`. When
+//! the free way crosses out of a crossing and saves a detour, a walker takes it with a
+//! probability that grows with the detour and falls with its compliance
+//! (`jaywalk_chance`). French law (Code de la route, R412-37) asks pedestrians to use a
+//! crossing that is less than 50 m away; when none is that close, crossing anywhere is
+//! allowed and everybody takes the free way if it saves `FREE_WAY_MIN_SAVING_M`.
+//!
+//! **Draw order.** Every walker's stream gives, at spawn and always in this order: the
+//! archetype (1 draw), the traits (8), then for the first of a group only the group
+//! size, the entry and the place on the entry line (3), then the way draw (1; the
+//! group follows its first member's choice, the others draw it and do not use it), then
+//! one draw per kerb of the chosen way (the decision to go on red there). Nothing is
+//! drawn later, so the streams never depend on what happens in the run.
+//!
 //! **Groups.** One spawn can bring a small group (pairs, threes) that walks at the pace of
 //! its slowest member and stays together (`crowd`). Each member has its own id and stream.
 
@@ -19,8 +34,9 @@ use serde::{Deserialize, Serialize};
 use super::agent::Population;
 use super::crowd::ARRIVE_DISTANCE;
 use super::events::StreetEvent;
-use super::walk::{WalkPath, path_length, string_pull};
+use super::walk::{AreaKind, WalkPath, path_length, string_pull};
 use super::{StreetRun, mix};
+use crate::geom::polygon::segment_intersection;
 use crate::geom::segment::closest_point_to_segment;
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
@@ -40,6 +56,40 @@ pub const MEAN_GROUP_SIZE: f32 = 1.0 + GROUP_PAIR_SHARE + 2.0 * GROUP_THREE_SHAR
 pub const GROUP_SPACING: f32 = 0.7;
 /// A walker comes in only this far clear of everybody already there, metres.
 pub const SPAWN_GAP: f32 = 0.1;
+
+/// French law: a pedestrian must use a crossing less than this far away, metres (Code de
+/// la route, R412-37).
+pub const LEGAL_CROSSING_DISTANCE: f32 = 50.0;
+/// Where crossing anywhere is allowed, a walker leaves the crossings only to save at
+/// least this much walking, metres (start value).
+pub const FREE_WAY_MIN_SAVING_M: f32 = 5.0;
+/// The share of the people who would break the rule that do it grows as
+/// detour / (detour + `DETOUR_HALF_M`): half of them at this detour, metres (start
+/// value).
+pub const DETOUR_HALF_M: f32 = 20.0;
+/// Scales `1 - compliance` into the chance to ignore a crossing (start value: a walker
+/// of compliance 0.5 ignores a far crossing almost always).
+pub const JAYWALK_GAIN: f32 = 2.0;
+
+/// The chance that a walker of `compliance` crosses out of a crossing to save `detour_m`.
+pub fn jaywalk_chance(compliance: f64, detour_m: f32) -> f64 {
+    let detour = f64::from(detour_m.max(0.0));
+    let share = detour / (detour + f64::from(DETOUR_HALF_M));
+    (f64::from(JAYWALK_GAIN) * (1.0 - compliance) * share).min(1.0)
+}
+
+/// The two ways of a trip from one entry to a gate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WalkChoice {
+    /// Crossing streets only on crossings; `None` when there is no such way.
+    pub rule: Option<usize>,
+    /// Crossing anywhere, when that is a different way.
+    pub free: Option<usize>,
+    /// How much longer the rule way is, metres.
+    pub detour_m: f32,
+    /// No crossing within `LEGAL_CROSSING_DISTANCE` of where the free way crosses.
+    pub legal: bool,
+}
 
 /// Is this id a walker's?
 pub fn is_walker(id: AgentId) -> bool {
@@ -219,6 +269,22 @@ pub struct Walker {
     pub stuck_ticks: u32,
     /// The fixed obstacle it is going around, and on which side (true = right).
     pub detour: Option<(usize, bool)>,
+    /// Its way crosses a carriageway out of a crossing.
+    pub off_crossing: bool,
+    /// The detour the rule way made it walk, seconds (0 when it took the free way).
+    pub detour_s: f64,
+    /// One draw per kerb of its way, in order (the decision to go on red).
+    pub kerb_draws: Vec<f32>,
+    /// The corridor index whose kerb it has decided to step over.
+    pub cleared_kerb: Option<usize>,
+    /// Waiting at a kerb since this tick.
+    pub kerb_since: Option<u64>,
+    /// It decided to wait at a kerb this tick (waiting counts as stuck, however much the
+    /// people around jostle it).
+    pub waiting: bool,
+    pub kerb_wait_ticks: u32,
+    /// 0..1: grows while it waits at a kerb, eases slowly while it walks.
+    pub frustration: f64,
 }
 
 impl Walker {
@@ -258,18 +324,73 @@ impl StreetRun {
         }
     }
 
-    /// The path index from entry `from` to gate `to`, found once per run.
-    fn walk_path_for(&mut self, from: usize, to: &str) -> Option<usize> {
+    /// The ways from entry `from` to gate `to`, found once per run; `None` when there is
+    /// none.
+    fn walk_choice_for(&mut self, from: usize, to: &str) -> Option<WalkChoice> {
         let key = (from, to.to_string());
         if let Some(found) = self.walk_route_cache.get(&key) {
             return *found;
         }
-        let found = self.walk_space.find_path(from, to).map(|path| {
-            self.walk_paths.push(path);
-            self.walk_paths.len() - 1
-        });
+        let rule = self.walk_space.find_path(from, to, false);
+        let free = self
+            .walk_space
+            .find_path(from, to, true)
+            .filter(|path| path.off_crossing);
+        let found = if rule.is_none() && free.is_none() {
+            None
+        } else {
+            let detour_m = match (&rule, &free) {
+                (Some(r), Some(f)) => (r.length - f.length).max(0.0),
+                _ => 0.0,
+            };
+            let legal = free
+                .as_ref()
+                .is_some_and(|f| self.legal_off_crossing(from, f));
+            let mut push = |path: WalkPath| {
+                self.walk_paths.push(path);
+                self.walk_paths.len() - 1
+            };
+            Some(WalkChoice {
+                rule: rule.map(&mut push),
+                free: free.map(&mut push),
+                detour_m,
+                legal,
+            })
+        };
         self.walk_route_cache.insert(key, found);
         found
+    }
+
+    /// Where `path` (from entry `from`) first steps onto a carriageway, is there no
+    /// crossing within `LEGAL_CROSSING_DISTANCE` along that street?
+    fn legal_off_crossing(&self, from: usize, path: &WalkPath) -> bool {
+        let space = &self.walk_space;
+        let Some(j) = path
+            .areas
+            .iter()
+            .position(|a| matches!(space.areas[*a].kind, AreaKind::Carriageway { .. }))
+        else {
+            return true;
+        };
+        let AreaKind::Carriageway { segment } = space.areas[path.areas[j]].kind else {
+            return true;
+        };
+        let entry = &space.entries[from];
+        let goal = (path.goal.0 + path.goal.1) * 0.5;
+        let line = string_pull((entry.a + entry.b) * 0.5, &path.portals, goal);
+        let (l, r) = path.portals[j - 1];
+        let point = line
+            .windows(2)
+            .find_map(|pair| {
+                segment_intersection(pair[0], pair[1], l, r).map(|t| pair[0].lerp(pair[1], t))
+            })
+            .unwrap_or((l + r) * 0.5);
+        let along = along_centerline(&self.street.segments[&segment].centerline, point);
+        self.street
+            .crossings
+            .values()
+            .filter(|c| c.segment == segment)
+            .all(|c| (c.at - along).abs() >= LEGAL_CROSSING_DISTANCE)
     }
 
     /// Where a walker at `pos` on `path` heads first, and the length of its whole way.
@@ -338,26 +459,52 @@ impl StreetRun {
             1
         });
         let entries: Vec<usize> = self.walk_space.entries_of(from).collect();
-        let open: Vec<(usize, usize)> = entries
+        let open: Vec<(usize, WalkChoice)> = entries
             .into_iter()
-            .filter_map(|entry| self.walk_path_for(entry, to).map(|path| (entry, path)))
+            .filter_map(|entry| self.walk_choice_for(entry, to).map(|c| (entry, c)))
             .collect();
         if open.is_empty() || size == 0 {
             return WalkSpawn::NoRoute;
         }
         let pick = ((entry_draw * open.len() as f32) as usize).min(open.len() - 1);
-        let (entry_index, path_index) = open[pick];
+        let (entry_index, choice) = open[pick];
+        let way_draw = f64::from(lead.rng.randf());
+        let takes_free = match (choice.rule, choice.free) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(_), Some(_)) => {
+                if choice.legal {
+                    choice.detour_m >= FREE_WAY_MIN_SAVING_M
+                } else {
+                    way_draw < jaywalk_chance(lead.traits.compliance, choice.detour_m)
+                }
+            }
+        };
+        let path_index = if takes_free {
+            choice.free.expect("a free way")
+        } else {
+            choice.rule.expect("a rule way")
+        };
+        let kerbs = self.walk_paths[path_index]
+            .kerbs
+            .iter()
+            .filter(|k| **k)
+            .count();
+        let kerb_draws = |d: &mut Drawn| (0..kerbs).map(|_| d.rng.randf()).collect::<Vec<f32>>();
         let mut drawn = vec![lead];
         for k in 1..size {
-            drawn.push(self.draw_walker(AgentId(first.0 + k as i32)));
+            let mut member = self.draw_walker(AgentId(first.0 + k as i32));
+            member.rng.randf();
+            drawn.push(member);
         }
+        let draws: Vec<Vec<f32>> = drawn.iter_mut().map(kerb_draws).collect();
         // A group that does not fit at the entry (it is too narrow, or an obstacle stands
         // there) comes in as its first walker alone; only a crowd at the entry makes the
         // spawn wait.
         let mut positions = self.entry_positions(entry_index, &drawn, lateral);
         let fits = |run: &Self, drawn: &[Drawn], positions: &[Vec2]| {
             drawn.iter().zip(positions).all(|(d, pos)| {
-                run.walk_space.contains(*pos)
+                run.walk_space.contains_for(*pos, &[])
                     && run.walk_space.obstacle_depth(*pos, d.traits.radius as f32) <= 0.0
             })
         };
@@ -388,9 +535,14 @@ impl StreetRun {
             .fold(f64::INFINITY, f64::min);
         let members: Vec<AgentId> = drawn.iter().map(|d| d.id).collect();
         let path = &self.walk_paths[path_index];
+        let detour_s = if takes_free || choice.free.is_none() {
+            0.0
+        } else {
+            f64::from(choice.detour_m) / speed
+        };
         let mut ids = Vec::with_capacity(size);
         let mut spawned = Vec::with_capacity(size);
-        for (d, pos) in drawn.into_iter().zip(positions) {
+        for ((d, pos), kerb_draws) in drawn.into_iter().zip(positions).zip(draws) {
             let (target, length) = Self::walk_target(path, 0, pos);
             let vel = (target - pos).normalize_or_zero() * speed as f32;
             ids.push(d.id);
@@ -417,6 +569,14 @@ impl StreetRun {
                 bumps: 0,
                 stuck_ticks: 0,
                 detour: None,
+                off_crossing: path.off_crossing,
+                detour_s,
+                kerb_draws,
+                cleared_kerb: None,
+                kerb_since: None,
+                waiting: false,
+                kerb_wait_ticks: 0,
+                frustration: 0.0,
             });
         }
         self.next_walker += size as i32;
@@ -443,4 +603,19 @@ pub struct WalkerSeen {
     pub vel: Vec2,
     pub radius: f32,
     pub group: AgentId,
+}
+
+/// The distance along `centerline` of the point on it nearest to `point`.
+pub fn along_centerline(centerline: &[Vec2], point: Vec2) -> f32 {
+    let mut best = (f32::INFINITY, 0.0);
+    let mut walked = 0.0;
+    for pair in centerline.windows(2) {
+        let q = closest_point_to_segment(point, pair[0], pair[1]);
+        let d = q.distance(point);
+        if d < best.0 {
+            best = (d, walked + pair[0].distance(q));
+        }
+        walked += pair[0].distance(pair[1]);
+    }
+    best.1
 }

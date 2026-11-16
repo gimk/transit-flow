@@ -223,10 +223,10 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// tests"); if it is not, the change is a bug. Never edit a hash to make a test pass
 /// without knowing why it moved.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x6ba9_a879_d549_11a7),
-    (2, Population::Mixed, 1.0, 0x8f07_2d84_e76e_ce05),
-    (1, Population::Careless, 4.0, 0x68f6_cfa4_0480_1f0e),
-    (2, Population::Careless, 4.0, 0x65c5_2dd0_1019_70b8),
+    (1, Population::Mixed, 1.0, 0x073a_fe7a_1fc1_0a83),
+    (2, Population::Mixed, 1.0, 0x2813_8df8_bb7d_c0b4),
+    (1, Population::Careless, 4.0, 0x2667_6f2e_102b_8964),
+    (2, Population::Careless, 4.0, 0x1797_2979_171b_0576),
 ];
 
 #[test]

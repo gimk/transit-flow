@@ -9,8 +9,9 @@
 //! spawn, prepare, decide, integrate, walk, zones, contacts, removals, snapshot, end.
 //!
 //! Vehicles are `agents` (they follow lanes, `drive`); pedestrians are `walkers` (they
-//! move freely in the walkable space, `walk`, `walker` and `crowd`). In Phase 3 stage A
-//! the two do not meet: no perception and no contact between them.
+//! move freely in the walkable space, `walk`, `walker`, `crowd`, and wait at the kerb,
+//! `kerb`). Walkers look at vehicles before they cross; vehicles do not see walkers yet
+//! and the two never touch (Phase 3 stage C).
 
 pub mod agent;
 mod conflicts;
@@ -19,6 +20,7 @@ pub mod detect;
 pub mod drive;
 pub mod events;
 pub mod grid;
+pub mod kerb;
 pub mod route;
 mod spawn;
 pub mod walk;
@@ -135,6 +137,14 @@ pub struct WalkSummary {
     pub mean_crowded_s: f64,
     pub bumps: u32,
     pub total_annoyance: f64,
+    /// Still on the street when the run ended (the grace time ran out).
+    pub still_walking: u32,
+    /// Steps off a kerb, those out of a crossing, and those against a red light.
+    pub crossings: u32,
+    pub off_crossing: u32,
+    pub on_red: u32,
+    /// Mean time an arrived walker waited at kerbs.
+    pub mean_kerb_wait_s: f64,
 }
 
 /// Agents of one flow of one slice that want to enter, and the stream that makes them.
@@ -167,11 +177,17 @@ pub struct StreetRun {
     approaches: IndexMap<i32, Vec<i32>>,
     plans: IndexMap<i32, SignalPlan>,
     routes: Vec<RoutePath>,
+    /// Per route (same index): the road areas of the walk space it drives through, with
+    /// its route distances in and out (`kerb::road_areas_of`).
+    route_areas: Vec<Vec<(usize, f64, f64)>>,
+    /// Crossing areas under signals: (junction, the approaches that conflict).
+    walk_signals: IndexMap<usize, (i32, Vec<i32>)>,
     /// (class bits, from gate, to gate) -> index into `routes`; `None` when no way exists.
     route_cache: IndexMap<(u8, String, String), Option<usize>>,
     next_agent: i32,
-    /// (entry, destination gate) -> index into `walk_paths`; `None` when no way exists.
-    walk_route_cache: IndexMap<(usize, String), Option<usize>>,
+    /// (entry, destination gate) -> its ways (indices into `walk_paths`); `None` when no
+    /// way exists.
+    walk_route_cache: IndexMap<(usize, String), Option<walker::WalkChoice>>,
     next_walker: i32,
     /// The tick of the last bump logged between two walkers.
     bump_last: IndexMap<(AgentId, AgentId), u64>,
@@ -342,6 +358,7 @@ impl StreetRun {
             walker_grid: Grid::with_cell(street.bounds, crowd::WALKER_CELL),
         };
         let walk_space = WalkSpace::new(&street, &level.gates);
+        let walk_signals = kerb::walk_signal_table(&walk_space, &street, &moves);
         Ok(StreetRun {
             tick: 0,
             agents: IndexMap::new(),
@@ -362,6 +379,8 @@ impl StreetRun {
             approaches,
             plans,
             routes: Vec::new(),
+            route_areas: Vec::new(),
+            walk_signals,
             route_cache: IndexMap::new(),
             next_agent: 1,
             walk_route_cache: IndexMap::new(),
@@ -729,17 +748,27 @@ impl StreetRun {
             walkers: WalkSummary::default(),
         };
         let mut delay = 0.0;
-        let (mut walk_delay, mut walk_crowded) = (0.0, 0.0);
+        let (mut walk_delay, mut walk_crowded, mut kerb_wait) = (0.0, 0.0, 0.0);
+        s.walkers.still_walking = self.walkers.len() as u32;
         for logged in &self.log {
             match &logged.event {
                 StreetEvent::WalkerSpawned { .. } => s.walkers.spawned += 1,
+                StreetEvent::CrossingStarted {
+                    crossing, on_red, ..
+                } => {
+                    s.walkers.crossings += 1;
+                    s.walkers.off_crossing += u32::from(crossing.is_none());
+                    s.walkers.on_red += u32::from(*on_red);
+                }
                 StreetEvent::WalkEnded {
                     delay_s,
                     crowded_s,
+                    kerb_wait_s,
                     annoyance,
                     ..
                 } => {
                     s.walkers.arrived += 1;
+                    kerb_wait += kerb_wait_s;
                     walk_delay += delay_s;
                     walk_crowded += crowded_s;
                     s.walkers.total_annoyance += annoyance;
@@ -779,6 +808,7 @@ impl StreetRun {
         if s.walkers.arrived > 0 {
             s.walkers.mean_delay_s = walk_delay / f64::from(s.walkers.arrived);
             s.walkers.mean_crowded_s = walk_crowded / f64::from(s.walkers.arrived);
+            s.walkers.mean_kerb_wait_s = kerb_wait / f64::from(s.walkers.arrived);
         }
         s
     }

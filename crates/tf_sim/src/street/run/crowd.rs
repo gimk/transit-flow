@@ -34,7 +34,8 @@ use super::StreetRun;
 use super::drive::DT;
 use super::events::{StreetEvent, rounded, rounded_point};
 use super::grid::Grid;
-use super::walk::WalkSpace;
+use super::kerb::KerbChoice;
+use super::walk::{WalkSpace, Wall};
 use super::walker::{Walker, WalkerSeen};
 use super::{CONFLICT_COOLDOWN_S, GIVE_UP_S};
 use crate::geom::polygon::segment_intersection;
@@ -102,6 +103,9 @@ pub const STUCK_SPEED: f64 = 0.1;
 /// many seconds (start values).
 pub const CROWD_WEIGHT: f64 = 0.5;
 pub const BUMP_COST_S: f64 = 2.0;
+/// A second of forced detour (the rule way's extra walk) weighs this many seconds of
+/// delay (start value; pivot plan §5.6).
+pub const DETOUR_WEIGHT: f64 = 1.0;
 /// Walkers further apart than this are not tested for overlap in a tick, metres.
 const PAIR_REACH: f32 = 1.0;
 /// Grid cells for walkers, metres: a query of the anticipation range reads about 6 × 6
@@ -192,6 +196,7 @@ fn anticipation(rel: Vec2, closing: Vec2, reach: f32, heading: Vec2) -> Vec2 {
 struct Decided {
     force: Vec2,
     density: f64,
+    kerb: Option<KerbChoice>,
     /// The obstacle it goes around and on which side (true = right).
     detour: Option<(usize, bool)>,
 }
@@ -212,12 +217,23 @@ fn wall_contact(p: Vec2, a: Vec2, b: Vec2) -> (Vec2, bool) {
     (q, interior)
 }
 
+/// The walls a walker may not cross: every wall, and the kerbs of the road areas not in
+/// `open` (`WalkSpace::open_roads`).
+fn barriers<'a>(space: &'a WalkSpace, open: &'a [usize]) -> impl Iterator<Item = Wall> + 'a {
+    space.walls.iter().copied().chain(
+        space
+            .kerbs
+            .iter()
+            .filter_map(move |kerb| space.barrier_for(kerb, open)),
+    )
+}
+
 /// Pushes a body out of walls and obstacles. A wall the body went through during this
 /// tick (from `before`, where it was at the start of the tick, on the wall's walkable
 /// side) is undone; a body merely near the back of a wall (a thin barrier) stays on its
 /// own side.
-fn push_out(space: &WalkSpace, mut p: Vec2, before: Vec2, r: f32) -> Vec2 {
-    for wall in &space.walls {
+fn push_out(space: &WalkSpace, mut p: Vec2, before: Vec2, r: f32, open: &[usize]) -> Vec2 {
+    for wall in barriers(space, open) {
         let came_through = (before - wall.a).dot(wall.normal) >= 0.0
             && segment_intersection(before, p, wall.a, wall.b).is_some();
         let q = closest_point_to_segment(p, wall.a, wall.b);
@@ -246,7 +262,14 @@ impl StreetRun {
     /// The force a walker asks for, from the previous tick's snapshot, and the density
     /// around it.
     fn walker_force(&self, walker: &Walker, seen: &[WalkerSeen], grid: &Grid) -> Decided {
+        let kerb = self.kerb_choice(walker);
         let path = &self.walk_paths[walker.path];
+        let going = matches!(kerb, Some(KerbChoice::Go { .. }));
+        let open = self.walk_space.open_roads(
+            path,
+            walker.area_index,
+            going || walker.cleared_kerb == Some(walker.area_index),
+        );
         let (target, _) = Self::walk_target(path, walker.area_index, walker.pos);
         let (target, detour) = self.detour(walker, target);
         let to_target = (target - walker.pos).normalize_or_zero();
@@ -292,7 +315,7 @@ impl StreetRun {
                 force += rel / dist * gap_force(dist - round.radius - r, WALL_RANGE, WALL_STRENGTH);
             }
         }
-        for wall in &space.walls {
+        for wall in barriers(space, &open) {
             let (q, _) = wall_contact(p, wall.a, wall.b);
             let d = p - q;
             let dist = d.length();
@@ -332,11 +355,15 @@ impl StreetRun {
                 pace *= (1.0 - GROUP_PACE * ahead).clamp(0.6, 1.25);
             }
         }
+        if kerb == Some(KerbChoice::Wait) {
+            pace = 0.0;
+        }
         let desired = to_target * (walker.desired_speed as f32 * pace);
         force += (desired - v) / RELAX_S;
         Decided {
             force: force.clamp_length_max(MAX_ACCEL),
             density,
+            kerb,
             detour,
         }
     }
@@ -412,16 +439,57 @@ impl StreetRun {
             .map(|w| self.walker_force(w, &snapshot.walkers, &snapshot.walker_grid))
             .collect();
         let mut stats = self.walk_stats;
+        let tick = self.tick;
+        let starts: Vec<StreetEvent> = self
+            .walkers
+            .values()
+            .zip(&decided)
+            .filter_map(|(walker, d)| match d.kerb {
+                Some(KerbChoice::Go { gap_s, on_red }) => {
+                    let (segment, crossing) = self.crossing_ahead(walker);
+                    Some(StreetEvent::CrossingStarted {
+                        agent: walker.id,
+                        segment,
+                        crossing,
+                        position: rounded_point(walker.pos),
+                        on_red,
+                        gap_s: gap_s.map(|g| rounded(g, 100.0)),
+                        waited_s: rounded(
+                            walker
+                                .kerb_since
+                                .map_or(0.0, |since| (tick - since) as f64 * DT),
+                            100.0,
+                        ),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
         for (
             walker,
             Decided {
                 force,
                 density,
+                kerb,
                 detour,
             },
         ) in self.walkers.values_mut().zip(decided)
         {
             walker.detour = detour;
+            walker.waiting = kerb == Some(KerbChoice::Wait);
+            match kerb {
+                Some(KerbChoice::Wait) => {
+                    walker.kerb_since.get_or_insert(tick);
+                    walker.kerb_wait_ticks += 1;
+                    walker.frustration =
+                        (walker.frustration + DT / walker.traits.patience_s).min(1.0);
+                }
+                Some(KerbChoice::Go { .. }) => {
+                    walker.cleared_kerb = Some(walker.area_index);
+                    walker.kerb_since = None;
+                }
+                None => walker.frustration = (walker.frustration - DT / 60.0).max(0.0),
+            }
             let (old, new) = (walker.accel, force);
             if old.length() > 1.0 && new.length() > 1.0 {
                 stats.force_samples += 1;
@@ -450,11 +518,23 @@ impl StreetRun {
         for _ in 0..CONSTRAINT_PASSES {
             self.part_bodies(&pairs);
             for walker in self.walkers.values_mut() {
-                walker.pos = push_out(&self.walk_space, walker.pos, walker.prev_pos, walker.radius);
+                let path = &self.walk_paths[walker.path];
+                let cleared = walker.cleared_kerb == Some(walker.area_index);
+                let open = self.walk_space.open_roads(path, walker.area_index, cleared);
+                walker.pos = push_out(
+                    &self.walk_space,
+                    walker.pos,
+                    walker.prev_pos,
+                    walker.radius,
+                    &open,
+                );
             }
         }
         for walker in self.walkers.values_mut() {
-            if !self.walk_space.contains(walker.pos) {
+            let path = &self.walk_paths[walker.path];
+            let cleared = walker.cleared_kerb == Some(walker.area_index);
+            let open = self.walk_space.open_roads(path, walker.area_index, cleared);
+            if !self.walk_space.contains_for(walker.pos, &open) {
                 walker.pos = walker.prev_pos;
                 stats.held_back += 1;
             }
@@ -479,7 +559,7 @@ impl StreetRun {
             if walker.density > DENSE_CROWD {
                 walker.crowded_ticks += 1;
             }
-            if walker.speed() < STUCK_SPEED {
+            if walker.waiting || walker.speed() < STUCK_SPEED {
                 walker.stuck_ticks += 1;
             } else {
                 walker.stuck_ticks = 0;
@@ -489,7 +569,9 @@ impl StreetRun {
             stats.max_overlap = stats.max_overlap.max(depth);
         }
         self.walk_stats = stats;
-        let tick = self.tick;
+        for event in starts {
+            self.log(event);
+        }
         let cooldown = (CONFLICT_COOLDOWN_S / DT).round() as u64;
         self.bump_last.retain(|_, last| tick - *last < cooldown);
         for (a, b, at) in bumps {
@@ -584,15 +666,19 @@ impl StreetRun {
                 let time_s = (tick - walker.spawn_tick) as f64 * DT;
                 let delay_s = (time_s - walker.free_time_s).max(0.0);
                 let crowded_s = f64::from(walker.crowded_ticks) * DT;
-                let annoyance =
-                    (delay_s + CROWD_WEIGHT * crowded_s + BUMP_COST_S * f64::from(walker.bumps))
-                        / walker.traits.patience_s;
+                let annoyance = (delay_s
+                    + CROWD_WEIGHT * crowded_s
+                    + BUMP_COST_S * f64::from(walker.bumps)
+                    + DETOUR_WEIGHT * walker.detour_s)
+                    / walker.traits.patience_s;
                 StreetEvent::WalkEnded {
                     agent: id,
                     time_s: rounded(time_s, 100.0),
                     delay_s: rounded(delay_s, 100.0),
                     crowded_s: rounded(crowded_s, 100.0),
                     bumps: walker.bumps,
+                    kerb_wait_s: rounded(f64::from(walker.kerb_wait_ticks) * DT, 100.0),
+                    detour_s: rounded(walker.detour_s, 100.0),
                     annoyance: rounded(annoyance, 100.0),
                 }
             } else if f64::from(walker.stuck_ticks) * DT > GIVE_UP_S {

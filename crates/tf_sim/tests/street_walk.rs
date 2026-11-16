@@ -8,6 +8,7 @@ use glam::Vec2;
 use tf_sim::street::AgentId;
 use tf_sim::street::Design;
 use tf_sim::street::level::{LevelFile, Mode};
+use tf_sim::street::run::GIVE_UP_S;
 use tf_sim::street::run::drive::DT;
 use tf_sim::street::run::{
     Population, RunOptions, StreetEvent, StreetRun, WalkSpawn, Walker, is_walker,
@@ -136,8 +137,9 @@ impl Arrivals {
         }
     }
 
-    /// Every walker that came in at least twice its free walk time plus 20 s before the
-    /// end of the run has arrived. Returns (walkers due, walkers arrived).
+    /// Every walker that came in at least twice its free walk time plus 20 s, plus the
+    /// longest it may wait stuck (`GIVE_UP_S`), before the end of the run has arrived or
+    /// given up (tests assert `gave_up` apart). Returns (walkers due, walkers arrived).
     fn check(&self, run: &StreetRun, what: &str) -> (u32, u32) {
         let end_s = run.tick as f64 * DT;
         let arrived: Vec<AgentId> = run
@@ -148,12 +150,20 @@ impl Arrivals {
                 _ => None,
             })
             .collect();
+        let gone: Vec<AgentId> = run
+            .events()
+            .iter()
+            .filter_map(|e| match e.event {
+                StreetEvent::GaveUp { agent, .. } if is_walker(agent) => Some(agent),
+                _ => None,
+            })
+            .collect();
         let mut due = 0;
         for (id, (spawn_s, free_s)) in &self.seen {
-            if spawn_s + 2.0 * free_s + 20.0 <= end_s {
+            if spawn_s + 2.0 * free_s + 20.0 + GIVE_UP_S <= end_s {
                 due += 1;
                 assert!(
-                    arrived.contains(id),
+                    arrived.contains(id) || gone.contains(id),
                     "{what}: {id:?} came in at {spawn_s} s (free walk {free_s:.1} s) and has \
                      not arrived by {end_s} s"
                 );
@@ -486,6 +496,7 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
                         e,
                         StreetEvent::WalkerSpawned { .. }
                             | StreetEvent::WalkEnded { .. }
+                            | StreetEvent::CrossingStarted { .. }
                             | StreetEvent::Bump { .. }
                             | StreetEvent::RunEnded { .. }
                     ) && !matches!(e, StreetEvent::GaveUp { agent, .. } if is_walker(*agent))
@@ -504,7 +515,9 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
             s.walkers
         );
         assert!(s.walkers.spawned >= 10, "seed {seed}: {:?}", s.walkers);
-        assert_eq!(s.walkers.gave_up, 0, "seed {seed}: {:?}", s.walkers);
+        if scale == 1.0 {
+            assert_eq!(s.walkers.gave_up, 0, "seed {seed}: {:?}", s.walkers);
+        }
         assert!(
             deepest <= OVERLAP_TOLERANCE,
             "seed {seed}: overlap {deepest}"

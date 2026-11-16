@@ -1,25 +1,30 @@
 //! Where pedestrians may walk, and how they find their way (pivot plan §3.3, §5.2).
 //!
-//! The walkable space is a set of convex areas: the sidewalk and terrace strips (as
-//! `Street::walkable_polygons` gives them), the level's plazas, and one **link** per
-//! junction arm where sidewalks face each other across the carriageway. Obstacles are
-//! taken out of it. Walls are the parts of the area outlines that do not open onto
-//! another area, plus the outlines of the obstacles.
+//! The walkable space is a set of convex areas. **Foot areas** are the sidewalk and
+//! terrace strips (as `Street::walkable_polygons` gives them) and the level's plazas.
+//! **Road areas** cover the carriageway between two sidewalks: a **crossing** area for
+//! each crossing placed on the street, and **carriageway** pieces for the rest of it.
+//! Obstacles are taken out of the space. Walls are the parts of the area outlines that do
+//! not open onto another area, plus the outlines of the obstacles.
 //!
-//! **Links are the seam for crossings.** Phase 3 stage A has no crossings, so a trip that
-//! needs to cross a street walks over a link (a strip `LINK_WIDTH` wide just outside the
-//! junction area, where a zebra would be) as if it were sidewalk. Stage B replaces them
-//! with the player's crossings and adds waiting at the kerb; a link is marked by its
-//! `AreaKind`, and a path knows which of its portals step onto one (`WalkPath::kerbs`).
+//! **Kerbs** are the edges between a foot area and a road area. They are walls for every
+//! walker except the one that has decided to cross there (`open_roads`): a walker on the
+//! sidewalk never drifts into the street. A walker steps over a kerb only after waiting
+//! for its gap (`kerb`), on a crossing by the rules or anywhere else (jaywalking).
 //!
-//! The walk graph: the points are the portals (the shared edges between two areas) and
-//! the entries of the gates; two points are joined when one area holds both. A* (the
-//! kept `routing::astar`) finds the cheapest chain of portals, which gives the corridor
-//! of areas a walker goes through. Inside the corridor the walker steers to the first
-//! corner of the shortest path through the remaining portals (the "simple stupid funnel"
-//! of M. Mononen, 2010), so it cuts corners like a person and never walks into a wall
-//! corner. Areas are convex as long as their segment is straight; a curved street would
-//! need its strips cut in pieces (not needed by the levels so far).
+//! The walk graph: the points are the entries of the gates and points along the portals
+//! (the shared edges between two areas; long ones, like a kerb, get a point every
+//! `PORTAL_STEP`), and two points are joined when one area holds both. A* (the kept
+//! `routing::astar`) finds the cheapest chain, which gives the corridor of areas a walker
+//! goes through. Two ways are found for every trip: the **rule** way, which crosses
+//! streets only on crossings (and on carriageways where the law allows it, see
+//! `walker`), and the **free** way, which may cross a carriageway anywhere and costs
+//! `ROAD_COST` times its length there (people walk on the sidewalk, not down the
+//! street). Inside the corridor the walker steers to the first corner of the shortest
+//! path through the remaining portals (the "simple stupid funnel" of M. Mononen, 2010),
+//! so it cuts corners like a person and never walks into a wall corner. Areas are convex
+//! as long as their segment is straight; a curved street would need its strips cut in
+//! pieces (not needed by the levels so far).
 
 use glam::Vec2;
 
@@ -27,13 +32,21 @@ use crate::geom::Polygon;
 use crate::geom::segment::closest_point_to_segment;
 use crate::roads::lane_builder;
 use crate::routing::astar::AStar;
-use crate::street::level::{Gate, Shape};
+use crate::street::level::{Gate, JunctionControl, Shape};
 use crate::street::model::Street;
 use crate::street::space::StripUse;
 
-/// The width of a link along its street, metres. Start value: about a zebra (at least
-/// 2.5 m wide in France).
-pub const LINK_WIDTH: f32 = 3.0;
+/// A crossing whose near edge is this close to a junction under signals gets the
+/// junction's pedestrian lights, metres (start value).
+pub const SIGNAL_REACH: f32 = 10.0;
+/// Long portals get a graph point every this many metres, so a way that crosses a kerb
+/// can do it where it wants to (start value).
+pub const PORTAL_STEP: f32 = 4.0;
+/// Walking a metre down a carriageway costs this many metres on the sidewalk, in the
+/// free way (start value).
+pub const ROAD_COST: f32 = 1.5;
+/// Carriageway pieces shorter than this (between two crossings) are left out.
+const MIN_PIECE: f32 = 0.3;
 /// A walker steers this far from the ends of a portal, so it does not graze the corner
 /// of a wall. Start value: a body radius and a little more.
 pub const CORNER_CLEARANCE: f32 = 0.35;
@@ -60,11 +73,27 @@ pub enum AreaKind {
         strip: usize,
     },
     Plaza,
-    /// Across a carriageway at a junction arm (stage A only, see the module doc).
-    Link {
+    /// A crossing on `segment` (its id in `Street::crossings`); `signal` is the junction
+    /// whose pedestrian lights it follows.
+    Crossing {
+        id: i32,
         segment: i32,
-        node: i32,
+        signal: Option<i32>,
     },
+    /// The rest of a carriageway: walkers cross here out of a crossing.
+    Carriageway {
+        segment: i32,
+    },
+}
+
+impl AreaKind {
+    /// A carriageway or a crossing: a walker enters it only after the kerb.
+    pub fn is_road(self) -> bool {
+        matches!(
+            self,
+            AreaKind::Crossing { .. } | AreaKind::Carriageway { .. }
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +118,18 @@ pub struct Wall {
     pub normal: Vec2,
 }
 
+/// An edge of a road area: to a foot area (a kerb proper; `inside` is the foot area) or
+/// to another road area. `normal` points into `inside`. It stops a walker that may be
+/// on one side and not on the other (`WalkSpace::barrier_for`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Kerb {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub normal: Vec2,
+    pub inside: usize,
+    pub outside: usize,
+}
+
 /// Where walkers of a gate come in and go out: a line inside one area, `a` to `b`, with
 /// `inward` pointing away from the gate into the area.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,6 +152,7 @@ pub struct WalkSpace {
     pub areas: Vec<WalkArea>,
     pub portals: Vec<Portal>,
     pub walls: Vec<Wall>,
+    pub kerbs: Vec<Kerb>,
     /// Round obstacles (trees, bollards).
     pub circles: Vec<Round>,
     /// The other obstacles; their outlines are also in `walls`.
@@ -126,9 +168,13 @@ pub struct WalkPath {
     /// `portals[i]` leads from `areas[i]` to `areas[i + 1]`, as (left, right) seen when
     /// walking, already shortened by `CORNER_CLEARANCE` at both ends.
     pub portals: Vec<(Vec2, Vec2)>,
-    /// `kerbs[i]`: portal `i` steps from a sidewalk onto a carriageway (a link). Stage B
-    /// puts the waiting at the kerb here.
+    /// `kerbs[i]`: portal `i` steps from a foot area onto a road area; the walker waits
+    /// there for its gap.
     pub kerbs: Vec<bool>,
+    /// The way crosses a carriageway out of a crossing.
+    pub off_crossing: bool,
+    /// The length of the way through the portal points, metres.
+    pub length: f32,
     pub to_entry: usize,
     /// The destination line, shortened at both ends like the portals and moved
     /// `CORNER_CLEARANCE` into the area (a walker heads for the door, not the façade).
@@ -245,7 +291,7 @@ impl WalkSpace {
                 polygon: plaza.clone(),
             });
         }
-        space.add_links(street);
+        space.add_road_areas(street);
         for obstacle in street.obstacles.values() {
             match &obstacle.shape {
                 Shape::Circle(circle) => space.circles.push(Round {
@@ -270,15 +316,16 @@ impl WalkSpace {
         }
         space.find_portals();
         space.find_walls();
+        space.find_kerbs();
         for gate in gates {
             space.add_entries(street, gate);
         }
         space
     }
 
-    /// One link per junction arm and per run of non-walkable strips between two walkable
-    /// ones: the carriageway (and parking) a person crosses there.
-    fn add_links(&mut self, street: &Street) {
+    /// Road areas of each run of non-walkable strips between two walkable ones: one per
+    /// crossing on the segment, and carriageway pieces between them.
+    fn add_road_areas(&mut self, street: &Street) {
         for segment in street.segments.values() {
             let walkable: Vec<bool> = segment
                 .profile
@@ -287,48 +334,84 @@ impl WalkSpace {
                 .map(|s| matches!(s.use_, StripUse::Sidewalk | StripUse::Terrace))
                 .collect();
             let length = lane_builder::polyline_length(&segment.centerline) as f32;
-            let ends = [
-                (segment.from, segment.start_trim),
-                (segment.to, length - segment.end_trim - LINK_WIDTH),
-            ];
-            for (node, from_d) in ends {
-                if !street.junctions.contains_key(&node) || from_d < 0.0 {
+            let (from, to) = (segment.start_trim, length - segment.end_trim);
+            let mut crossings: Vec<_> = street
+                .crossings
+                .values()
+                .filter(|c| c.segment == segment.id)
+                .collect();
+            crossings.sort_by(|a, b| a.at.total_cmp(&b.at));
+            let signal_at = |node: i32| {
+                street
+                    .junctions
+                    .get(&node)
+                    .is_some_and(|j| j.control == JunctionControl::Signals)
+                    .then_some(node)
+            };
+            let mut i = 0;
+            while i < walkable.len() {
+                if walkable[i] {
+                    i += 1;
                     continue;
                 }
-                let mut i = 0;
-                while i < walkable.len() {
-                    if walkable[i] {
-                        i += 1;
-                        continue;
-                    }
-                    let first = i;
-                    while i < walkable.len() && !walkable[i] {
-                        i += 1;
-                    }
-                    if first == 0 || i == walkable.len() {
-                        continue;
-                    }
-                    let left = segment.profile.strip_span(first).0;
-                    let right = segment.profile.strip_span(i - 1).1;
-                    let cut = |offset: f32| {
-                        let side =
+                let first = i;
+                while i < walkable.len() && !walkable[i] {
+                    i += 1;
+                }
+                if first == 0 || i == walkable.len() {
+                    continue;
+                }
+                let left = segment.profile.strip_span(first).0;
+                let right = segment.profile.strip_span(i - 1).1;
+                let cut = |d0: f32, d1: f32| {
+                    let side = |offset: f32| {
+                        let line =
                             lane_builder::offset_polyline(&segment.centerline, f64::from(offset));
-                        lane_builder::sub_polyline(
-                            &side,
-                            f64::from(from_d),
-                            f64::from(from_d + LINK_WIDTH),
-                        )
+                        lane_builder::sub_polyline(&line, f64::from(d0), f64::from(d1))
                     };
-                    let mut points = cut(left);
-                    let mut other = cut(right);
+                    let mut points = side(left);
+                    let mut other = side(right);
                     other.reverse();
                     points.extend(other);
+                    Polygon::new(points)
+                };
+                let mut d = from;
+                for crossing in &crossings {
+                    let (low, high) = (
+                        crossing.at - crossing.width * 0.5,
+                        crossing.at + crossing.width * 0.5,
+                    );
+                    if low - d >= MIN_PIECE {
+                        self.areas.push(WalkArea {
+                            kind: AreaKind::Carriageway {
+                                segment: segment.id,
+                            },
+                            polygon: cut(d, low),
+                        });
+                    }
+                    let signal = if low - from <= SIGNAL_REACH {
+                        signal_at(segment.from)
+                    } else if to - high <= SIGNAL_REACH {
+                        signal_at(segment.to)
+                    } else {
+                        None
+                    };
                     self.areas.push(WalkArea {
-                        kind: AreaKind::Link {
+                        kind: AreaKind::Crossing {
+                            id: crossing.id,
                             segment: segment.id,
-                            node,
+                            signal,
                         },
-                        polygon: Polygon::new(points),
+                        polygon: cut(low, high),
+                    });
+                    d = high;
+                }
+                if to - d >= MIN_PIECE {
+                    self.areas.push(WalkArea {
+                        kind: AreaKind::Carriageway {
+                            segment: segment.id,
+                        },
+                        polygon: cut(d, to),
                     });
                 }
             }
@@ -405,6 +488,68 @@ impl WalkSpace {
             }
         }
         self.walls.extend(walls);
+    }
+
+    fn find_kerbs(&mut self) {
+        for portal in &self.portals {
+            let (i, j) = portal.areas;
+            let (inside, outside) =
+                match (self.areas[i].kind.is_road(), self.areas[j].kind.is_road()) {
+                    (false, true) => (i, j),
+                    (true, false) => (j, i),
+                    (true, true) => (i, j),
+                    (false, false) => continue,
+                };
+            let along = (portal.b - portal.a).normalize_or_zero();
+            let mid = (portal.a + portal.b) * 0.5;
+            let normal = if self.areas[inside]
+                .polygon
+                .contains(mid + along.perp() * PROBE)
+            {
+                along.perp()
+            } else {
+                -along.perp()
+            };
+            self.kerbs.push(Kerb {
+                a: portal.a,
+                b: portal.b,
+                normal,
+                inside,
+                outside,
+            });
+        }
+    }
+
+    /// A kerb as a wall for a walker that may enter the road areas `open`: when it may be
+    /// on one side only, with the normal toward that side.
+    pub fn barrier_for(&self, kerb: &Kerb, open: &[usize]) -> Option<Wall> {
+        let allowed = |area: usize| !self.areas[area].kind.is_road() || open.contains(&area);
+        let normal = match (allowed(kerb.inside), allowed(kerb.outside)) {
+            (true, false) => kerb.normal,
+            (false, true) => -kerb.normal,
+            _ => return None,
+        };
+        Some(Wall {
+            a: kerb.a,
+            b: kerb.b,
+            normal,
+        })
+    }
+
+    /// Inside a foot area, or a road area in `open`, and inside no obstacle: where a
+    /// walker that may enter `open` may be.
+    pub fn contains_for(&self, point: Vec2, open: &[usize]) -> bool {
+        let inside = self.areas.iter().enumerate().any(|(index, area)| {
+            (!area.kind.is_road() || open.contains(&index)) && area.polygon.contains(point)
+        });
+        inside && !self.in_obstacle(point)
+    }
+
+    fn in_obstacle(&self, point: Vec2) -> bool {
+        self.circles
+            .iter()
+            .any(|round| round.center.distance(point) < round.radius)
+            || self.obstacle_polygons.iter().any(|p| p.contains(point))
     }
 
     fn add_entries(&mut self, street: &Street, gate: &Gate) {
@@ -490,14 +635,10 @@ impl WalkSpace {
             .map(|(index, _)| index)
     }
 
-    /// Inside some area and inside no obstacle.
+    /// Inside some area (road areas too) and inside no obstacle: nowhere a walker could
+    /// ever be is outside this.
     pub fn contains(&self, point: Vec2) -> bool {
-        self.areas.iter().any(|area| area.polygon.contains(point))
-            && !self
-                .circles
-                .iter()
-                .any(|round| round.center.distance(point) < round.radius)
-            && !self.obstacle_polygons.iter().any(|p| p.contains(point))
+        self.areas.iter().any(|area| area.polygon.contains(point)) && !self.in_obstacle(point)
     }
 
     /// The distance from `point` to the nearest wall (obstacle outlines included).
@@ -567,14 +708,15 @@ impl WalkSpace {
         depth
     }
 
-    /// The cheapest way from entry `from` to any entry of gate `to`.
-    pub fn find_path(&self, from: usize, to: &str) -> Option<WalkPath> {
+    /// The cheapest way from entry `from` to any entry of gate `to`. Without `free`, the
+    /// way crosses streets only on crossings.
+    pub fn find_path(&self, from: usize, to: &str, free: bool) -> Option<WalkPath> {
         let mut best: Option<(f32, WalkPath)> = None;
         for to_entry in self.entries_of(to) {
             if to_entry == from {
                 continue;
             }
-            if let Some((cost, path)) = self.path_between(from, to_entry)
+            if let Some((cost, path)) = self.path_between(from, to_entry, free)
                 && best.as_ref().is_none_or(|(c, _)| cost < *c)
             {
                 best = Some((cost, path));
@@ -583,22 +725,42 @@ impl WalkSpace {
         best.map(|(_, path)| path)
     }
 
-    fn path_between(&self, from: usize, to: usize) -> Option<(f32, WalkPath)> {
+    fn path_between(&self, from: usize, to: usize, free: bool) -> Option<(f32, WalkPath)> {
         let (start, end) = (&self.entries[from], &self.entries[to]);
-        // Points: 0 the start, 1 the end, then one per portal.
+        let allowed =
+            |area: usize| free || !matches!(self.areas[area].kind, AreaKind::Carriageway { .. });
+        // Points: 0 the start, 1 the end, then points along the portals.
         let mut graph = AStar::new();
         let mut areas_of: Vec<Vec<usize>> = Vec::new();
+        let mut portal_of: Vec<usize> = Vec::new();
         graph.add_point((start.a + start.b) * 0.5);
         areas_of.push(vec![start.area]);
+        portal_of.push(usize::MAX);
         graph.add_point((end.a + end.b) * 0.5);
         areas_of.push(vec![end.area]);
-        for portal in &self.portals {
-            graph.add_point((portal.a + portal.b) * 0.5);
-            areas_of.push(vec![portal.areas.0, portal.areas.1]);
+        portal_of.push(usize::MAX);
+        for (index, portal) in self.portals.iter().enumerate() {
+            if !allowed(portal.areas.0) || !allowed(portal.areas.1) {
+                continue;
+            }
+            let pieces = (portal.a.distance(portal.b) / PORTAL_STEP).ceil().max(1.0) as usize;
+            for k in 0..pieces {
+                let t = (k as f32 + 0.5) / pieces as f32;
+                graph.add_point(portal.a.lerp(portal.b, t));
+                areas_of.push(vec![portal.areas.0, portal.areas.1]);
+                portal_of.push(index);
+            }
         }
+        // The area an edge between two points goes through (the first they share).
+        let shared = |i: usize, j: usize| {
+            areas_of[i]
+                .iter()
+                .copied()
+                .find(|a| areas_of[j].contains(a))
+        };
         for i in 0..areas_of.len() {
             for j in i + 1..areas_of.len() {
-                if areas_of[i].iter().any(|area| areas_of[j].contains(area)) {
+                if shared(i, j).is_some() {
                     graph.connect_points(i, j);
                 }
             }
@@ -606,30 +768,64 @@ impl WalkSpace {
         let ids = graph.id_path(
             0,
             1,
-            |positions, a, b| positions[a].distance(positions[b]),
+            |positions, a, b| {
+                let distance = positions[a].distance(positions[b]);
+                let road = shared(a, b).is_some_and(|area| {
+                    matches!(self.areas[area].kind, AreaKind::Carriageway { .. })
+                });
+                if road { distance * ROAD_COST } else { distance }
+            },
             |a, b| a.distance(b),
         );
         if ids.is_empty() {
             return None;
         }
-        let cost = ids
-            .windows(2)
-            .map(|pair| graph.position(pair[0]).distance(graph.position(pair[1])))
-            .sum();
+        let mut cost = 0.0;
+        let mut length = 0.0;
         let mut areas = vec![start.area];
+        let mut crossed: Vec<usize> = Vec::new();
+        for (k, pair) in ids.windows(2).enumerate() {
+            let here = *areas.last().expect("a corridor starts somewhere");
+            let common: Vec<usize> = areas_of[pair[0]]
+                .iter()
+                .copied()
+                .filter(|a| areas_of[pair[1]].contains(a))
+                .collect();
+            let area = if common.contains(&here) {
+                here
+            } else {
+                common[0]
+            };
+            if area != here {
+                // The point between the previous edge and this one is the portal crossed.
+                let portal = portal_of[ids[k]];
+                if portal == usize::MAX {
+                    return None;
+                }
+                let (p, q) = self.portals[portal].areas;
+                if !((p == here && q == area) || (q == here && p == area)) {
+                    // The chain of portals does not join up: no corridor.
+                    return None;
+                }
+                crossed.push(portal);
+                areas.push(area);
+            }
+            let distance = graph.position(pair[0]).distance(graph.position(pair[1]));
+            length += distance;
+            cost += if matches!(self.areas[area].kind, AreaKind::Carriageway { .. }) {
+                distance * ROAD_COST
+            } else {
+                distance
+            };
+        }
+        if *areas.last().expect("not empty") != end.area {
+            return None;
+        }
         let mut portals = Vec::new();
         let mut kerbs = Vec::new();
-        for &id in &ids[1..ids.len() - 1] {
-            let portal = &self.portals[id - 2];
-            let here = *areas.last().expect("a corridor starts somewhere");
-            let next = if portal.areas.0 == here {
-                portal.areas.1
-            } else if portal.areas.1 == here {
-                portal.areas.0
-            } else {
-                // The chain of portals does not join up: no corridor.
-                return None;
-            };
+        for (k, &portal) in crossed.iter().enumerate() {
+            let (here, next) = (areas[k], areas[k + 1]);
+            let portal = &self.portals[portal];
             // Left and right as seen walking from `here` into `next`.
             let across = self.areas[next].polygon.centroid() - self.areas[here].polygon.centroid();
             let (a, b) = shorten(portal.a, portal.b, CORNER_CLEARANCE);
@@ -639,17 +835,11 @@ impl WalkSpace {
                 (b, a)
             };
             portals.push((left, right));
-            kerbs.push(
-                matches!(
-                    self.areas[here].kind,
-                    AreaKind::Sidewalk { .. } | AreaKind::Plaza
-                ) && matches!(self.areas[next].kind, AreaKind::Link { .. }),
-            );
-            areas.push(next);
+            kerbs.push(!self.areas[here].kind.is_road() && self.areas[next].kind.is_road());
         }
-        if *areas.last().expect("not empty") != end.area {
-            return None;
-        }
+        let off_crossing = areas
+            .iter()
+            .any(|a| matches!(self.areas[*a].kind, AreaKind::Carriageway { .. }));
         let (a, b) = shorten(end.a, end.b, CORNER_CLEARANCE);
         let goal = (
             a + end.inward * CORNER_CLEARANCE,
@@ -661,10 +851,30 @@ impl WalkSpace {
                 areas,
                 portals,
                 kerbs,
+                off_crossing,
+                length,
                 to_entry: to,
                 goal,
             },
         ))
+    }
+
+    /// The road areas a walker on `path`, in area `index` of its corridor, may be in:
+    /// the ones it is on or has just left, and the next one once it has decided to cross
+    /// (`cleared`: the kerb in front of it is passed).
+    pub fn open_roads(&self, path: &WalkPath, index: usize, cleared: bool) -> Vec<usize> {
+        let mut open = Vec::new();
+        let on_road = |i: usize| self.areas[path.areas[i]].kind.is_road();
+        if index > 0 && on_road(index - 1) {
+            open.push(path.areas[index - 1]);
+        }
+        if on_road(index) {
+            open.push(path.areas[index]);
+        }
+        if index + 1 < path.areas.len() && on_road(index + 1) && (cleared || on_road(index)) {
+            open.push(path.areas[index + 1]);
+        }
+        open
     }
 }
 

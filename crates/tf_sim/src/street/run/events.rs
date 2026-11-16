@@ -150,8 +150,26 @@ pub enum StreetEvent {
         /// Time spent in a dense crowd (`crowd::DENSE_CROWD`).
         crowded_s: f64,
         bumps: u32,
+        /// Time spent waiting at kerbs (also in the delay).
+        kerb_wait_s: f64,
+        /// The extra walk the rule way asked for, seconds (0 when it crossed where it
+        /// wanted to).
+        detour_s: f64,
         /// Delay, crowding and bumps weighted by the walker's patience (pivot plan §5.6).
         annoyance: f64,
+    },
+    /// A pedestrian steps off a kerb onto a carriageway: on crossing `crossing` (an id
+    /// in `Street::crossings`) or out of one (`None`), on a red light or not, with the
+    /// soonest a vehicle would reach it as it saw it (`gap_s`, `None`: nobody coming),
+    /// after waiting `waited_s`. Stage C reads it for the cause chain.
+    CrossingStarted {
+        agent: AgentId,
+        segment: i32,
+        crossing: Option<i32>,
+        position: Vec2,
+        on_red: bool,
+        gap_s: Option<f64>,
+        waited_s: f64,
     },
     /// Two pedestrians bumped into each other (pivot plan §5.5: annoyance, no injury).
     Bump {
