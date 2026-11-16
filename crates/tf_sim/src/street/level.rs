@@ -130,6 +130,8 @@ pub enum ObstacleKind {
     Pillar,
     MetroExit,
     BusShelter,
+    /// A van parked for good (in a parking strip or a delivery bay): it hides a child.
+    ParkedVan,
 }
 
 impl ObstacleKind {
@@ -141,6 +143,7 @@ impl ObstacleKind {
                 | ObstacleKind::Pillar
                 | ObstacleKind::MetroExit
                 | ObstacleKind::BusShelter
+                | ObstacleKind::ParkedVan
         )
     }
 }

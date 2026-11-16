@@ -233,6 +233,12 @@ pub struct Agent {
     /// What this agent did wrong lately, for the cause chains.
     pub recent: Vec<(u64, CauseKind)>,
     pub last_hard_brake: Option<u64>,
+    /// Held at its junction line by people on foot (see `Seen::held_by_walkers`), and
+    /// the last tick it was.
+    pub held_by_walkers: bool,
+    pub last_held: Option<u64>,
+    /// The zebra coming up on its route, and how it means to behave there.
+    pub crossing: Option<super::yielding::CrossingApproach>,
 }
 
 impl Agent {

@@ -456,8 +456,14 @@ fn walks_are_deterministic_and_one_more_walker_does_not_change_the_others_draws(
     }
 }
 
+/// Pedestrians spawn from the level's flows, and they never shift the vehicles' ids and
+/// random streams (walker ids have their own range): at the level's demand the same
+/// vehicles come in with or without the pedestrian flows. Until stage B the whole vehicle
+/// event log was identical; since stage C drivers react to walkers, so only the vehicles
+/// that come in are compared, and only at demand x1: at x4 the queues walkers cause
+/// delay some entries, and the vehicles then come in in another order.
 #[test]
-fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
+fn pedestrians_spawn_from_the_level_demand_and_do_not_shift_the_vehicles() {
     let level = LevelFile::load("carrefour-ecole").expect("the test level loads");
     let mut cars_only = level.clone();
     for slice in &mut cars_only.demand {
@@ -491,23 +497,16 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_change_the_car_traffic() {
             run.events()
                 .iter()
                 .map(|e| e.event.clone())
-                .filter(|e| {
-                    !matches!(
-                        e,
-                        StreetEvent::WalkerSpawned { .. }
-                            | StreetEvent::WalkEnded { .. }
-                            | StreetEvent::CrossingStarted { .. }
-                            | StreetEvent::Bump { .. }
-                            | StreetEvent::RunEnded { .. }
-                    ) && !matches!(e, StreetEvent::GaveUp { agent, .. } if is_walker(*agent))
-                })
+                .filter(|e| matches!(e, StreetEvent::Spawned { .. }))
                 .collect()
         };
-        assert_eq!(
-            vehicle_events(&with),
-            vehicle_events(&without),
-            "seed {seed} {population:?} x{scale}"
-        );
+        if scale == 1.0 {
+            assert_eq!(
+                vehicle_events(&with),
+                vehicle_events(&without),
+                "seed {seed} {population:?} x{scale}"
+            );
+        }
         let s = with.summary();
         println!(
             "seed {seed} {population:?} x{scale}: {:?}, due {due}, arrived {arrived}, \

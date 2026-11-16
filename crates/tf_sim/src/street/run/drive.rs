@@ -13,6 +13,7 @@ use super::events::CauseKind;
 use super::grid::Grid;
 use super::route::RoutePath;
 use super::walker::WalkerSeen;
+use super::yielding::{self, PedWorld};
 use crate::roads::lane::Turn;
 use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::level::Sign;
@@ -58,6 +59,10 @@ pub const LATE_RED_S: f64 = 2.5;
 pub const STOPPED_SPEED: f64 = 0.3;
 /// A stopped vehicle this close to its line is waiting at it.
 pub const AT_LINE: f64 = 4.0;
+/// After people on foot held it at its line, a driver gives way to everyone for this
+/// long: the others ignored it meanwhile, and see it moving only after their reaction
+/// time (careful drivers react within 1.2 s), seconds.
+pub const HELD_DEFER_S: f64 = 1.5;
 
 /// What is fixed about a movement for a run.
 #[derive(Clone, Debug, PartialEq)]
@@ -95,6 +100,11 @@ pub struct Seen {
     pub in_junction: bool,
     pub wait_ticks: u32,
     pub crashed: bool,
+    /// A van or a bus: people behind it are hidden (`sight`).
+    pub hides: bool,
+    /// Held at its line by people on foot (the zebra past its exit is in use): it does
+    /// not hold the drivers who give way to it.
+    pub held_by_walkers: bool,
 }
 
 /// The world as it was after one tick.
@@ -113,6 +123,8 @@ pub struct World<'a> {
     pub moves: &'a IndexMap<StreetLaneId, MoveInfo>,
     pub plans: &'a IndexMap<i32, SignalPlan>,
     pub time_s: f64,
+    /// The walkers' world, for drivers who decide (`None` where only speeds are asked).
+    pub peds: Option<&'a PedWorld<'a>>,
 }
 
 /// Why a driver does not enter the junction.
@@ -128,6 +140,10 @@ pub enum Block {
     ExitFull,
 }
 
+/// What a careful driver would have done at the zebra ahead that this one does not:
+/// the walker it would yield to, and (speed, careful limit) at a hidden kerb.
+pub type CrossingPending = (Option<AgentId>, Option<(f64, f64)>);
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decision {
     pub accel: f64,
@@ -140,6 +156,13 @@ pub struct Decision {
     pub causes: Vec<CauseKind>,
     /// Braked hard for this agent, at this rate.
     pub hard_brake: Option<(AgentId, f64)>,
+    /// Coming up to a zebra: what a careful driver would have done that this one does
+    /// not (the walker it would yield to, its speed against the hidden-kerb limit).
+    pub crossing_pending: Option<CrossingPending>,
+    /// The front has entered the zebra.
+    pub crossing_entered: bool,
+    /// Held at the line by people on the zebra past the junction exit.
+    pub held_by_walkers: bool,
 }
 
 /// The speed from which one can still stop within `gap` behind a leader at `lead_speed`,
@@ -301,6 +324,9 @@ pub fn junction_blocks(
     if !careful {
         margin *= 1.0 - agent.traits.risk * (0.6 + 0.4 * agent.frustration);
     }
+    let defers = agent
+        .last_held
+        .is_some_and(|tick| world.time_s - tick as f64 * DT <= HELD_DEFER_S);
     for other in &snapshot.seen {
         let Some(other_movement) = other.movement else {
             continue;
@@ -341,10 +367,20 @@ pub fn junction_blocks(
             if matches!(light_of(world, other_info), Some(Light::Red(_))) {
                 continue;
             }
-            if !must_yield(info, other_info) || (!careful && !approach.yields) {
+            let owes = must_yield(info, other_info);
+            if !(owes || defers) || (!careful && !approach.yields) {
+                continue;
+            }
+            // Deferring after a hold is owed to those who may have started meanwhile, not
+            // to cars standing at their lines (they would wait for it in turn).
+            if !owes && other.speed < STOPPED_SPEED {
                 continue;
             }
             if other.speed < STOPPED_SPEED && -other.s_on_movement < AT_LINE {
+                // Held by people on foot, it is not about to go: it holds nobody.
+                if other.held_by_walkers {
+                    continue;
+                }
                 // It has priority but it stands at its line. If it is about to go, I
                 // wait; only in a ring of waiting cars that all give way to each other
                 // does one of them (see `leads_ring`) go first.
@@ -628,6 +664,15 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         }
     }
 
+    // Entering a zebra: what a careful driver would have done there.
+    if let Some(crossing) = &agent.crossing
+        && !crossing.entered
+        && agent.d >= crossing.enter_d
+    {
+        decision.crossing_entered = true;
+        decision.causes.extend(yielding::crossing_causes(crossing));
+    }
+
     if tick < agent.distracted_until {
         // Looking away: the foot stays where it is.
         return decision;
@@ -655,10 +700,17 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         if to_line < v * v / (2.0 * COMFORT_BRAKE) + v * tau + DECIDE_MARGIN {
             // Too close to stop without braking hard: the decision to go stands.
             let no_return = approach.go && to_line < v * v / (2.0 * HARD_BRAKE);
-            let go = no_return || junction_check(agent, approach, snapshot, world, false).is_ok();
+            let exit_busy = world.peds.is_some_and(|peds| {
+                (yielding::is_careful(agent) || approach.keeps_box)
+                    && yielding::exit_zebra_busy(agent, approach.end_d, snapshot, peds)
+            });
+            let go = no_return
+                || (!exit_busy && junction_check(agent, approach, snapshot, world, false).is_ok());
+            decision.held_by_walkers = exit_busy && !go;
             decision.go = Some(go);
             if !go {
-                target = target.min(safe_speed(to_line - STOP_MARGIN, 0.0, DT));
+                let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
+                target = target.min(safe_speed(stop_d - agent.d - margin, 0.0, DT));
             }
             decision.stopped_at_sign = v < STOPPED_SPEED && to_line < AT_LINE;
         }
@@ -688,14 +740,45 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         _ => None,
     };
     let mut blocker = None;
+    let mut leader = None;
     if let Some((gap, speed, other)) = nearest_obstacle(agent, snapshot, world, lookahead)
         && stopping_at.is_none_or(|to_line| gap <= to_line)
     {
+        leader = Some((gap, speed));
         let min_gap = MIN_GAP * (1.0 - 0.5 * agent.traits.risk);
         let safe = safe_speed(gap - min_gap, speed, tau);
         if safe < target {
             target = safe;
             blocker = Some(other);
+        }
+    }
+
+    // People on foot: in the path, at a zebra, behind a hidden kerb.
+    if let Some(peds) = world.peds {
+        let view = yielding::walker_view(agent, snapshot, peds, false, tau);
+        if view.target < target {
+            target = view.target;
+            blocker = view.blocker;
+        }
+        let courteous = yielding::is_careful(agent) || agent.traits.courtesy >= 0.5;
+        if courteous
+            && let Some(limit) = yielding::keep_crossing_clear(agent, leader, peds)
+            && limit < target
+        {
+            target = limit;
+            blocker = None;
+        }
+        if let Some(crossing) = &agent.crossing
+            && agent.d < crossing.enter_d
+            && !yielding::is_careful(agent)
+        {
+            let careful = yielding::walker_view(agent, snapshot, peds, true, tau);
+            let not_yielding = careful.yield_to.filter(|_| view.yield_to.is_none());
+            let too_fast = careful
+                .hidden
+                .filter(|(limit, _)| v > limit + 1.0)
+                .map(|(limit, _)| (v, limit));
+            decision.crossing_pending = Some((not_yielding, too_fast));
         }
     }
 

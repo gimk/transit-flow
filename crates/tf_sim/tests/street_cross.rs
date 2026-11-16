@@ -142,8 +142,12 @@ fn with_no_traffic_a_walker_does_not_wait_at_the_kerb() {
     }
 }
 
-/// A careful walker waits for a gap and never steps off when a vehicle, at the speed it
-/// has, would reach the crossing before the walker is across.
+/// A careful walker never steps onto the zebra in front of a car that can neither pass
+/// before it is across nor stop for it: every approaching car either reaches the zebra
+/// after the walker's crossing time, at the speed it has, or can still stop before it
+/// braking at a comfortable 3 m/s² (its driver has seen the walker at the kerb). Stage
+/// C: drivers yield at a zebra, so walkers no longer wait for a full gap there; in
+/// stage B this test asked for the full gap.
 #[test]
 fn a_careful_walker_waits_for_a_gap_and_never_starts_into_a_car() {
     let flows = flow("Pedestrian", "north", "south", 900)
@@ -166,20 +170,21 @@ fn a_careful_walker_waits_for_a_gap_and_never_starts_into_a_car() {
                         agent,
                         crossing,
                         waited_s,
+                        position,
                         ..
-                    } => Some((e.tick, agent, crossing, waited_s)),
+                    } => Some((e.tick, agent, crossing, waited_s, position)),
                     _ => None,
                 })
                 .collect();
-            for &(tick, agent, crossing, waited) in &events[seen..] {
+            for &(tick, agent, crossing, waited, position) in &events[seen..] {
                 assert_eq!(tick + 1, run.tick);
                 let speed = run.walkers[&agent].desired_speed;
                 assert_eq!(crossing, Some(1), "careful walkers use the zebra");
                 starts += 1;
                 waited_some += usize::from(waited > 0.5);
-                // The zebra spans x 58.5 to 61.5; a walker's body adds a little. The
-                // carriageway is 6 m across.
-                let (low, high) = (58.5 - 0.3, 61.5 + 0.3);
+                // The band the walker crosses in: its body and a little room each side
+                // of where it steps off. The carriageway is 6 m across.
+                let (low, high) = (position.x - 1.0, position.x + 1.0);
                 let crossing_s = 6.0 / speed;
                 for car in run.agents.values() {
                     let half = car.dir * (car.length as f32 / 2.0);
@@ -192,18 +197,33 @@ fn a_careful_walker_waits_for_a_gap_and_never_starts_into_a_car() {
                     if past {
                         continue;
                     }
+                    // In the walker's band: only a car standing before the zebra (it
+                    // yields) is allowed there.
+                    let on_zebra = front.x > 58.5 && front.x < 61.5
+                        || rear.x > 58.5 && rear.x < 61.5
+                        || (front.x - 60.0) * (rear.x - 60.0) < 0.0;
                     assert!(
-                        to_zebra > 0.0,
-                        "seed {seed}, tick {tick}: car {:?} is on the zebra",
-                        car.id
+                        to_zebra > 0.0 || (car.speed < 0.3 && !on_zebra),
+                        "seed {seed}, tick {tick}: car {:?} at {:?} ({} m/s) is in the way \
+                         of walker {agent:?} at {position:?}",
+                        car.id,
+                        car.pos,
+                        car.speed
                     );
+                    if to_zebra <= 0.0 {
+                        continue;
+                    }
                     if car.speed > 0.3 {
                         let time = f64::from(to_zebra) / car.speed;
-                        closest = closest.min(time);
+                        let v = car.speed;
+                        let can_stop = f64::from(to_zebra) >= v * v / 6.0;
+                        if !can_stop {
+                            closest = closest.min(time);
+                        }
                         assert!(
-                            time >= crossing_s,
+                            time >= crossing_s || can_stop,
                             "seed {seed}, tick {tick}: car {:?} reaches the zebra in \
-                             {time:.2} s",
+                             {time:.2} s and cannot stop",
                             car.id
                         );
                     }
@@ -212,7 +232,10 @@ fn a_careful_walker_waits_for_a_gap_and_never_starts_into_a_car() {
             seen = events.len();
         }
     }
-    println!("{starts} crossings, {waited_some} after a wait, closest car {closest:.2} s away");
+    println!(
+        "{starts} crossings, {waited_some} after a wait, closest car that could not stop \
+         {closest:.2} s away"
+    );
     assert!(starts >= 40, "{starts}");
     assert!(waited_some >= 5, "traffic makes some wait: {waited_some}");
 }

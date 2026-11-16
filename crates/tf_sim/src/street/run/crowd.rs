@@ -31,8 +31,10 @@
 use glam::Vec2;
 
 use super::StreetRun;
+use super::detect::Body;
 use super::drive::DT;
-use super::events::{StreetEvent, rounded, rounded_point};
+use super::drive::Seen;
+use super::events::{CauseKind, StreetEvent, rounded, rounded_point};
 use super::grid::Grid;
 use super::kerb::KerbChoice;
 use super::walk::{WalkSpace, Wall};
@@ -106,6 +108,18 @@ pub const BUMP_COST_S: f64 = 2.0;
 /// A second of forced detour (the rule way's extra walk) weighs this many seconds of
 /// delay (start value; pivot plan §5.6).
 pub const DETOUR_WEIGHT: f64 = 1.0;
+/// A vehicle slower than this is solid for walkers: they are pushed out of it instead
+/// of touching it, m/s.
+pub const STANDING_VEHICLE: f64 = 0.5;
+/// A walker on the road stops for a moving vehicle body this close in front of it,
+/// metres (start value).
+pub const CAR_AHEAD: f32 = 1.0;
+/// What a walker did wrong stays blamable this long, seconds (start value: a slow
+/// crossing of a wide street).
+pub const WALKER_CAUSE_S: f64 = 20.0;
+/// A walker this close to the kerb in front of it (beyond its body) shows that it is
+/// about to cross: drivers yield to it at a zebra, metres (start value).
+pub const INTENT_REACH: f32 = 3.0;
 /// Walkers further apart than this are not tested for overlap in a tick, metres.
 const PAIR_REACH: f32 = 1.0;
 /// Grid cells for walkers, metres: a query of the anticipation range reads about 6 × 6
@@ -217,6 +231,45 @@ fn wall_contact(p: Vec2, a: Vec2, b: Vec2) -> (Vec2, bool) {
     (q, interior)
 }
 
+/// The point of a vehicle body nearest to `p` (`p` itself when inside).
+fn nearest_on_body(body: &Body, p: Vec2) -> Vec2 {
+    let local = p - body.center;
+    let side = body.dir.perp();
+    let along = local
+        .dot(body.dir)
+        .clamp(-body.half_length, body.half_length);
+    let across = local.dot(side).clamp(-body.half_width, body.half_width);
+    body.center + body.dir * along + side * across
+}
+
+/// Pushes a body out of a vehicle body it went into: to the side nearest to where it
+/// was at the start of the tick.
+fn push_out_of_vehicle(body: &Body, p: Vec2, before: Vec2, r: f32) -> Vec2 {
+    let q = nearest_on_body(body, p);
+    let d = p - q;
+    let dist = d.length();
+    if dist >= r {
+        return p;
+    }
+    if dist > 1e-6 && !circle_inside(body, p) {
+        return q + d / dist * r;
+    }
+    // The centre went inside: back out through the side it came from.
+    let q = nearest_on_body(body, before);
+    let d = before - q;
+    if d.length() > 1e-6 {
+        q + d.normalize() * r
+    } else {
+        before
+    }
+}
+
+fn circle_inside(body: &Body, p: Vec2) -> bool {
+    let local = p - body.center;
+    local.dot(body.dir).abs() < body.half_length
+        && local.dot(body.dir.perp()).abs() < body.half_width
+}
+
 /// The walls a walker may not cross: every wall, and the kerbs of the road areas not in
 /// `open` (`WalkSpace::open_roads`).
 fn barriers<'a>(space: &'a WalkSpace, open: &'a [usize]) -> impl Iterator<Item = Wall> + 'a {
@@ -261,7 +314,13 @@ fn push_out(space: &WalkSpace, mut p: Vec2, before: Vec2, r: f32, open: &[usize]
 impl StreetRun {
     /// The force a walker asks for, from the previous tick's snapshot, and the density
     /// around it.
-    fn walker_force(&self, walker: &Walker, seen: &[WalkerSeen], grid: &Grid) -> Decided {
+    fn walker_force(
+        &self,
+        walker: &Walker,
+        seen: &[WalkerSeen],
+        grid: &Grid,
+        vehicles: &[Seen],
+    ) -> Decided {
         let kerb = self.kerb_choice(walker);
         let path = &self.walk_paths[walker.path];
         let going = matches!(kerb, Some(KerbChoice::Go { .. }));
@@ -308,6 +367,31 @@ impl StreetRun {
             }
         }
         let space = &self.walk_space;
+        // Vehicle bodies: people keep off them like off a wall, and one on the road stops
+        // for a moving one right in front of it (it does not walk into its side).
+        let mut car_ahead = false;
+        for vehicle in vehicles {
+            if vehicle.pos.distance(p) > (vehicle.length * 0.5) as f32 + 2.0 {
+                continue;
+            }
+            let body = Body {
+                center: vehicle.pos,
+                dir: vehicle.dir,
+                half_length: (vehicle.length * 0.5) as f32,
+                half_width: (vehicle.width * 0.5) as f32,
+            };
+            let d = p - nearest_on_body(&body, p);
+            let dist = d.length();
+            if dist > 1e-6 {
+                force += d / dist * gap_force(dist - r, WALL_RANGE, WALL_STRENGTH);
+                if vehicle.speed > STANDING_VEHICLE
+                    && dist - r < CAR_AHEAD
+                    && (-d).dot(to_target) > 0.0
+                {
+                    car_ahead = true;
+                }
+            }
+        }
         for round in &space.circles {
             let rel = p - round.center;
             let dist = rel.length();
@@ -355,7 +439,7 @@ impl StreetRun {
                 pace *= (1.0 - GROUP_PACE * ahead).clamp(0.6, 1.25);
             }
         }
-        if kerb == Some(KerbChoice::Wait) {
+        if kerb == Some(KerbChoice::Wait) || (car_ahead && !open.is_empty()) {
             pace = 0.0;
         }
         let desired = to_target * (walker.desired_speed as f32 * pace);
@@ -436,7 +520,7 @@ impl StreetRun {
         let decided: Vec<Decided> = self
             .walkers
             .values()
-            .map(|w| self.walker_force(w, &snapshot.walkers, &snapshot.walker_grid))
+            .map(|w| self.walker_force(w, &snapshot.walkers, &snapshot.walker_grid, &snapshot.seen))
             .collect();
         let mut stats = self.walk_stats;
         let tick = self.tick;
@@ -445,7 +529,7 @@ impl StreetRun {
             .values()
             .zip(&decided)
             .filter_map(|(walker, d)| match d.kerb {
-                Some(KerbChoice::Go { gap_s, on_red }) => {
+                Some(KerbChoice::Go { gap_s, on_red, .. }) => {
                     let (segment, crossing) = self.crossing_ahead(walker);
                     Some(StreetEvent::CrossingStarted {
                         agent: walker.id,
@@ -476,6 +560,18 @@ impl StreetRun {
         ) in self.walkers.values_mut().zip(decided)
         {
             walker.detour = detour;
+            walker
+                .recent
+                .retain(|(t, _)| (tick - t) as f64 * DT <= WALKER_CAUSE_S);
+            if walker.hit() {
+                // It stays where it fell.
+                walker.vel = Vec2::ZERO;
+                walker.vel_before = Vec2::ZERO;
+                walker.accel = Vec2::ZERO;
+                walker.prev_pos = walker.pos;
+                walker.waiting = false;
+                continue;
+            }
             walker.waiting = kerb == Some(KerbChoice::Wait);
             match kerb {
                 Some(KerbChoice::Wait) => {
@@ -484,9 +580,22 @@ impl StreetRun {
                     walker.frustration =
                         (walker.frustration + DT / walker.traits.patience_s).min(1.0);
                 }
-                Some(KerbChoice::Go { .. }) => {
+                Some(KerbChoice::Go {
+                    gap_s,
+                    on_red,
+                    short_gap,
+                }) => {
                     walker.cleared_kerb = Some(walker.area_index);
                     walker.kerb_since = None;
+                    if on_red {
+                        walker.recent.push((tick, CauseKind::WalkedOnRed));
+                    }
+                    if short_gap {
+                        let gap_s = rounded(gap_s.unwrap_or(0.0), 100.0);
+                        walker
+                            .recent
+                            .push((tick, CauseKind::AcceptedShortGap { gap_s }));
+                    }
                 }
                 None => walker.frustration = (walker.frustration - DT / 60.0).max(0.0),
             }
@@ -515,9 +624,24 @@ impl StreetRun {
                 bumps.push((a, b, at));
             }
         }
+        // Standing vehicles are solid for walkers (a moving one is a contact instead).
+        let standing: Vec<Body> = self
+            .agents
+            .values()
+            .filter(|car| car.speed < STANDING_VEHICLE)
+            .map(|car| Body {
+                center: car.pos,
+                dir: car.dir,
+                half_length: (car.length * 0.5) as f32,
+                half_width: (car.width * 0.5) as f32,
+            })
+            .collect();
         for _ in 0..CONSTRAINT_PASSES {
             self.part_bodies(&pairs);
             for walker in self.walkers.values_mut() {
+                if walker.hit() {
+                    continue;
+                }
                 let path = &self.walk_paths[walker.path];
                 let cleared = walker.cleared_kerb == Some(walker.area_index);
                 let open = self.walk_space.open_roads(path, walker.area_index, cleared);
@@ -528,6 +652,12 @@ impl StreetRun {
                     walker.radius,
                     &open,
                 );
+                for body in &standing {
+                    if body.center.distance(walker.pos) < body.half_length + 2.0 {
+                        walker.pos =
+                            push_out_of_vehicle(body, walker.pos, walker.prev_pos, walker.radius);
+                    }
+                }
             }
         }
         for walker in self.walkers.values_mut() {
@@ -570,6 +700,15 @@ impl StreetRun {
         }
         self.walk_stats = stats;
         for event in starts {
+            if let StreetEvent::CrossingStarted {
+                agent,
+                crossing: None,
+                ..
+            } = event
+                && let Some(walker) = self.walkers.get_mut(&agent)
+            {
+                walker.recent.push((tick, CauseKind::CrossedOutOfCrossing));
+            }
             self.log(event);
         }
         let cooldown = (CONFLICT_COOLDOWN_S / DT).round() as u64;
@@ -650,7 +789,9 @@ impl StreetRun {
             moves[j] -= out * (overlap * 0.5);
         }
         for (walker, step) in self.walkers.values_mut().zip(moves) {
-            walker.pos += step;
+            if !walker.hit() {
+                walker.pos += step;
+            }
         }
     }
 
@@ -662,7 +803,12 @@ impl StreetRun {
             let walker = &self.walkers[&id];
             let path = &self.walk_paths[walker.path];
             let goal = closest_point_to_segment(walker.pos, path.goal.0, path.goal.1);
-            let event = if walker.pos.distance(goal) <= ARRIVE_DISTANCE {
+            let event = if let Some(until) = walker.hit_until {
+                if until > tick {
+                    continue;
+                }
+                StreetEvent::Cleared { agent: id }
+            } else if walker.pos.distance(goal) <= ARRIVE_DISTANCE {
                 let time_s = (tick - walker.spawn_tick) as f64 * DT;
                 let delay_s = (time_s - walker.free_time_s).max(0.0);
                 let crowded_s = f64::from(walker.crowded_ticks) * DT;
@@ -703,12 +849,25 @@ impl StreetRun {
             .enumerate()
             .map(|(index, walker)| {
                 grid.insert(index as u32, walker.pos);
+                let path = &self.walk_paths[walker.path];
+                let k = walker.area_index;
+                let next = path.areas.get(k + 1).copied();
+                let about_to_step = path.kerbs.get(k).copied().unwrap_or(false) && {
+                    let (l, r) = path.portals[k];
+                    walker.kerb_since.is_some()
+                        || walker.cleared_kerb == Some(k)
+                        || closest_point_to_segment(walker.pos, l, r).distance(walker.pos)
+                            < walker.radius + INTENT_REACH
+                };
                 WalkerSeen {
                     id: walker.id,
                     pos: walker.pos,
                     vel: walker.vel,
                     radius: walker.radius,
                     group: walker.group,
+                    area: Some(path.areas[k]),
+                    intent: if about_to_step { next } else { None },
+                    hit: walker.hit(),
                 }
             })
             .collect();

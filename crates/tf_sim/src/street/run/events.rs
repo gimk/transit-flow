@@ -6,6 +6,7 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use super::sight::Hider;
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
 use crate::street::level::Mode;
@@ -37,13 +38,38 @@ pub enum CauseKind {
     },
     /// Braked as hard as the vehicle can and still could not stop.
     TooFastToStop,
+    /// Drove onto a zebra where `to` was crossing or waiting to cross.
+    DidNotYieldToWalker {
+        to: AgentId,
+    },
+    /// Could not see `walker`: the sight line was cut by `by`.
+    HiddenWalker {
+        walker: AgentId,
+        by: Hider,
+    },
+    /// Came up to a zebra with a hidden kerb faster than it could stop at.
+    TooFastForSight {
+        kmh: f64,
+        safe_kmh: f64,
+    },
+    /// A walker crossed the carriageway out of a crossing.
+    CrossedOutOfCrossing,
+    /// A walker stepped off on red (or too late for its crossing).
+    WalkedOnRed,
+    /// A walker stepped off in a gap a careful walker would not have taken, seconds.
+    AcceptedShortGap {
+        gap_s: f64,
+    },
 }
 
 impl CauseKind {
     /// The other agent this cause is about, if it names one.
     pub fn about(&self) -> Option<AgentId> {
         match *self {
-            CauseKind::DidNotYield { to } | CauseKind::GapTooShort { to } => Some(to),
+            CauseKind::DidNotYield { to }
+            | CauseKind::GapTooShort { to }
+            | CauseKind::DidNotYieldToWalker { to } => Some(to),
+            CauseKind::HiddenWalker { walker, .. } => Some(walker),
             CauseKind::DidNotLook { at } => Some(at),
             _ => None,
         }

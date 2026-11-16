@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use super::agent::Population;
 use super::crowd::ARRIVE_DISTANCE;
-use super::events::StreetEvent;
+use super::events::{CauseKind, StreetEvent};
 use super::walk::{AreaKind, WalkPath, path_length, string_pull};
 use super::{StreetRun, mix};
 use crate::geom::polygon::segment_intersection;
@@ -285,6 +285,17 @@ pub struct Walker {
     pub kerb_wait_ticks: u32,
     /// 0..1: grows while it waits at a kerb, eases slowly while it walks.
     pub frustration: f64,
+    /// What it did wrong lately (crossing out of a zebra, on red, in a short gap), for
+    /// the cause chains.
+    pub recent: Vec<(u64, CauseKind)>,
+    /// Hit by a vehicle: it stays where it fell until this tick, then is taken away.
+    pub hit_until: Option<u64>,
+}
+
+impl Walker {
+    pub fn hit(&self) -> bool {
+        self.hit_until.is_some()
+    }
 }
 
 impl Walker {
@@ -581,6 +592,8 @@ impl StreetRun {
                 waiting: false,
                 kerb_wait_ticks: 0,
                 frustration: 0.0,
+                recent: Vec::new(),
+                hit_until: None,
             });
         }
         self.next_walker += size as i32;
@@ -607,6 +620,12 @@ pub struct WalkerSeen {
     pub vel: Vec2,
     pub radius: f32,
     pub group: AgentId,
+    /// The walk-space area its corridor has it in.
+    pub area: Option<usize>,
+    /// The road area it is about to step onto: waiting at the kerb, decided to go, or
+    /// walking up to the kerb (drivers yield to it at a zebra).
+    pub intent: Option<usize>,
+    pub hit: bool,
 }
 
 /// The point `distance` metres along `centerline` (its last point beyond its end).
