@@ -396,6 +396,14 @@ fn a_crossing_that_does_not_fit_is_refused() {
             segment: 99,
             ..mid_block()
         },
+        CrossingDef {
+            at: f32::NAN,
+            ..mid_block()
+        },
+        CrossingDef {
+            width: f32::INFINITY,
+            ..mid_block()
+        },
     ];
     for crossing in refused {
         assert!(

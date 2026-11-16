@@ -2,6 +2,7 @@
 //! the desire line), waiting at the kerb for a gap, and pedestrian lights. Drivers do
 //! not react to walkers yet (stage C), so these tests look only at what walkers decide.
 
+use tf_sim::roads::lane::Turn;
 use tf_sim::street::Design;
 use tf_sim::street::level::{JunctionControl, LevelFile};
 use tf_sim::street::run::walk::AreaKind;
@@ -307,4 +308,224 @@ fn crossings_are_deterministic() {
     b.run_to_end();
     assert_eq!(a.log_hash(), b.log_hash());
     assert_eq!(a.events(), b.events());
+}
+
+/// The approaches whose traffic drives over a crossing area, from the lanes' geometry:
+/// (approaches whose own lane or straight movement passes through it, approaches whose
+/// turning movement leaves through it).
+fn approaches_over(run: &StreetRun, area: usize) -> (Vec<i32>, Vec<i32>) {
+    let polygon = &run.walk_space.areas[area].polygon;
+    let crosses = |points: &[glam::Vec2]| {
+        points
+            .windows(2)
+            .any(|pair| (0..=10).any(|k| polygon.contains(pair[0].lerp(pair[1], k as f32 / 10.0))))
+    };
+    let (mut straight, mut turning) = (Vec::new(), Vec::new());
+    for movement in run.street.movements(0) {
+        let feeder = &run.street.lanes[&movement.feeder.expect("a feeder")];
+        let out = &run.street.lanes[&movement.outgoing[0]];
+        let approach = feeder.segment_id.expect("a road lane");
+        let list = if crosses(&feeder.polyline())
+            || (movement.turn == Turn::Straight && crosses(&out.polyline()))
+        {
+            &mut straight
+        } else if crosses(&out.polyline()) {
+            &mut turning
+        } else {
+            continue;
+        };
+        if !list.contains(&approach) {
+            list.push(approach);
+        }
+    }
+    (straight, turning)
+}
+
+/// At signals, no careful walker is still on a zebra when an approach whose traffic
+/// drives straight over it gets green: walkers step off only when their own crossing
+/// fits before that green (stage B review, finding 1). The approaches come from the
+/// lanes, not from the run's own table.
+#[test]
+fn at_signals_careful_walkers_are_across_before_the_traffic_gets_green() {
+    let level = signal_level();
+    let mut checks = 0;
+    for seed in 1..=3 {
+        let mut run = run(&level, seed, Population::Careful, 2.0);
+        let zebras: Vec<(usize, Vec<i32>)> = (0..run.walk_space.areas.len())
+            .filter(|a| matches!(run.walk_space.areas[*a].kind, AreaKind::Crossing { .. }))
+            .map(|a| (a, approaches_over(&run, a).0))
+            .collect();
+        let green = |run: &StreetRun, approach: i32| {
+            matches!(run.approach_light(0, approach), Some(Light::Green(_)))
+        };
+        while !run.finished() {
+            let before: Vec<Vec<bool>> = zebras
+                .iter()
+                .map(|(_, approaches)| approaches.iter().map(|a| green(&run, *a)).collect())
+                .collect();
+            run.step();
+            for ((area, approaches), was) in zebras.iter().zip(&before) {
+                for (approach, was_green) in approaches.iter().zip(was) {
+                    if *was_green || !green(&run, *approach) {
+                        continue;
+                    }
+                    checks += 1;
+                    let polygon = &run.walk_space.areas[*area].polygon;
+                    for walker in run.walkers.values() {
+                        assert!(
+                            !polygon.contains(walker.pos),
+                            "seed {seed}, tick {}: {:?} is on zebra area {area} as approach \
+                             {approach} turns green",
+                            run.tick,
+                            walker.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(checks >= 10, "{checks} greens checked");
+}
+
+/// Crossing out of a zebra with traffic (stage B review, finding 3): the gap is measured
+/// on the walker's own crossing line, so careful walkers never step in front of a car.
+/// They wait long at 700 cars an hour each way: a careful walker needs about 6 s free in
+/// both directions (the textbook delay for such a street is near a minute).
+#[test]
+fn careful_walkers_cross_a_busy_street_out_of_a_zebra_safely() {
+    let flows = flow("Pedestrian", "north", "south", 600)
+        + &flow("Car", "west", "east", 700)
+        + &flow("Car", "east", "west", 700);
+    let level = street(None, &flows, 150.0);
+    let (mut starts, mut waited, mut arrived, mut spawned) = (0, 0, 0, 0);
+    for seed in 1..=4 {
+        let mut run = run(&level, seed, Population::Careful, 1.0);
+        let mut seen = 0;
+        while !run.finished() {
+            run.step();
+            let events: Vec<_> = run
+                .events()
+                .iter()
+                .filter_map(|e| match e.event {
+                    StreetEvent::CrossingStarted {
+                        agent,
+                        crossing,
+                        position,
+                        waited_s,
+                        ..
+                    } => Some((agent, crossing, position, waited_s)),
+                    _ => None,
+                })
+                .collect();
+            for &(agent, crossing, position, wait) in &events[seen..] {
+                assert_eq!(crossing, None);
+                starts += 1;
+                waited += usize::from(wait > 0.5);
+                let walker = &run.walkers[&agent];
+                let crossing_s = 6.0 / walker.desired_speed;
+                let (low, high) = (position.x - 0.6, position.x + 0.6);
+                for car in run.agents.values() {
+                    let half = car.dir * (car.length as f32 / 2.0);
+                    let (front, rear) = (car.pos + half, car.pos - half);
+                    let (to_line, past) = if car.dir.x > 0.0 {
+                        (low - front.x, rear.x > high)
+                    } else {
+                        (front.x - high, rear.x < low)
+                    };
+                    if past {
+                        continue;
+                    }
+                    assert!(to_line > 0.0, "seed {seed}: car {:?} is in the way", car.id);
+                    if car.speed > 0.3 {
+                        let time = f64::from(to_line) / car.speed;
+                        assert!(
+                            time >= crossing_s,
+                            "seed {seed}: car {:?} is {time:.2} s away",
+                            car.id
+                        );
+                    }
+                }
+            }
+            seen = events.len();
+        }
+        let s = run.summary().walkers;
+        arrived += s.arrived;
+        spawned += s.spawned;
+    }
+    println!("{starts} crossings, {waited} after a wait, {arrived} of {spawned} arrived");
+    assert!(waited >= 5, "traffic makes them wait");
+    assert!(starts >= 40, "careful walkers do get across: {starts}");
+}
+
+/// People (the everyday mix) get across a street of 700 cars an hour each way out of a
+/// zebra: a stated bound on those who give up.
+#[test]
+fn people_get_across_a_busy_street_out_of_a_zebra() {
+    let flows = flow("Pedestrian", "north", "south", 600)
+        + &flow("Car", "west", "east", 700)
+        + &flow("Car", "east", "west", 700);
+    let level = street(None, &flows, 150.0);
+    let (mut arrived, mut spawned, mut gave_up, mut wait) = (0, 0, 0, 0.0);
+    for seed in 1..=4 {
+        let mut run = run(&level, seed, Population::Mixed, 1.0);
+        run.run_to_end();
+        let s = run.summary().walkers;
+        arrived += s.arrived;
+        spawned += s.spawned;
+        gave_up += s.gave_up;
+        wait += s.mean_kerb_wait_s * f64::from(s.arrived);
+    }
+    let wait = wait / f64::from(arrived);
+    println!("mixed: {arrived} of {spawned} arrived, {gave_up} gave up, mean wait {wait:.1} s");
+    assert!(gave_up * 10 <= spawned, "{gave_up} of {spawned} gave up");
+}
+
+/// The 50 m rule counts crossings of the same street on other segments, by position
+/// (stage B review, finding 6): a zebra just past a junction, on the next segment of the
+/// street, is 10 m from the desire line, so careful walkers use it.
+#[test]
+fn a_zebra_on_the_next_segment_of_the_street_counts_for_the_fifty_metre_rule() {
+    let profile = r#"[
+        (use: Sidewalk, width: 3.0, right: Kerb),
+        (use: CarLane, width: 3.0, direction: Forward, left: Kerb),
+        (use: CarLane, width: 3.0, direction: Backward, right: Kerb),
+        (use: Sidewalk, width: 3.0, left: Kerb),
+    ]"#;
+    let text = format!(
+        r#"(
+        id: "two-segments", name: "Two segments", place: "test", difficulty: 1,
+        bounds: (min: (0.0, 0.0), max: (160.0, 12.0)),
+        nodes: [(id: 1, position: (0.0, 6.0)), (id: 2, position: (80.0, 6.0)),
+                (id: 3, position: (160.0, 6.0))],
+        segments: [
+            (id: 1, name: "Rue", from: 1, to: 2, speed_limit_kmh: 30.0, profile: {profile}),
+            (id: 2, name: "Rue", from: 2, to: 3, speed_limit_kmh: 30.0, profile: {profile}),
+        ],
+        junctions: [(node: 2, polygon: [(78.0, 3.0), (82.0, 3.0), (82.0, 9.0), (78.0, 9.0)])],
+        plazas: [
+            [(78.0, 0.0), (82.0, 0.0), (82.0, 3.0), (78.0, 3.0)],
+            [(78.0, 9.0), (82.0, 9.0), (82.0, 12.0), (78.0, 12.0)],
+        ],
+        crossings: [(kind: Zebra, segment: 2, at: 6.0, width: 3.0)],
+        gates: [
+            (id: "north", position: (74.0, 0.0), segment: 1, access: 1),
+            (id: "south", position: (74.0, 12.0), segment: 1, access: 1),
+        ],
+        demand: [(name: "test", duration_s: 60.0, flows: [
+            (mode: Pedestrian, from: "north", to: "south", per_hour: 900),
+        ])],
+        seed: 1,
+    )"#
+    );
+    let level = LevelFile::from_ron(&text).expect("the level parses");
+    let mut run = run(&level, 1, Population::Careful, 1.0);
+    run.run_to_end();
+    let starts = crossings(&run);
+    assert!(starts.len() >= 5, "{}", starts.len());
+    assert!(
+        starts
+            .iter()
+            .all(|(_, _, crossing, ..)| *crossing == Some(1)),
+        "careful walkers use the zebra 10 m away: {starts:?}"
+    );
 }

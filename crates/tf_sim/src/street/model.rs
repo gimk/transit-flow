@@ -419,7 +419,9 @@ impl Street {
             .ok_or(EditError::UnknownSegment(def.segment))?;
         let length = lane_builder::polyline_length(&segment.centerline) as f32;
         let (low, high) = (def.at - def.width * 0.5, def.at + def.width * 0.5);
-        if def.width < MIN_CROSSING_WIDTH
+        if !def.at.is_finite()
+            || !def.width.is_finite()
+            || def.width < MIN_CROSSING_WIDTH
             || low < segment.start_trim - 1e-3
             || high > length - segment.end_trim + 1e-3
         {

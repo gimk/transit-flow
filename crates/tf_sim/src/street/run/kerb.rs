@@ -1,13 +1,14 @@
 //! The kerb (pivot plan §5.1 to §5.3, Phase 3): a walker whose way steps from a foot
 //! area onto a road area stops at the kerb and decides when to go.
 //!
-//! - **Lights.** A crossing near a junction under signals has a pedestrian light
-//!   (`SignalPlan::walk`): walk while no approach whose traffic drives over the crossing
-//!   has green (the crossed street's own approach, and the approaches whose straight
-//!   movement leaves into it; turning traffic crosses on a permissive green and will
-//!   yield in stage C). On red, a walker goes only if its kerb draw is below
-//!   `(1 - compliance) * (1 + 2 * frustration)`, the rule bending of the drivers; a fully
-//!   compliant walker never does.
+//! - **Lights.** A crossing near a junction under signals has a pedestrian light. The
+//!   conflicting approaches are the crossed street's own approach and the approaches
+//!   whose straight movement leaves into it; turning traffic crosses on a permissive
+//!   green and yields to walkers (French practice). A walker steps off by the rules only
+//!   if its own crossing time, plus `SIGNAL_MARGIN_S`, fits before a conflicting
+//!   approach gets green (`SignalPlan::until_conflict`); otherwise it is on red. On red
+//!   it goes only if its kerb draw is below `(1 - compliance) * (1 + 2 * frustration)`,
+//!   the rule bending of the drivers; a fully compliant walker never does.
 //! - **Gap.** Then, lights or not, it looks at the vehicles as they were one reaction
 //!   time ago (the same snapshots drivers decide from) and goes when none would reach
 //!   the road areas it crosses before it is over: the crossing time at its pace, shrunk
@@ -16,8 +17,10 @@
 //!   wait for a gap at a zebra, with the smaller `ZEBRA_MARGIN_S`: by French law they
 //!   have priority there.
 //!
-//! A vehicle's time to the crossing comes from its route: the route distances where it
-//! enters and leaves each road area are found once per route (`road_areas_of`).
+//! A vehicle's time to the crossing comes from its route: the route's line through each
+//! road area is sampled once per route (`road_areas_of`), and the part of that line
+//! within `CROSSING_REACH` of the walker's own crossing line (from where it stands to
+//! the far kerb) is where the vehicle would meet it.
 
 use indexmap::IndexMap;
 
@@ -43,6 +46,23 @@ pub const ROAD_MARGIN_S: f64 = 1.0;
 const STANDING_SPEED: f64 = 0.3;
 /// Routes are sampled this often to find the road areas they cross, metres.
 const ROUTE_STEP: f64 = 0.5;
+/// A vehicle meets a walker where its route line comes this close to the walker's
+/// crossing line: half a wide vehicle, a body and a little room, metres (start value).
+pub const CROSSING_REACH: f32 = 2.0;
+/// At signals, seconds a walker wants on top of its crossing time before the
+/// conflicting traffic gets green (start value).
+pub const SIGNAL_MARGIN_S: f64 = 2.0;
+
+/// The part of a vehicle route inside one road area of the walk space.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RouteArea {
+    pub area: usize,
+    /// Route distances where the route enters and leaves the area.
+    pub enter: f64,
+    pub exit: f64,
+    /// The route's line through the area: (route distance, point), every `ROUTE_STEP`.
+    pub line: Vec<(f64, glam::Vec2)>,
+}
 
 /// What a walker at a kerb decides this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,14 +76,13 @@ pub enum KerbChoice {
     },
 }
 
-/// The road areas a vehicle route drives through: (area, route distance where the
-/// route enters it, where it leaves it).
+/// The road areas a vehicle route drives through, in route order.
 pub(super) fn road_areas_of(
     street: &Street,
     space: &WalkSpace,
     route: &RoutePath,
-) -> Vec<(usize, f64, f64)> {
-    let mut found: Vec<(usize, f64, f64)> = Vec::new();
+) -> Vec<RouteArea> {
+    let mut found: Vec<RouteArea> = Vec::new();
     let roads: Vec<usize> = (0..space.areas.len())
         .filter(|a| space.areas[*a].kind.is_road())
         .collect();
@@ -75,9 +94,17 @@ pub(super) fn road_areas_of(
             if !space.areas[area].polygon.contains(point) {
                 continue;
             }
-            match found.iter_mut().find(|(a, ..)| *a == area) {
-                Some(entry) => entry.2 = d,
-                None => found.push((area, d, d)),
+            match found.iter_mut().find(|r| r.area == area) {
+                Some(entry) => {
+                    entry.exit = d;
+                    entry.line.push((d, point));
+                }
+                None => found.push(RouteArea {
+                    area,
+                    enter: d,
+                    exit: d,
+                    line: vec![(d, point)],
+                }),
             }
         }
     }
@@ -124,6 +151,13 @@ impl StreetRun {
         let (node, conflicting) = self.walk_signals.get(&area)?;
         let plan = self.plans.get(node)?;
         Some(plan.walk(conflicting, self.tick as f64 * DT))
+    }
+
+    /// Seconds until the traffic over a crossing area under signals gets green.
+    pub fn until_conflict(&self, area: usize) -> Option<f64> {
+        let (node, conflicting) = self.walk_signals.get(&area)?;
+        let plan = self.plans.get(node)?;
+        Some(plan.until_conflict(conflicting, self.tick as f64 * DT))
     }
 
     /// The vehicle light of `approach` at the junction `node` now (`None`: no signals
@@ -202,8 +236,8 @@ impl StreetRun {
         };
         let crossing_s = f64::from(far.distance(walker.pos)) / walker.desired_speed.max(0.1);
         let t = &walker.traits;
-        let lights = roads.iter().find_map(|a| self.walk_light(*a));
-        let on_red = lights == Some(false);
+        let time_left = roads.iter().find_map(|a| self.until_conflict(*a));
+        let on_red = time_left.is_some_and(|left| left < crossing_s + SIGNAL_MARGIN_S);
         if on_red {
             let kerb = path.kerbs[..k].iter().filter(|kerb| **kerb).count();
             let draw = f64::from(walker.kerb_draws[kerb]);
@@ -221,16 +255,17 @@ impl StreetRun {
             ROAD_MARGIN_S
         };
         let needed = crossing_s * (1.0 - GAP_SHRINK * bend) + margin;
-        let gap_s = self.vehicle_gap(walker, &roads);
+        let gap_s = self.vehicle_gap(walker, &roads, far);
         if gap_s.is_some_and(|gap| gap <= needed) {
             return Some(KerbChoice::Wait);
         }
         Some(KerbChoice::Go { gap_s, on_red })
     }
 
-    /// The soonest a vehicle reaches one of `roads`, seen one reaction time ago and
-    /// brought forward to now at the speed it had; `None` when nobody is coming.
-    fn vehicle_gap(&self, walker: &Walker, roads: &[usize]) -> Option<f64> {
+    /// The soonest a vehicle reaches the walker's crossing line (from where it stands to
+    /// `far`) on one of `roads`, seen one reaction time ago and brought forward to now at
+    /// the speed it had; `None` when nobody is coming.
+    fn vehicle_gap(&self, walker: &Walker, roads: &[usize], far: glam::Vec2) -> Option<f64> {
         let back = ((walker.traits.reaction_s / DT).round() as usize)
             .max(1)
             .min(self.history.len());
@@ -246,8 +281,23 @@ impl StreetRun {
                 continue;
             };
             let front = route.offsets[j] + seen.s;
-            for &(area, enter, leave) in &self.route_areas[agent.route] {
-                if !roads.contains(&area) || front - seen.length >= leave {
+            for route_area in &self.route_areas[agent.route] {
+                if !roads.contains(&route_area.area) {
+                    continue;
+                }
+                // Where the route meets the walker's line.
+                let mut meet: Option<(f64, f64)> = None;
+                for &(d, point) in &route_area.line {
+                    if closest_point_to_segment(point, walker.pos, far).distance(point)
+                        < CROSSING_REACH
+                    {
+                        meet = Some(meet.map_or((d, d), |(a, b)| (a.min(d), b.max(d))));
+                    }
+                }
+                let Some((enter, leave)) = meet else {
+                    continue;
+                };
+                if front - seen.length >= leave {
                     continue;
                 }
                 let time = if front >= enter {

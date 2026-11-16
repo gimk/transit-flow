@@ -178,8 +178,8 @@ pub struct StreetRun {
     plans: IndexMap<i32, SignalPlan>,
     routes: Vec<RoutePath>,
     /// Per route (same index): the road areas of the walk space it drives through, with
-    /// its route distances in and out (`kerb::road_areas_of`).
-    route_areas: Vec<Vec<(usize, f64, f64)>>,
+    /// its route distances in and out and its line through them (`kerb::road_areas_of`).
+    route_areas: Vec<Vec<kerb::RouteArea>>,
     /// Crossing areas under signals: (junction, the approaches that conflict).
     walk_signals: IndexMap<usize, (i32, Vec<i32>)>,
     /// (class bits, from gate, to gate) -> index into `routes`; `None` when no way exists.

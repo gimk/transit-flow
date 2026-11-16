@@ -362,7 +362,8 @@ impl StreetRun {
     }
 
     /// Where `path` (from entry `from`) first steps onto a carriageway, is there no
-    /// crossing within `LEGAL_CROSSING_DISTANCE` along that street?
+    /// crossing of the same street (any segment with its name) within
+    /// `LEGAL_CROSSING_DISTANCE`, measured between positions?
     fn legal_off_crossing(&self, from: usize, path: &WalkPath) -> bool {
         let space = &self.walk_space;
         let Some(j) = path
@@ -385,12 +386,15 @@ impl StreetRun {
                 segment_intersection(pair[0], pair[1], l, r).map(|t| pair[0].lerp(pair[1], t))
             })
             .unwrap_or((l + r) * 0.5);
-        let along = along_centerline(&self.street.segments[&segment].centerline, point);
-        self.street
-            .crossings
-            .values()
-            .filter(|c| c.segment == segment)
-            .all(|c| (c.at - along).abs() >= LEGAL_CROSSING_DISTANCE)
+        let name = &self.street.segments[&segment].name;
+        self.street.crossings.values().all(|c| {
+            let other = &self.street.segments[&c.segment];
+            if c.segment != segment && (name.is_empty() || other.name != *name) {
+                return true;
+            }
+            let at = point_at(&other.centerline, c.at);
+            at.distance(point) >= LEGAL_CROSSING_DISTANCE
+        })
     }
 
     /// Where a walker at `pos` on `path` heads first, and the length of its whole way.
@@ -605,17 +609,15 @@ pub struct WalkerSeen {
     pub group: AgentId,
 }
 
-/// The distance along `centerline` of the point on it nearest to `point`.
-pub fn along_centerline(centerline: &[Vec2], point: Vec2) -> f32 {
-    let mut best = (f32::INFINITY, 0.0);
-    let mut walked = 0.0;
+/// The point `distance` metres along `centerline` (its last point beyond its end).
+pub fn point_at(centerline: &[Vec2], distance: f32) -> Vec2 {
+    let mut left = distance;
     for pair in centerline.windows(2) {
-        let q = closest_point_to_segment(point, pair[0], pair[1]);
-        let d = q.distance(point);
-        if d < best.0 {
-            best = (d, walked + pair[0].distance(q));
+        let length = pair[0].distance(pair[1]);
+        if left <= length {
+            return pair[0].lerp(pair[1], (left / length.max(1e-6)).max(0.0));
         }
-        walked += pair[0].distance(pair[1]);
+        left -= length;
     }
-    best.1
+    *centerline.last().expect("a centerline has points")
 }
