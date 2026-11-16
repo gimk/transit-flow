@@ -27,6 +27,7 @@ pub mod roads;
 pub mod street;
 pub mod tool_preview;
 pub mod transit;
+pub mod walkers;
 pub mod zones;
 
 /// Draw order: higher z is drawn over lower. Every layer has its own band, so shapes
@@ -70,6 +71,9 @@ pub mod z {
     pub const PEDESTRIANS: f32 = 45.0;
     /// The street run's agents (pivot Phase 2): over the street level, under the old map.
     pub const AGENTS: f32 = 6.0;
+    /// The street run's pedestrians (pivot Phase 3): just over the cars, under the old
+    /// map's parked cars and overlays.
+    pub const WALKERS: f32 = 6.2;
     /// Light bars at junctions (M9.3).
     pub const LIGHTS: f32 = 50.0;
     /// Debug overlays: lane overlay, heatmap (M9.3).
@@ -127,6 +131,7 @@ impl Plugin for ViewsPlugin {
             tool_preview::ToolPreviewPlugin,
             street::StreetViewPlugin,
             agents::AgentViewPlugin,
+            walkers::WalkerViewPlugin,
         ));
     }
 }
