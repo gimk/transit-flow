@@ -32,7 +32,8 @@ pub const KERB_WIDTH: f32 = 0.3;
 pub const MOVEMENT_WIDTH: f32 = 0.15;
 pub const ARROW_SPACING: f32 = 15.0;
 pub const ARROW_SIZE: f32 = 1.0;
-/// A zebra bar's width along the traffic direction, and the gap to the next bar, metres.
+/// A zebra bar's width across the road (and the gap to the next bar), metres. A bar is as
+/// long as the crossing is wide, along the traffic direction.
 pub const ZEBRA_BAR_WIDTH_M: f32 = 0.5;
 pub const ZEBRA_GAP_M: f32 = 0.5;
 
@@ -151,10 +152,12 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
 }
 
 /// One polygon per zebra bar of every crossing, in street metres (y down), for the
-/// markings layer. A bar runs along the traffic direction and so is a band 0.5 m wide
-/// across the crossing, with 0.5 m gaps; the last bar of a crossing may be narrower. The
-/// bars span the carriageway only, from one kerb to the other, because a zebra paints the
-/// road, not the sidewalks.
+/// markings layer. A French zebra is bars long along the traffic direction (as long as the
+/// crossing is wide) and 0.5 m wide across the road, with 0.5 m gaps, from one kerb to the
+/// other, so a walker steps over each bar in turn. The pattern is centred on the
+/// carriageway, which on these profiles leaves the first bar 0.25 m inside the kerb
+/// (8 m of carriageway: 8 bars; 7 m: 7 bars). The bars span the road only, because a zebra
+/// paints the carriageway, not the sidewalks.
 pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
     let mut bars = Vec::new();
     let period = ZEBRA_BAR_WIDTH_M + ZEBRA_GAP_M;
@@ -165,25 +168,29 @@ pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
         let Some((left, right)) = carriageway(&segment.profile) else {
             continue;
         };
-        let left_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(left));
-        let right_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(right));
+        let across = right - left;
+        let count = ((across + ZEBRA_GAP_M) / period).floor() as usize;
+        if count == 0 {
+            continue;
+        }
+        let used = count as f32 * ZEBRA_BAR_WIDTH_M + (count - 1) as f32 * ZEBRA_GAP_M;
+        let margin = (across - used) * 0.5;
         let start = crossing.at - crossing.width * 0.5;
         let end = crossing.at + crossing.width * 0.5;
-        let mut at = start;
-        while at < end {
-            let to = (at + ZEBRA_BAR_WIDTH_M).min(end);
-            if to - at > 0.01 {
-                let mut polygon: Vec<Vec2> =
-                    lane_builder::sub_polyline(&left_edge, f64::from(at), f64::from(to));
-                let mut other: Vec<Vec2> =
-                    lane_builder::sub_polyline(&right_edge, f64::from(at), f64::from(to));
-                other.reverse();
-                polygon.extend(other);
-                if polygon.len() >= 3 {
-                    bars.push(polygon);
-                }
+        for k in 0..count {
+            let from = left + margin + k as f32 * period;
+            let to = from + ZEBRA_BAR_WIDTH_M;
+            let from_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(from));
+            let to_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(to));
+            let mut polygon: Vec<Vec2> =
+                lane_builder::sub_polyline(&from_edge, f64::from(start), f64::from(end));
+            let mut other: Vec<Vec2> =
+                lane_builder::sub_polyline(&to_edge, f64::from(start), f64::from(end));
+            other.reverse();
+            polygon.extend(other);
+            if polygon.len() >= 3 {
+                bars.push(polygon);
             }
-            at += period;
         }
     }
     bars
@@ -192,7 +199,7 @@ pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
 /// The span of a profile's carriageway, as offsets from its centerline: from the kerb of
 /// the leftmost strip that is not a foot strip to the kerb of the rightmost one. A level's
 /// profiles put the sidewalks at both ends (a median or a bike lane in the middle is road).
-pub fn carriageway(profile: &Profile) -> Option<(f32, f32)> {
+fn carriageway(profile: &Profile) -> Option<(f32, f32)> {
     let foot = |strip: &Strip| matches!(strip.use_, StripUse::Sidewalk | StripUse::Terrace);
     let first = profile.strips.iter().position(|strip| !foot(strip))?;
     let last = profile.strips.iter().rposition(|strip| !foot(strip))?;
