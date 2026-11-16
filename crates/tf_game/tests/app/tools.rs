@@ -2,11 +2,9 @@
 //! keys, as `tests/integration/test_build_tools.gd` drove the main scene. The palette, top
 //! bar, hint-position and debug-menu tests of that file go away with the UI.
 
-mod common;
-
+use crate::common::{Harness, grid_point};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
-use common::{Harness, grid_point};
 use tf_game::events::*;
 use tf_game::runner::SimHandle;
 use tf_game::tools::{Shape, ToolPreview};

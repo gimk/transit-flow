@@ -77,7 +77,7 @@ crates/tf_game/                   the Bevy app, binary `transit-flow`
         events.rs (messages), input.rs (KeyBindings, ActionInput, Pointer), camera.rs, draw.rs (shape helpers),
         game.rs (scenario, save, debug commands), status.rs (status line), capture.rs, bench.rs,
         tools/ (ToolManager and one file per tool), views/ (renderers, one module each, z constants in views/mod.rs)
-  tests/                          headless app tests (tools, views, keys, status line, playtest parity)
+  tests/app/                      headless app tests, ONE test executable `app` (main.rs lists the modules: tools, views, keys, status line, playtest parity); common/ has the Harness
 migration/                        golden/*.json and baseline.md: Godot reference data for the tests (see its README)
 docs/                             IMPLEMENTATION_PLAN.md, BEVY_MIGRATION_PLAN.md (done), migration/ (NOTES, PORTING_GUIDE)
 scripts/check.sh                  fmt + clippy + tests
@@ -88,7 +88,7 @@ scripts/check.sh                  fmt + clippy + tests
 - `cargo fmt` (rustfmt defaults, `.editorconfig` for the rest) and `clippy -D warnings`; no `unsafe`; `unwrap()` only where a broken invariant should crash (prefer `expect("why")`).
 - `//!` under a module and `///` on public items explain the role and the *why* (the rule, the Godot behaviour kept, the reason for an order), not the *what*.
 - Constants `UPPER_SNAKE`; events and messages named in the past tense (`RoadNetworkChanged`).
-- New sim logic gets tests: next to the code for small units, in `crates/tf_sim/tests/` (or `crates/tf_game/tests/` for tools, views and keys) for behaviour. Scenarios and checks shared between tests are in `tests/common/` and `debug::checks`.
+- New sim logic gets tests: next to the code for small units, in `crates/tf_sim/tests/` (or `crates/tf_game/tests/app/` for tools, views and keys: one module per file, added in `main.rs`; run one with `cargo test -p tf_game --test app tools::`) for behaviour. Scenarios and checks shared between tests are in `tests/common/` (tf_sim) and `tests/app/common/` (tf_game) and `debug::checks`.
 - Match the existing names: the sim's classes keep the names they had in GDScript (`RoadNetwork`, `VehicleSystem`, ...), which keeps `docs/migration/NOTES.md` and the old plan readable.
 
 ## Git rules

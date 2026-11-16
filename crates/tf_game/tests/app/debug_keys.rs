@@ -3,11 +3,9 @@
 //! `test_debug_menu_buttons_drive_the_debug_functions`. Godot's day/night and dot display
 //! toggles are not in the Bevy build (plan §1), so they have no key.
 
-mod common;
-
+use crate::common::Harness;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
-use common::Harness;
 use tf_game::events::DebugOverlayChanged;
 use tf_game::game::{self, STRESS_TRAFFIC_STEPS};
 use tf_game::views::moving::ShowLateness;
@@ -31,10 +29,8 @@ fn f2_f3_f4_switch_the_overlays() {
 
 #[test]
 fn f5_saves_and_f9_loads_the_quicksave() {
-    let dir = std::env::temp_dir().join(format!("transit-flow-debug-keys-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    // Safe: this is the only test in the file that reads TRANSIT_FLOW_DATA_DIR.
-    unsafe { std::env::set_var("TRANSIT_FLOW_DATA_DIR", &dir) };
+    // The shared save folder; the lock keeps the other quicksave test out of it.
+    let _lock = crate::common::save_lock();
 
     let mut h = Harness::new();
     h.key(KeyCode::F8);

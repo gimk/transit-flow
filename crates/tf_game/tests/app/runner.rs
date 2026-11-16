@@ -196,10 +196,9 @@ fn save_then_load_round_trips() {
 /// out the other side.
 #[test]
 fn keys_drive_the_game_through_the_plugin() {
-    let dir = temp_dir("app");
-    // Safe: this is the only test in the file that reads TRANSIT_FLOW_DATA_DIR through
-    // the plugin, and it sets it before the app runs.
-    unsafe { std::env::set_var("TRANSIT_FLOW_DATA_DIR", &dir) };
+    // The shared save folder; the lock keeps the other quicksave test out of it.
+    let _lock = crate::common::save_lock();
+    let dir = crate::common::data_dir();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, bevy::input::InputPlugin))
         .add_plugins(GamePlugin { threaded: true });
@@ -299,5 +298,5 @@ fn keys_drive_the_game_through_the_plugin() {
             .count()
             == 0
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(dir);
 }

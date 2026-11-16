@@ -2,9 +2,7 @@
 //! worker thread must not change the run (same event log hash as a headless run), and the
 //! agents view draws what the runner shows.
 
-mod common;
-
-use common::Harness;
+use crate::common::Harness;
 use tf_game::street_runner::StreetRunner;
 use tf_game::views::agents::AgentViews;
 use tf_sim::street::run::{RunOptions, StreetRun};

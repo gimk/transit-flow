@@ -1,10 +1,8 @@
 //! The street game's level view (pivot plan Phase 1): loading a level draws it from its
 //! data and frames the camera on it; a strip edit redraws it; unloading clears it.
 
-mod common;
-
+use crate::common::Harness;
 use bevy::prelude::*;
-use common::Harness;
 use tf_game::camera::MapCamera;
 use tf_game::level::{LoadedLevel, PX_PER_M};
 use tf_game::views::street::{StreetShape, build_layers};

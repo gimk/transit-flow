@@ -24,7 +24,7 @@ The newest entry is first. Each entry tells what was done, where, and what to do
 
 A clean `scripts/check.sh` takes about 20 min there, and `target/` is about 18 GB after it.
 
-**Coming next (approved by the user on 2026-11-16).** Bevy with `default-features = false` and only the features the code uses (a feature is added only when code needs it), and all `tf_game` integration tests in one test executable (`crates/tf_game/tests/app/`), so Bevy is linked once and not 12 times.
+**Lighter builds (done, 2026-11-16, user's decision).** Bevy has `default-features = false` and only the features the code uses (root `Cargo.toml`, one reason per feature); add a feature only when code needs it. No 3D, audio, glTF, gamepads, scenes, picking or Linux backends (`x11` / `wayland` must be added for a Linux build). All `tf_game` integration tests are one test executable, `crates/tf_game/tests/app/` (run one group with `cargo test -p tf_game --test app tools::`), so Bevy is linked once, not 12 times; tests that use the quicksave share `common::data_dir()` and `common::save_lock()`. On the Mac, the first build after this pull recompiles Bevy once.
 
 **Then:** Phase 3 (pedestrians and crowds). Section 5.2 asks to confirm the 20 Hz tick there, with the crowd forces.
 
@@ -315,7 +315,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 
 **Done when:** a screenshot shows the test level from its file; a strip change through a command rebuilds lanes and movements; a round trip of level + design is identical; the old game still runs.
 
-**Done (2026-11-16).** Code: `tf_sim::street` (`space`, `level`, `design`, `lanes`, `model`), `geom::polygon`, `data/levels/carrefour_ecole.ron`; `tf_game::level` and `views::street`; `--level <id>` in screenshot mode. Tests: `tf_sim/tests/street_space.rs`, `tf_game/tests/street_view.rs`. Choices made where this plan was open or did not fit the freeze:
+**Done (2026-11-16).** Code: `tf_sim::street` (`space`, `level`, `design`, `lanes`, `model`), `geom::polygon`, `data/levels/carrefour_ecole.ron`; `tf_game::level` and `views::street`; `--level <id>` in screenshot mode. Tests: `tf_sim/tests/street_space.rs`, `tf_game/tests/app/street_view.rs`. Choices made where this plan was open or did not fit the freeze:
 
 - The old `roads/lane.rs` and `lane_builder.rs` (ADAPT) are not edited while the old game is frozen. The street model has its own `StreetLane` (with width, access mask and lateral position) and calls the `lane_builder` helpers as they are. The adaptation in place waits for Phase 5.
 - Movements are always generated from rules, also for the level's defaults: the level gives only default **turn bans** (and signs, control). Rules per lane group (bicycle, bus, general): straight keeps its position, right from the rightmost lane, left from the leftmost; a group with no lane on the next arm falls back (bicycle to general or bus lane, bus to general, general to a bicycle lane for its cyclists only). The access of a movement is what both lanes allow, minus the bans. No U-turns.
