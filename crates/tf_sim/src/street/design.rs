@@ -4,8 +4,31 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::level::{CrossingDef, Sign, TurnBan};
+use super::level::{CrossingDef, JunctionControl, Sign, TurnBan};
 use super::space::{Direction, StripUse};
+
+/// A side of a segment, looking along it from its `from` node to its `to` node; the same
+/// convention as the profile, whose strips run from the left building line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// A ready-made signal plan the player picks instead of editing phases (pivot plan §4).
+/// Opposite arms share a phase; green times are in seconds, from `MIN_GREEN_S` to
+/// `MAX_GREEN_S`. Amber and all-red keep the defaults of `signals.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SignalTemplate {
+    TwoPhase {
+        green_s: f32,
+    },
+    /// `TwoPhase` plus a last phase where every approach is red and pedestrians walk.
+    TwoPhaseWithWalk {
+        green_s: f32,
+        walk_s: f32,
+    },
+}
 
 /// One edit of the street space. Segments and nodes are the level's ids (stable);
 /// strips are indices into the segment's profile, left building line first.
@@ -58,6 +81,28 @@ pub enum DesignCommand {
     /// Takes a crossing away (the level's own too), by id.
     RemoveCrossing {
         id: i32,
+    },
+    /// A row of bollards ("potelets") along the kerb of one side of a segment, from `from`
+    /// to `to` metres along the centerline from the `from` node. The row gets the next
+    /// bollard-row id (1, 2, ... in order of placement, so ids are stable through a replay).
+    AddBollards {
+        segment: i32,
+        side: Side,
+        from: f32,
+        to: f32,
+    },
+    /// Takes a row of bollards away, by row id.
+    RemoveBollards {
+        id: i32,
+    },
+    /// Sets how a junction is controlled. `Signals` with a template builds that plan;
+    /// without one the run's default plan is used. `PriorityToRight` takes any plan away
+    /// and needs no template.
+    SetJunctionControl {
+        node: i32,
+        control: JunctionControl,
+        #[serde(default)]
+        template: Option<SignalTemplate>,
     },
 }
 

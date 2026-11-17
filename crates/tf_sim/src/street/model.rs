@@ -7,16 +7,19 @@
 use glam::Vec2;
 use indexmap::IndexMap;
 
-use super::design::{Design, DesignCommand};
+use super::design::{Design, DesignCommand, Side, SignalTemplate};
 use super::ids::StreetLaneId;
 use super::lanes::{self, LaneGroup, StreetLane};
 use super::level::{
     AreaKind, Bounds, Constraint, CrossingDef, CrossingKind, JunctionControl, LevelFile,
     ObstacleKind, Shape, Sign, TurnBan,
 };
-use super::signals::SignalPlan;
+use super::signals::{
+    DEFAULT_ALL_RED_S, DEFAULT_AMBER_S, MAX_GREEN_S, MIN_GREEN_S, SignalPhase, SignalPlan,
+    pair_opposite_arms,
+};
 use super::space::{Access, Direction, Profile, StripUse};
-use crate::geom::Polygon;
+use crate::geom::{Circle, Polygon};
 use crate::roads::lane::Turn;
 use crate::roads::lane_builder;
 
@@ -97,6 +100,24 @@ pub struct Crossing {
     pub width: f32,
 }
 
+/// A row of bollards the player placed along one kerb. `obstacle_ids` are its bollards in
+/// `Street::obstacles`, in order along the segment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BollardRow {
+    pub id: i32,
+    pub segment: i32,
+    pub side: Side,
+    pub from: f32,
+    pub to: f32,
+    pub obstacle_ids: Vec<i32>,
+}
+
+/// Spacing of bollards in a row, metres: the Paris "potelet" (start value; the real spacing
+/// is a little less so that the row ends on `to`).
+pub const BOLLARD_SPACING: f32 = 1.5;
+/// Radius of one bollard, metres (start value: a 20 cm post).
+pub const BOLLARD_RADIUS: f32 = 0.1;
+
 /// A crossing is never narrower than this, metres.
 pub const MIN_CROSSING_WIDTH: f32 = 2.0;
 
@@ -160,12 +181,15 @@ pub struct Street {
     pub plazas: Vec<Polygon>,
     pub obstacles: IndexMap<i32, Obstacle>,
     pub crossings: IndexMap<i32, Crossing>,
+    pub bollard_rows: IndexMap<i32, BollardRow>,
     pub areas: IndexMap<i32, Area>,
     pub constraints: Vec<Constraint>,
     /// Bumped by every successful edit.
     pub version: u64,
     next_lane_id: i32,
     next_crossing_id: i32,
+    next_obstacle_id: i32,
+    next_bollard_row_id: i32,
 }
 
 impl Street {
@@ -181,11 +205,14 @@ impl Street {
             plazas: level.plazas.clone(),
             obstacles: IndexMap::new(),
             crossings: IndexMap::new(),
+            bollard_rows: IndexMap::new(),
             areas: IndexMap::new(),
             constraints: level.constraints.clone(),
             version: 0,
             next_lane_id: 1,
             next_crossing_id: 1,
+            next_obstacle_id: 1,
+            next_bollard_row_id: 1,
         };
         for node in &level.nodes {
             street.nodes.insert(
@@ -252,6 +279,7 @@ impl Street {
                     fixed: true,
                 },
             );
+            street.next_obstacle_id = id + 1;
         }
         for (i, def) in level.areas.iter().enumerate() {
             let id = i as i32 + 1;
@@ -393,6 +421,57 @@ impl Street {
                     segment_ids: vec![crossing.segment],
                 }
             }
+            DesignCommand::AddBollards {
+                segment,
+                side,
+                from,
+                to,
+            } => {
+                self.add_bollards(segment, side, from, to)?;
+                StreetChange {
+                    node_ids: Vec::new(),
+                    segment_ids: vec![segment],
+                }
+            }
+            DesignCommand::RemoveBollards { id } => {
+                let row = self
+                    .bollard_rows
+                    .shift_remove(&id)
+                    .ok_or_else(|| EditError::Invalid(format!("no bollard row {id}")))?;
+                for obstacle in &row.obstacle_ids {
+                    self.obstacles.shift_remove(obstacle);
+                }
+                StreetChange {
+                    node_ids: Vec::new(),
+                    segment_ids: vec![row.segment],
+                }
+            }
+            DesignCommand::SetJunctionControl {
+                node,
+                control,
+                template,
+            } => {
+                if !self.junctions.contains_key(&node) {
+                    return Err(EditError::UnknownJunction(node));
+                }
+                let plan = match (control, template) {
+                    (JunctionControl::PriorityToRight, Some(_)) => {
+                        return Err(EditError::Invalid(
+                            "a junction without signals has no signal plan".into(),
+                        ));
+                    }
+                    (JunctionControl::PriorityToRight, None) | (JunctionControl::Signals, None) => {
+                        None
+                    }
+                    (JunctionControl::Signals, Some(template)) => {
+                        Some(self.template_plan(node, template)?)
+                    }
+                };
+                let junction = &mut self.junctions[&node];
+                junction.control = control;
+                junction.signal_plan = plan;
+                self.junction_changed(node)
+            }
             DesignCommand::SetSign {
                 node,
                 segment,
@@ -452,6 +531,152 @@ impl Street {
             },
         );
         Ok(id)
+    }
+
+    /// Places a row of bollards on the kerb line (the carriageway edge of the sidewalk
+    /// strip nearest the carriageway on that side), so that each bollard is half on the
+    /// sidewalk: it stops cars and walkers go round it. The row lies between the junction
+    /// edges and overlaps no other row on the same side. On an error nothing changed.
+    fn add_bollards(
+        &mut self,
+        segment_id: i32,
+        side: Side,
+        from: f32,
+        to: f32,
+    ) -> Result<i32, EditError> {
+        let segment = self
+            .segments
+            .get(&segment_id)
+            .ok_or(EditError::UnknownSegment(segment_id))?;
+        let length = lane_builder::polyline_length(&segment.centerline) as f32;
+        if !from.is_finite()
+            || !to.is_finite()
+            || from >= to
+            || from < segment.start_trim - 1e-3
+            || to > length - segment.end_trim + 1e-3
+        {
+            return Err(EditError::Invalid(format!(
+                "bollards from {from} m to {to} m do not fit on segment {segment_id}"
+            )));
+        }
+        let strips = &segment.profile.strips;
+        let first_travel = strips.iter().position(|s| s.use_.is_travel());
+        let last_travel = strips.iter().rposition(|s| s.use_.is_travel());
+        let (Some(first_travel), Some(last_travel)) = (first_travel, last_travel) else {
+            return Err(EditError::Invalid("the segment has no carriageway".into()));
+        };
+        let is_sidewalk = |i: &usize| strips[*i].use_ == StripUse::Sidewalk;
+        let (strip, edge_at_right) = match side {
+            Side::Left => ((0..first_travel).rev().find(is_sidewalk), true),
+            Side::Right => (((last_travel + 1)..strips.len()).find(is_sidewalk), false),
+        };
+        let Some(strip) = strip else {
+            return Err(EditError::Invalid(format!(
+                "no sidewalk on that side of segment {segment_id}"
+            )));
+        };
+        let (left, right) = segment.profile.strip_span(strip);
+        let offset = if edge_at_right { right } else { left };
+        let overlaps = self.bollard_rows.values().any(|row| {
+            row.segment == segment_id && row.side == side && from < row.to && row.from < to
+        });
+        if overlaps {
+            return Err(EditError::Invalid(
+                "the bollards overlap another row".into(),
+            ));
+        }
+        let line = lane_builder::offset_polyline(&segment.centerline, f64::from(offset));
+        let gaps = ((to - from) / BOLLARD_SPACING).floor().max(1.0);
+        let count = gaps as usize + 1;
+        let step = (to - from) / gaps;
+        let mut obstacle_ids = Vec::with_capacity(count);
+        for k in 0..count {
+            let d = from + step * k as f32;
+            let center = lane_builder::sub_polyline(&line, f64::from(d), f64::from(d) + 0.01)
+                .first()
+                .copied()
+                .expect("a segment centerline has length");
+            let id = self.next_obstacle_id;
+            self.next_obstacle_id += 1;
+            self.obstacles.insert(
+                id,
+                Obstacle {
+                    id,
+                    kind: ObstacleKind::Bollard,
+                    shape: Shape::Circle(Circle {
+                        center,
+                        radius: BOLLARD_RADIUS,
+                    }),
+                    fixed: false,
+                },
+            );
+            obstacle_ids.push(id);
+        }
+        let id = self.next_bollard_row_id;
+        self.next_bollard_row_id += 1;
+        self.bollard_rows.insert(
+            id,
+            BollardRow {
+                id,
+                segment: segment_id,
+                side,
+                from,
+                to,
+                obstacle_ids,
+            },
+        );
+        Ok(id)
+    }
+
+    /// The plan a template gives the junction at `node`: one phase per group of opposite
+    /// arms (the grouping of the default plan), then for `TwoPhaseWithWalk` a phase with
+    /// no green approach, in which pedestrians walk.
+    fn template_plan(&self, node: i32, template: SignalTemplate) -> Result<SignalPlan, EditError> {
+        let (green_s, walk_s) = match template {
+            SignalTemplate::TwoPhase { green_s } => (green_s, None),
+            SignalTemplate::TwoPhaseWithWalk { green_s, walk_s } => (green_s, Some(walk_s)),
+        };
+        for seconds in std::iter::once(green_s).chain(walk_s) {
+            if !(MIN_GREEN_S..=MAX_GREEN_S).contains(&seconds) {
+                return Err(EditError::Invalid(format!(
+                    "a signal step must last {MIN_GREEN_S} to {MAX_GREEN_S} s, not {seconds}"
+                )));
+            }
+        }
+        // Arms with a movement, in the order of the junction's movements, each with the
+        // heading of its feeder lane at the junction.
+        let mut arms: Vec<(i32, Vec2)> = Vec::new();
+        for movement in self.movements(node) {
+            let feeder = &self.lanes[&movement.feeder.expect("a movement has a feeder")];
+            let segment = feeder.segment_id.expect("a feeder is a road lane");
+            if arms.iter().any(|(s, _)| *s == segment) {
+                continue;
+            }
+            let line = feeder.polyline();
+            let heading = (line[line.len() - 1] - line[line.len() - 2]).normalize_or_zero();
+            arms.push((segment, heading));
+        }
+        let ids: Vec<i32> = arms.iter().map(|(s, _)| *s).collect();
+        let heading_of = |segment: i32| {
+            arms.iter()
+                .find(|(s, _)| *s == segment)
+                .map_or(Vec2::ZERO, |(_, h)| *h)
+        };
+        let mut phases: Vec<SignalPhase> = pair_opposite_arms(&ids, heading_of)
+            .into_iter()
+            .map(|green| SignalPhase { green, green_s })
+            .collect();
+        if let Some(walk_s) = walk_s {
+            phases.push(SignalPhase {
+                green: Vec::new(),
+                green_s: walk_s,
+            });
+        }
+        Ok(SignalPlan {
+            phases,
+            amber_s: DEFAULT_AMBER_S,
+            all_red_s: DEFAULT_ALL_RED_S,
+        })
     }
 
     /// Road lanes of a segment, in strip order.

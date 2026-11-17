@@ -16,6 +16,31 @@ pub const DEFAULT_ALL_RED_S: f32 = 2.0;
 /// against `until_conflict` before they step off.
 pub const PEDESTRIAN_CLEARANCE_S: f64 = 5.0;
 
+/// The shortest and longest green the player may set (seconds).
+pub const MIN_GREEN_S: f32 = 10.0;
+pub const MAX_GREEN_S: f32 = 60.0;
+
+/// Groups approaches into phases: each approach with the later ones that head against
+/// it (`heading` dot < -0.7). Shared by the default plan and the templates, so both
+/// split a junction the same way.
+pub fn pair_opposite_arms(arms: &[i32], heading: impl Fn(i32) -> glam::Vec2) -> Vec<Vec<i32>> {
+    let mut left: Vec<i32> = arms.to_vec();
+    let mut groups = Vec::new();
+    while !left.is_empty() {
+        let first = left.remove(0);
+        let mut green = vec![first];
+        left.retain(|other| {
+            let opposite = heading(first).dot(heading(*other)) < -0.7;
+            if opposite {
+                green.push(*other);
+            }
+            !opposite
+        });
+        groups.push(green);
+    }
+    groups
+}
+
 fn default_amber() -> f32 {
     DEFAULT_AMBER_S
 }
