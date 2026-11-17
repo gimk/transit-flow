@@ -8,6 +8,18 @@
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
 
+### 2026-11-17: Phase 4 built on Windows, waiting for the user's playtest
+
+**State.** Branch `pivot-phase-4` (from `pivot-phase-3`; not merged, not pushed). `scripts/check.sh` passes on Windows. Built by four agents in parallel (git worktrees), merged in the main session:
+- Speed from the look of the street (§5.7 addition 1): `street/speed.rs` gives each road lane a street speed from width, side friction and obstacles near the edge. Wanted speed = `speed_factor * (c * min(limit, street) + (1 - c) * street)`, `c` = compliance, capped at 1.2 times the street speed. Replay hashes changed on purpose. A cause-chain gap was found and fixed (a driver kept only the first walker it had to yield to).
+- Design commands `AddBollards` / `RemoveBollards` and `SetJunctionControl` with `SignalTemplate::TwoPhase` / `TwoPhaseWithWalk` (an all-pedestrian phase).
+- Star stages in the level file (`stages`: demand scale and pass score), `street/score.rs` (score 0-100, hard fails, stage report with the incidents in words, `stars_for_design`), `run_level --stage n`.
+- Play mode in `tf_game` (`cargo play -- --play carrefour-ecole`): Design / Check / Run / Report, tools zebra, speed limit, bollards, signals, undo, HUD, incident marks, stage choice, stars per design saved with the design.
+
+**Measured** (empty design, 10 seeds, after the merge): stage 1 passes 10 of 10 (scores 74-95), stage 2 passes 5 of 10, stage 3 passes 3 of 10 and fails with the level seed. Over the 30 runs, most lost points are "serious near miss: car could not stop in time" (hard braking of 8 m/s², 92 of about 140 serious near misses), and at stage 3 drivers wait 95 s on average with priority to the right. The near-miss count looks too high for a 30 km/h school street: to check against reality before tuning (Phase 4 checkpoint: "is this credible?").
+
+**Then:** the user plays level 1 several times (Phase 4 "done when"). Open: clicking an incident line does not move the camera yet.
+
 ### 2026-11-17: direction changed (realism first, stars are load stages)
 
 **Decided by the user.** (1) The project is a simulation first and a game second: a believable result is more important than fun; the fun is tuned later. (2) A level is one specific crossing, from a simple street with one zebra to a complex roundabout and more. (3) The stars of a level are stages: each star adds more cars, pedestrians and cyclists, so the same design gets more and more load until it breaks. The plan is updated in sections 1, 3.4, 6, 8 (Phases 4 and 9), 10, 12 and 13.
