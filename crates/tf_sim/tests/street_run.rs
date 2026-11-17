@@ -247,11 +247,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 // Moved on purpose with the pedestrian decisions (WP9: red lights, zebra or free way,
 // gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
 // c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
+// Moved on purpose with the soft-brake fix (WP14: the pedal rise is lost in proportion to
+// the braking when the target speed is above zero): old (careless x4) c67d95ae8ac22058,
+// e1636157bb65fa60; the two mixed hashes did not move.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
     (1, Population::Mixed, 1.0, 0x7bcf_23c0_03b1_36af),
     (2, Population::Mixed, 1.0, 0xf83b_4be3_e0ec_9a3b),
-    (1, Population::Careless, 4.0, 0xc67d_95ae_8ac2_2058),
-    (2, Population::Careless, 4.0, 0xe163_6157_bb65_fa60),
+    (1, Population::Careless, 4.0, 0x4e77_512d_e2d9_4234),
+    (2, Population::Careless, 4.0, 0x6dab_1584_4732_8648),
 ];
 
 #[test]
