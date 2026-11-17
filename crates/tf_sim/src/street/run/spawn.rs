@@ -189,7 +189,7 @@ impl StreetRun {
             time_s: self.tick as f64 * DT,
             peds: None,
         };
-        let wanted = drive::desired_speed(&agent, first, &world);
+        let wanted = drive::desired_speed_at(&agent, first, 0.0, &world);
         // The newcomer decides from the world one reaction time ago, where the leader was
         // `lead_speed * reaction` metres further back: the cap uses the gap as the
         // newcomer will see it on its first tick, or it would brake hard at once.

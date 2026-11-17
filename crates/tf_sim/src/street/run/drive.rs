@@ -21,7 +21,7 @@ use crate::street::lanes::Turn;
 use crate::street::level::{Mode, Sign};
 use crate::street::model::Street;
 use crate::street::signals::{Light, SignalPlan};
-use crate::street::speed::STREET_TOLERANCE;
+use crate::street::speed::{CELL, STREET_TOLERANCE, StreetSpeeds};
 
 /// Seconds per tick (20 Hz).
 pub const DT: f64 = 0.05;
@@ -137,7 +137,7 @@ pub struct World<'a> {
     pub moves: &'a IndexMap<StreetLaneId, MoveInfo>,
     pub plans: &'a IndexMap<i32, SignalPlan>,
     /// What the look of each road lane asks for (`street::speed`), m/s.
-    pub street_speeds: &'a IndexMap<StreetLaneId, f64>,
+    pub street_speeds: &'a StreetSpeeds,
     pub time_s: f64,
     /// The walkers' world, for drivers who decide (`None` where only speeds are asked).
     pub peds: Option<&'a PedWorld<'a>>,
@@ -303,14 +303,28 @@ pub fn must_yield(me: &MoveInfo, other: &MoveInfo) -> bool {
 /// lower of the two, one who ignores the sign follows the street, and nobody goes over
 /// `STREET_TOLERANCE` times the street speed (real drivers read the
 /// street, not the sign). In a junction movement it is the limit and what the bend allows.
+///
+/// The street speed is the mean of the lane here; `desired_speed_at` takes the place along
+/// the lane (the street speed changes along it).
 pub fn desired_speed(agent: &Agent, id: StreetLaneId, world: &World) -> f64 {
+    let street = world.street_speeds.mean(id);
+    desired_speed_with(agent, id, street, world)
+}
+
+/// `desired_speed` at `s` metres along lane `id`.
+pub fn desired_speed_at(agent: &Agent, id: StreetLaneId, s: f64, world: &World) -> f64 {
+    let street = world.street_speeds.at(id, s);
+    desired_speed_with(agent, id, street, world)
+}
+
+fn desired_speed_with(agent: &Agent, id: StreetLaneId, street: Option<f64>, world: &World) -> f64 {
     let lane = &world.street.lanes[&id];
     if let Some(info) = world.moves.get(&id) {
         let speed = lane.speed_limit * agent.traits.speed_factor;
         return speed.min(info.turn_speed * agent.traits.speed_factor);
     }
     let limit = lane.speed_limit;
-    let street = world.street_speeds.get(&id).copied().unwrap_or(limit);
+    let street = street.unwrap_or(limit);
     let c = agent.traits.compliance;
     let wanted = agent.traits.speed_factor * (c * limit.min(street) + (1.0 - c) * street);
     wanted.min(STREET_TOLERANCE * street)
@@ -750,21 +764,44 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     }
 
     // The road itself: the limit here, and the slower lanes and bends ahead.
-    let mut target = desired_speed(agent, route.lanes[index], world);
+    let here = agent.d - route.offsets[index];
+    let mut target = desired_speed_at(agent, route.lanes[index], here, world);
     // The deceleration the things ahead ask for (see `needed_brake`), measured to the
     // thing itself: the margins a driver keeps are comfort, not distance it may not use.
     let mut need = 0.0_f64;
     let mut view_need = 0.0_f64;
     let lookahead =
         (v * v / (2.0 * COMFORT_BRAKE) + v * tau + 12.0 + agent.length).min(MAX_LOOKAHEAD);
-    for next in index + 1..route.lanes.len() {
-        let distance = route.offsets[next] - agent.d;
-        if distance > lookahead {
+    // The street speed changes along a lane, so the cells ahead are looked at too: the
+    // rest of this lane, then each next lane from its start.
+    for next in index..route.lanes.len() {
+        let lane = route.lanes[next];
+        let length = world.street.lanes[&lane].length;
+        let start = route.offsets[next] - agent.d;
+        let mut cell = if next == index {
+            (here / CELL) as usize + 1
+        } else {
+            0
+        };
+        loop {
+            let along = cell as f64 * CELL;
+            let distance = start + along;
+            if distance > lookahead {
+                break;
+            }
+            if along < length || cell == 0 {
+                let speed = desired_speed_at(agent, lane, along, world);
+                target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * distance).sqrt());
+                need = need.max(needed_brake(v, speed, distance));
+            }
+            if world.moves.contains_key(&lane) || along >= length {
+                break;
+            }
+            cell += 1;
+        }
+        if start > lookahead {
             break;
         }
-        let speed = desired_speed(agent, route.lanes[next], world);
-        target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * distance).sqrt());
-        need = need.max(needed_brake(v, speed, distance));
     }
 
     // The junction ahead: go, or stop at the line.
