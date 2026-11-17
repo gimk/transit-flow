@@ -335,6 +335,7 @@ The numbers below are start values for tuning.
   - A star belongs to a design (user, 2026-11-17): to have 3 stars, one design must pass stages 1, 2 and 3. When the player changes the design, the lower stages are run again headless before the current stage, so the stars always describe the design that is on the map.
   - The number of stages per level is level data (3 by default).
   - Difficulty is not tuned yet (user, 2026-11-17): with real braking, the empty design of a simple crossing passes all its stages on most seeds, and that is realistic. How stages become hard (load, mix, time of day, several seeds per verdict) is decided later; the stage scales are not adjusted to force failures.
+  - Jams (measured 2026-11-17): every person of the demand is scored; one who cannot enter or does not finish counts as a give-up. A jam therefore costs only delay points: on level 1 the empty design still passes at x6 load while about 60 % of the cars never get through. Whether a jam is a hard fail (for example more than 10 % of the demand not served) or a heavier cost is decided in Phase 8 (user, 2026-11-17).
 
 The score is a measure of the simulation, not a reward system that changes it: with realism first (section 1), the weights are set to agree with what a road-safety expert would say about the design, and tuned for fun only later.
 
