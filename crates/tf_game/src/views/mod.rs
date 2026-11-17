@@ -74,9 +74,6 @@ pub mod z {
     /// The street run's agents (pivot Phase 2): over the street level, under the old map.
     /// Signal marks at the approaches of signalled junctions (play mode): over the street.
     pub const SIGNALS: f32 = 5.0;
-    /// Speed signs painted on the carriageway: over the markings and obstacles, under the
-    /// signal marks and the agents.
-    pub const SPEED_SIGNS: f32 = 4.8;
     pub const AGENTS: f32 = 6.0;
     /// The street run's pedestrians (pivot Phase 3): just over the cars, under the old
     /// map's parked cars and overlays.

@@ -3,7 +3,8 @@
 //!
 //! - Zebra: the ghost bars at the snapped place; on an existing crossing, a red outline
 //!   (a click removes it).
-//! - Speed limit: the segment lit, and the next limit as a sign.
+//! - Speed limit: the segment lit, and the next limit painted on its lanes as the marking
+//!   will show it.
 //! - Bollards: the start dot on the nearest kerb; while dragging, the whole row at the real
 //!   spacing; on an existing row, red rings (a click removes it).
 //! - Signals: the junction lit, and the next mode in the info panel.
@@ -25,7 +26,7 @@ use super::{PlayPhase, PlayState, PlayTool, PointerOverUi, pick};
 use crate::draw::ShapeBuilder;
 use crate::input::Pointer;
 use crate::level::{LoadedLevel, PX_PER_M};
-use crate::views::speed_signs::sign_shape;
+use crate::views::speed_signs::{segment_signs, sign_shape};
 use crate::views::street::{carriageway, crossing_bars, points, to_bevy};
 use crate::views::{ViewMaterial, palette, spawn_shape, z};
 
@@ -185,8 +186,9 @@ fn speed_plan(street: &Street, at: Vec2) -> Option<PreviewPlan> {
             fill(true).with_alpha(0.22),
         );
     }
-    let center = pick::point_at(&segment.centerline, hit.along, 0.0);
-    sign_shape(&mut shape, to_bevy(center), kmh, 0.85);
+    for spot in segment_signs(street, hit.segment) {
+        sign_shape(&mut shape, &spot, kmh, 0.85);
+    }
     Some(PreviewPlan {
         shape,
         note: Some(format!(

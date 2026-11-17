@@ -40,10 +40,14 @@ pub const TREE: Color = rgb(0x7F, 0xBF, 0x92);
 pub const BENCH: Color = rgb(0xB5, 0x8F, 0x6A);
 pub const BOLLARD: Color = rgb(0x4A, 0x55, 0x60);
 
-/// The speed sign: a red ring, white inside, black digits (the French "limite de vitesse").
-pub const SIGN_RING: Color = rgb(0xD6, 0x1F, 0x26);
-pub const SIGN_FACE: Color = rgb(0xFF, 0xFF, 0xFF);
-pub const SIGN_DIGIT: Color = rgb(0x14, 0x14, 0x18);
+/// The speed limit painted on the carriageway. Worn white by default, as real markings are
+/// never new. To paint it in the tint of the carriageway instead, set `SPEED_MARK` to
+/// `SPEED_MARK_TINT`.
+pub const SPEED_MARK_WORN: Color = rgb(0xDD, 0xE3, 0xEA);
+/// A darker tint of the carriageway colour: the other option for the speed marking.
+pub const SPEED_MARK_TINT: Color = rgb(0x8E, 0x9F, 0xB2);
+/// The colour of the speed marking in use.
+pub const SPEED_MARK: Color = SPEED_MARK_WORN;
 
 /// Preview ghosts: a click that works, a click the street refuses or that removes.
 pub const GHOST_OK: Color = rgb(0x2E, 0x7D, 0xF0);
