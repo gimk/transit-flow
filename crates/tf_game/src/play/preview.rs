@@ -26,7 +26,7 @@ use super::{PlayPhase, PlayState, PlayTool, PointerOverUi, pick};
 use crate::draw::ShapeBuilder;
 use crate::input::Pointer;
 use crate::level::{LoadedLevel, PX_PER_M};
-use crate::views::speed_signs::{segment_signs, sign_shape};
+use crate::views::speed_signs::{HiddenSegmentSigns, segment_signs, sign_shape};
 use crate::views::street::{carriageway, crossing_bars, points, to_bevy};
 use crate::views::{ViewMaterial, palette, spawn_shape, z};
 
@@ -331,6 +331,7 @@ pub fn update_preview(
     drag: Res<DragStart>,
     loaded: Res<LoadedLevel>,
     mut preview: ResMut<Preview>,
+    mut hidden: ResMut<HiddenSegmentSigns>,
     existing: Query<Entity, With<PreviewShape>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -363,6 +364,17 @@ pub fn update_preview(
         let street = loaded.street.as_ref()?;
         build_preview(street, key.tool, at, drag.0)
     });
+    // While the speed ghost shows a limit on a segment, that segment's painted marking is
+    // hidden (only the ghost shows); it comes back with the ghost.
+    let shown = match (key, loaded.street.as_ref()) {
+        (Some(key), Some(street)) if key.tool == PlayTool::SpeedLimit && plan.is_some() => {
+            pick::segment_at(street, at).map(|hit| hit.segment)
+        }
+        _ => None,
+    };
+    if hidden.0 != shown {
+        hidden.0 = shown;
+    }
     let note = plan.as_ref().and_then(|plan| plan.note.clone());
     if state.hover_note != note {
         state.hover_note = note;

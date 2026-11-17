@@ -8,9 +8,11 @@ use bevy::prelude::*;
 use bevy::text::{Font, FontSource};
 use bevy::window::PrimaryWindow;
 use tf_sim::street::run::{TICK_RATE, WalkSummary};
-use tf_sim::street::score::{FailReason, StageReport};
+use tf_sim::street::score::{FailReason, Incident, StageReport};
 
 use super::{PlayPhase, PlayState, PlayTool, ReportData, end_text};
+use crate::events::CameraFocusRequested;
+use crate::level::level_to_world;
 use crate::street_runner::{STREET_SPEED_MULTIPLIERS, StreetRunner};
 
 const FONT_SIZE: f32 = 14.0;
@@ -34,11 +36,31 @@ pub struct InfoText;
 /// The text of the key help line (bottom).
 #[derive(Component)]
 pub struct HelpText;
-/// The panel of the report (hidden outside `Report`), and its text.
+/// The panel of the report (hidden outside `Report`).
 #[derive(Component)]
 pub struct ReportPanel;
+/// One `Text` of the report panel. `Head` and `Tail` frame the incident list, so the list
+/// sits where the incidents fall in the report.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub enum ReportPart {
+    Head,
+    IncidentHeader,
+    /// The text of incident line `n` (inside its `IncidentRow` button).
+    Incident(usize),
+    IncidentMore,
+    Tail,
+}
+/// The list of incidents in the report (hidden when there are none).
 #[derive(Component)]
-pub struct ReportText;
+pub struct IncidentList;
+/// One incident line of the report. A click on it (`detect_incident_clicks`) centres the map
+/// on the incident (`focus_incident`).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct IncidentRow(pub usize);
+
+/// The player clicked incident line `n` of the report.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct IncidentClicked(pub usize);
 
 /// `m:ss` of a tick count.
 pub fn clock_text(tick: u64) -> String {
@@ -167,11 +189,47 @@ pub fn fail_text(reason: &FailReason) -> String {
     }
 }
 
-/// How many incidents the report lists before "and N more".
+/// How many incident lines the report lists (buttons) before "and N more".
 pub const MAX_INCIDENT_LINES: usize = 8;
 
+/// The heading of the incident list, or nothing when the stage had no incidents.
+pub fn incident_header(report: &StageReport) -> String {
+    if report.incidents.is_empty() {
+        return String::new();
+    }
+    format!(
+        "Incidents ({}), click one to see it on the map:",
+        report.incidents.len()
+    )
+}
+
+/// One incident line of the list: the clock, then the text of its cause chain.
+pub fn incident_line(incident: &Incident) -> String {
+    format!("{} {}", clock_text(incident.tick), incident.text)
+}
+
+/// What the list says about the incidents it does not show (the marks stay on the map).
+pub fn incident_more(report: &StageReport) -> String {
+    match report.incidents.len().checked_sub(MAX_INCIDENT_LINES) {
+        Some(more) if more > 0 => {
+            format!("... and {more} more (the marks stay on the map)")
+        }
+        _ => String::new(),
+    }
+}
+
+/// Where the map is centred for a click on incident line `index`: the place of its mark,
+/// in sim pixels (y down, as the camera). `None` when there is no such line.
+pub fn incident_focus(report: &StageReport, index: usize) -> Option<Vec2> {
+    report
+        .incidents
+        .get(index)
+        .map(|incident| level_to_world(incident.position))
+}
+
 /// The text of a stage report: the verdict and why, the score with its parts, what
-/// happened to each mode, the main reasons, and the incidents.
+/// happened to each mode and the main reasons. The incidents are not in it: they are the
+/// list of the report panel (`incident_header`, `incident_line`).
 pub fn stage_report_text(report: &StageReport) -> String {
     let verdict = if report.passed { "PASSED" } else { "FAILED" };
     let mut text = format!("STAGE {} - {verdict}\n", report.stage);
@@ -206,24 +264,13 @@ pub fn stage_report_text(report: &StageReport) -> String {
     for reason in &report.top_reasons {
         text += &format!("  - {reason}\n");
     }
-    if !report.incidents.is_empty() {
-        text += &format!("\nIncidents ({}):\n", report.incidents.len());
-    }
-    for incident in report.incidents.iter().take(MAX_INCIDENT_LINES) {
-        text += &format!("  {} {}\n", clock_text(incident.tick), incident.text);
-    }
-    if report.incidents.len() > MAX_INCIDENT_LINES {
-        text += &format!(
-            "  ... and {} more (the marks stay on the map)\n",
-            report.incidents.len() - MAX_INCIDENT_LINES
-        );
-    }
     text
 }
 
-/// The report: the stage report, the counts of the run, then the lines other parts add.
-pub fn report_text(state: &PlayState, report: &ReportData) -> String {
-    let mut text = stage_report_text(&report.stage);
+/// The report under the incident list: the counts of the run, the lines other parts add,
+/// then the stage and what to press.
+pub fn report_tail_text(state: &PlayState, report: &ReportData) -> String {
+    let mut text = String::new();
     if let Some(s) = &report.summary {
         text += &format!(
             "\nRUN - {} ({})\nVehicles: {} came, {} arrived, {} gave up, mean delay {:.1} s\nConflicts: {} light, {} serious; contacts {}\n{}\n",
@@ -325,16 +372,48 @@ fn spawn_play_ui(mut commands: Commands, font: Res<PlayFont>) {
         BackgroundColor(PANEL),
         children![text_bundle(HelpText, font)],
     ));
-    commands.spawn((
-        ReportPanel,
-        PlayPanel,
-        Node {
-            display: Display::None,
-            ..panel(Val::Percent(4.0), Val::Percent(24.0), Val::Percent(52.0))
-        },
-        BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.92)),
-        children![text_bundle(ReportText, font)],
-    ));
+    commands
+        .spawn((
+            ReportPanel,
+            PlayPanel,
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                ..panel(Val::Percent(4.0), Val::Percent(24.0), Val::Percent(52.0))
+            },
+            BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.92)),
+        ))
+        .with_children(|panel| {
+            panel.spawn(text_bundle(ReportPart::Head, font));
+            panel
+                .spawn((
+                    IncidentList,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        display: Display::None,
+                        margin: UiRect::vertical(Val::Px(4.0)),
+                        ..default()
+                    },
+                ))
+                .with_children(|list| {
+                    list.spawn(text_bundle(ReportPart::IncidentHeader, font));
+                    for index in 0..MAX_INCIDENT_LINES {
+                        list.spawn((
+                            IncidentRow(index),
+                            Node {
+                                display: Display::None,
+                                padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|row| {
+                            row.spawn(text_bundle(ReportPart::Incident(index), font));
+                        });
+                    }
+                    list.spawn(text_bundle(ReportPart::IncidentMore, font));
+                });
+            panel.spawn(text_bundle(ReportPart::Tail, font));
+        });
 }
 
 /// Whether the cursor is over a play panel (their screen rectangles).
@@ -367,9 +446,8 @@ fn update_play_ui(
     phase: Res<State<PlayPhase>>,
     state: Res<PlayState>,
     runner: Res<StreetRunner>,
-    mut info: Query<&mut Text, (With<InfoText>, Without<HelpText>, Without<ReportText>)>,
-    mut help: Query<&mut Text, (With<HelpText>, Without<InfoText>, Without<ReportText>)>,
-    mut report: Query<&mut Text, (With<ReportText>, Without<InfoText>, Without<HelpText>)>,
+    mut info: Query<&mut Text, (With<InfoText>, Without<HelpText>)>,
+    mut help: Query<&mut Text, (With<HelpText>, Without<InfoText>)>,
     mut panels: Query<&mut Node, With<ReportPanel>>,
 ) {
     let phase = *phase.get();
@@ -386,13 +464,6 @@ fn update_play_ui(
     for mut text in &mut help {
         set_text(&mut text, help_text(phase));
     }
-    let report_text = match (&state.report, phase) {
-        (Some(report), PlayPhase::Report) => report_text(&state, report),
-        _ => String::new(),
-    };
-    for mut text in &mut report {
-        set_text(&mut text, report_text.clone());
-    }
     let display = if phase == PlayPhase::Report {
         Display::Flex
     } else {
@@ -405,6 +476,101 @@ fn update_play_ui(
     }
 }
 
+fn set_display(node: &mut Node, display: Display) {
+    if node.display != display {
+        node.display = display;
+    }
+}
+
+/// Writes the report panel: its texts, the incident list and its lines (only the lines that
+/// exist are shown).
+#[allow(clippy::type_complexity)]
+fn update_report_panel(
+    phase: Res<State<PlayPhase>>,
+    state: Res<PlayState>,
+    mut texts: Query<(&ReportPart, &mut Text)>,
+    mut lists: Query<&mut Node, (With<IncidentList>, Without<IncidentRow>)>,
+    mut rows: Query<(&IncidentRow, &mut Node), With<IncidentRow>>,
+) {
+    let report = match (&state.report, *phase.get()) {
+        (Some(report), PlayPhase::Report) => Some(report),
+        _ => None,
+    };
+    let count = report.map_or(0, |r| r.stage.incidents.len());
+    for (part, mut text) in &mut texts {
+        let value = match (report, part) {
+            (None, _) => String::new(),
+            (Some(report), ReportPart::Head) => stage_report_text(&report.stage),
+            (Some(report), ReportPart::IncidentHeader) => incident_header(&report.stage),
+            (Some(report), ReportPart::Incident(index)) => report
+                .stage
+                .incidents
+                .get(*index)
+                .map_or_else(String::new, incident_line),
+            (Some(report), ReportPart::IncidentMore) => incident_more(&report.stage),
+            (Some(report), ReportPart::Tail) => report_tail_text(&state, report),
+        };
+        set_text(&mut text, value);
+    }
+    let list = if count > 0 {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    for mut node in &mut lists {
+        set_display(&mut node, list);
+    }
+    for (row, mut node) in &mut rows {
+        let shown = if row.0 < count {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        set_display(&mut node, shown);
+    }
+}
+
+/// A left click on an incident line (its screen rectangle, read as `update_pointer_over_ui`
+/// reads the panels) is an `IncidentClicked`.
+fn detect_incident_clicks(
+    mouse: Res<ButtonInput<MouseButton>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    rows: Query<(&ComputedNode, &UiGlobalTransform, &IncidentRow, &Node)>,
+    mut clicked: MessageWriter<IncidentClicked>,
+) {
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(window) = window else { return };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let physical = cursor * window.scale_factor();
+    let hit = rows.iter().find_map(|(node, transform, row, style)| {
+        (style.display != Display::None && node.contains_point(*transform, physical))
+            .then_some(IncidentClicked(row.0))
+    });
+    if let Some(hit) = hit {
+        clicked.write(hit);
+    }
+}
+
+/// A clicked incident line centres the map on its mark. The zoom stays.
+fn focus_incident(
+    mut clicked: MessageReader<IncidentClicked>,
+    state: Res<PlayState>,
+    mut focus: MessageWriter<CameraFocusRequested>,
+) {
+    for IncidentClicked(index) in clicked.read() {
+        let Some(report) = &state.report else {
+            continue;
+        };
+        if let Some(at) = incident_focus(&report.stage, *index) {
+            focus.write(CameraFocusRequested(at));
+        }
+    }
+}
+
 pub struct PlayUiPlugin;
 
 impl Plugin for PlayUiPlugin {
@@ -413,7 +579,17 @@ impl Plugin for PlayUiPlugin {
             Startup,
             (load_font, spawn_play_ui, super::inspect::spawn_card).chain(),
         )
-        .add_systems(Update, update_play_ui.run_if(resource_exists::<PlayState>));
+        .add_message::<IncidentClicked>()
+        .add_systems(
+            Update,
+            (
+                update_play_ui,
+                update_report_panel,
+                detect_incident_clicks,
+                focus_incident,
+            )
+                .run_if(resource_exists::<PlayState>),
+        );
     }
 }
 
@@ -463,7 +639,11 @@ mod tests {
             extra: vec!["Score: 42".into()],
         };
         let state = PlayState::new(level);
-        let text = report_text(&state, &report);
+        let text = format!(
+            "{}{}",
+            stage_report_text(&report.stage),
+            report_tail_text(&state, &report)
+        );
         assert!(text.contains("the day is over") && text.contains("Score: 42"));
         assert!(text.contains("Vehicles:") && text.contains("On foot:"));
         assert!(text.contains("STAGE 1") && text.contains(verdict), "{text}");

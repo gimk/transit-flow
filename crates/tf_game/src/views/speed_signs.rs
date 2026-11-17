@@ -70,7 +70,7 @@ pub fn lane_point(line: &[Vec2], along: f32) -> Option<(Vec2, Vec2)> {
 }
 
 /// The distance from `p` to the closed outline of `polygon`, metres.
-fn distance_to_outline(p: Vec2, polygon: &[Vec2]) -> f32 {
+pub fn distance_to_outline(p: Vec2, polygon: &[Vec2]) -> f32 {
     (0..polygon.len())
         .map(|i| distance_to_segment(p, polygon[i], polygon[(i + 1) % polygon.len()]))
         .fold(f32::MAX, f32::min)
@@ -267,11 +267,19 @@ pub fn sign_shape(shape: &mut ShapeBuilder, spot: &SignSpot, kmh: f32, alpha: f3
     }
 }
 
-/// The shape of every marking of the street.
-pub fn build_signs(street: &Street) -> ShapeBuilder {
+/// The segment whose painted markings are hidden while the speed tool previews its limit
+/// there (`play::preview`): the ghost paints the next limit in their place, so the old and
+/// the new number never overlap. `None` shows every marking.
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct HiddenSegmentSigns(pub Option<i32>);
+
+/// The shape of every marking of the street, except those of the `hidden` segment.
+pub fn build_signs(street: &Street, hidden: Option<i32>) -> ShapeBuilder {
     let mut shape = ShapeBuilder::new();
     for spot in sign_spots(street) {
-        sign_shape(&mut shape, &spot, spot.kmh, 1.0);
+        if Some(spot.segment) != hidden {
+            sign_shape(&mut shape, &spot, spot.kmh, 1.0);
+        }
     }
     shape
 }
@@ -280,21 +288,24 @@ pub fn build_signs(street: &Street) -> ShapeBuilder {
 #[derive(Component)]
 pub struct SpeedSigns;
 
+/// Remade when the street changes, and when the hidden segment changes (the speed tool's
+/// hover moves), not every frame.
 fn rebuild_signs(
     level: Res<LoadedLevel>,
+    hidden: Res<HiddenSegmentSigns>,
     existing: Query<Entity, With<SpeedSigns>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<ViewMaterial>,
 ) {
-    if !level.is_changed() {
+    if !level.is_changed() && !hidden.is_changed() {
         return;
     }
     for entity in &existing {
         commands.entity(entity).despawn();
     }
     let Some(street) = &level.street else { return };
-    let shape = build_signs(street);
+    let shape = build_signs(street, hidden.0);
     if !shape.is_empty() {
         let entity = spawn_shape(
             &mut commands,
@@ -311,7 +322,8 @@ pub struct SpeedSignPlugin;
 
 impl Plugin for SpeedSignPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, rebuild_signs);
+        app.init_resource::<HiddenSegmentSigns>()
+            .add_systems(Update, rebuild_signs);
     }
 }
 
@@ -374,6 +386,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_hidden_segment_loses_its_markings_and_only_those() {
+        let street = street();
+        let spots = sign_spots(&street);
+        let segment = spots[0].segment;
+        let own = spots.iter().filter(|s| s.segment == segment).count();
+        let all = build_signs(&street, None).triangle_count();
+        let without = build_signs(&street, Some(segment)).triangle_count();
+        assert!(own > 0 && without < all, "{own} spots hidden");
+        assert_eq!(build_signs(&street, Some(-999)).triangle_count(), all);
     }
 
     #[test]

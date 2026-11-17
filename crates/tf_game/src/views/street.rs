@@ -15,7 +15,7 @@ use super::{ViewMaterial, palette, spawn_shape, z};
 use crate::camera::sim_to_bevy;
 use crate::draw::ShapeBuilder;
 use crate::level::{LoadedLevel, PX_PER_M, level_to_world};
-use crate::views::speed_signs::{lane_point, marking_span};
+use crate::views::speed_signs::{distance_to_outline, lane_point, marking_span};
 
 pub const OUTSIDE_COLOR: Color = palette::OUTSIDE;
 pub const BLOCK_COLOR: Color = palette::BLOCK;
@@ -110,6 +110,7 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
     }
 
     let mut markings = ShapeBuilder::new();
+    let bars = zebra_bars(street);
     for segment in street.segments.values() {
         let strips = &segment.profile.strips;
         for (index, strip) in strips.iter().enumerate() {
@@ -128,11 +129,12 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
                 &lane.polyline(),
                 lane.length as f32,
                 marking_span(street, lane),
+                &bars,
             );
         }
     }
-    for bar in zebra_bars(street) {
-        markings.polygon(&points(&bar), PAINT_COLOR);
+    for bar in &bars {
+        markings.polygon(&points(bar), PAINT_COLOR);
     }
     for junction in street.junctions.values() {
         for movement in street.movements(junction.node) {
@@ -290,10 +292,42 @@ pub fn arrow_clear_of(tip: f32, span: Option<(f32, f32)>) -> bool {
     }
 }
 
+/// Whether the arrow with its tip `tip` metres down `line` keeps `ARROW_CLEARANCE_M` clear of
+/// every zebra bar (`zebra_bars`). The arrow's footprint is `ARROW_SIZE` long and 0.6 m either
+/// side of the lane line (as drawn in `draw_arrows`); it is sampled along and across, as the
+/// speed marking's is (`speed_signs::clear_of_bars`).
+pub fn arrow_clear_of_bars(line: &[Vec2], tip: f32, bars: &[Vec<Vec2>]) -> bool {
+    for k in 0..=20 {
+        let t = tip - ARROW_SIZE + k as f32 * ARROW_SIZE / 20.0;
+        let Some((p, direction)) = lane_point(line, t) else {
+            return false;
+        };
+        let normal = Vec2::new(-direction.y, direction.x);
+        for side in [-0.6, 0.0, 0.6] {
+            let q = p + normal * side;
+            if bars
+                .iter()
+                .any(|bar| distance_to_outline(q, bar) < ARROW_CLEARANCE_M)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// A small chevron every `ARROW_SPACING` metres along a lane, pointing its way. Arrows that
-/// would touch the lane's speed marking are left out.
-fn draw_arrows(shapes: &mut ShapeBuilder, lane: &[Vec2], length: f32, span: Option<(f32, f32)>) {
-    for tip in arrow_tips(length).filter(|tip| arrow_clear_of(*tip, span)) {
+/// would touch the lane's speed marking or a zebra bar are left out.
+fn draw_arrows(
+    shapes: &mut ShapeBuilder,
+    lane: &[Vec2],
+    length: f32,
+    span: Option<(f32, f32)>,
+    bars: &[Vec<Vec2>],
+) {
+    for tip in arrow_tips(length)
+        .filter(|tip| arrow_clear_of(*tip, span) && arrow_clear_of_bars(lane, *tip, bars))
+    {
         let Some((at, direction)) = lane_point(lane, tip) else {
             continue;
         };
@@ -422,5 +456,46 @@ mod tests {
             }
         }
         assert!(markings > 0, "the level has speed markings");
+    }
+
+    #[test]
+    fn no_drawn_arrow_comes_within_1_m_of_a_zebra() {
+        let street = street();
+        let bars = zebra_bars(&street);
+        assert!(!bars.is_empty(), "the level has zebras");
+        let (mut drawn, mut dropped) = (0, 0);
+        for segment in street.segments.keys() {
+            for lane in street.segment_lanes(*segment) {
+                let line = lane.polyline();
+                for tip in arrow_tips(lane.length as f32) {
+                    if !arrow_clear_of_bars(&line, tip, &bars) {
+                        // Only the arrows that really come close to a bar are left out.
+                        dropped += 1;
+                        continue;
+                    }
+                    drawn += 1;
+                    // A drawn arrow: its footprint, sampled finer than the rule does.
+                    let mut closest = f32::MAX;
+                    for k in 0..=40 {
+                        let t = tip - ARROW_SIZE + k as f32 * ARROW_SIZE / 40.0;
+                        let (p, d) = lane_point(&line, t).expect("on the lane");
+                        let n = Vec2::new(-d.y, d.x);
+                        for side in [-0.6, 0.0, 0.6] {
+                            let q = p + n * side;
+                            for bar in &bars {
+                                closest = closest.min(distance_to_outline(q, bar));
+                            }
+                        }
+                    }
+                    assert!(
+                        closest >= ARROW_CLEARANCE_M - 0.1,
+                        "arrow at {tip} m is {closest} m from a zebra (segment {})",
+                        lane.segment_id.unwrap_or(-1)
+                    );
+                }
+            }
+        }
+        assert!(drawn > 0, "some arrows are drawn");
+        assert!(dropped > 0, "the zebras take some arrows away");
     }
 }

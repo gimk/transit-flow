@@ -770,6 +770,125 @@ fn the_speed_sign_shows_the_new_limit_after_the_speed_tool() {
     assert_ne!(signs_mesh(&mut harness), before, "the sign was redrawn");
 }
 
+/// The text of the mesh of every speed marking (empty when there is none).
+fn sign_mesh_text(harness: &mut Harness) -> String {
+    use tf_game::views::speed_signs::SpeedSigns;
+    let handles: Vec<Handle<Mesh>> = harness
+        .app
+        .world_mut()
+        .query_filtered::<&Mesh2d, With<SpeedSigns>>()
+        .iter(harness.app.world())
+        .map(|mesh| mesh.0.clone())
+        .collect();
+    let meshes = harness.app.world().resource::<Assets<Mesh>>();
+    handles
+        .iter()
+        .map(|handle| {
+            format!(
+                "{:?}",
+                meshes
+                    .get(handle)
+                    .expect("the mesh")
+                    .attribute(Mesh::ATTRIBUTE_POSITION)
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_speed_ghost_hides_the_painted_marking_of_its_segment_only_while_it_shows() {
+    use tf_game::play::preview::PreviewShape;
+    use tf_game::views::speed_signs::{HiddenSegmentSigns, sign_spots};
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let (segment, spot) = free_spot(street(&harness));
+    let painted = sign_mesh_text(&mut harness);
+    assert!(!painted.is_empty(), "the level has markings");
+    let own = sign_spots(street(&harness))
+        .iter()
+        .filter(|s| s.segment == segment)
+        .count();
+    assert!(own > 0);
+
+    // The speed tool, hovering the segment: its painted marking is hidden (the ghost shows
+    // the next limit in its place).
+    harness.key(KeyCode::KeyV);
+    harness.move_to(spot * PX_PER_M);
+    harness.frames(2);
+    assert_eq!(count::<PreviewShape>(&mut harness), 1);
+    assert_eq!(
+        harness.app.world().resource::<HiddenSegmentSigns>().0,
+        Some(segment)
+    );
+    assert_ne!(
+        sign_mesh_text(&mut harness),
+        painted,
+        "the marking is hidden"
+    );
+
+    // Off the segment (the pointer leaves, or the tool goes): the marking is back, as it was.
+    harness.key(KeyCode::Escape);
+    harness.frames(2);
+    assert_eq!(count::<PreviewShape>(&mut harness), 0);
+    assert_eq!(harness.app.world().resource::<HiddenSegmentSigns>().0, None);
+    assert_eq!(sign_mesh_text(&mut harness), painted, "the marking is back");
+}
+
+#[test]
+fn a_click_on_an_incident_line_centres_the_map_on_its_mark_and_keeps_the_zoom() {
+    use tf_game::events::CameraFocusRequested;
+    use tf_game::level::level_to_world;
+    use tf_game::play::ui::{IncidentClicked, IncidentRow};
+    use tf_sim::street::ids::AgentId;
+    use tf_sim::street::score::{Incident, IncidentKind};
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    finish_run(&mut harness);
+    // Two incidents of the stage, inside the level (metres).
+    let marks = [Vec2::new(30.0, 45.0), Vec2::new(60.0, 20.0)];
+    let incidents: Vec<Incident> = marks
+        .iter()
+        .enumerate()
+        .map(|(i, at)| Incident {
+            tick: 100 * (i as u64 + 1),
+            time_s: 5.0 * (i as f64 + 1.0),
+            kind: IncidentKind::LightConflict,
+            position: *at,
+            agents: [AgentId(1), AgentId(2)],
+            causes: Vec::new(),
+            text: format!("Test conflict {i}"),
+        })
+        .collect();
+    state_mut(&mut harness)
+        .report
+        .as_mut()
+        .expect("a report")
+        .stage
+        .incidents = incidents;
+    harness.frames(2);
+
+    // The list shows the two lines, and no more rows than that.
+    let rows: Vec<(usize, bool)> = harness
+        .app
+        .world_mut()
+        .query::<(&IncidentRow, &Node)>()
+        .iter(harness.app.world())
+        .map(|(row, node)| (row.0, node.display != Display::None))
+        .collect();
+    assert_eq!(rows.iter().filter(|(_, shown)| *shown).count(), 2);
+    assert!(rows.iter().any(|(i, shown)| *i == 1 && *shown));
+
+    // The click on line 1 (its hit test needs a window cursor, so the test sends the click
+    // it would make). The map is asked to centre on the mark; the zoom is not touched (the
+    // camera's own system does the moving, and the harness has no camera).
+    harness.app.world_mut().write_message(IncidentClicked(1));
+    harness.frames(1);
+    let asked = harness.messages::<CameraFocusRequested>();
+    assert_eq!(asked, vec![CameraFocusRequested(level_to_world(marks[1]))]);
+}
+
 #[test]
 fn hovering_an_agent_in_a_run_finds_it_and_the_card_reads_its_traits() {
     use tf_game::play::inspect::{Hover, Hovered, car_pose_at, card_text, walker_pos_at};
