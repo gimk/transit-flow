@@ -38,7 +38,7 @@ pub const WINDOW_SIZE: (u32, u32) = (1280, 720);
 pub const CAPTURE_TIMEOUT_FRAMES: u32 = 600;
 pub const FRAME_DT: Duration = Duration::from_micros(16_667);
 
-pub const USAGE: &str = "usage: transit-flow [--play <id> [--frames N --screenshot PATH [--run]]] [(--scenario <empty|bottleneck|bottleneck-bus|town> | --level <id>) --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>] [--run [--seed N] [--population <careful|mixed|careless>]]]
+pub const USAGE: &str = "usage: transit-flow [--play <id> [--frames N --screenshot PATH [--run] [--zoom Z]]] [(--scenario <empty|bottleneck|bottleneck-bus|town> | --level <id>) --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>] [--run [--seed N] [--population <careful|mixed|careless>]]]
   no arguments: run the game
   --play        open a level of the street game to design, run and read the report (carrefour-ecole);
                 with --frames and --screenshot it is a screenshot of that screen, and --run starts the run first
@@ -193,16 +193,18 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
         if scenario.is_some()
             || level.is_some()
             || hour.is_some()
-            || zoom.is_some()
             || overlay.is_some()
             || seed.is_some()
             || population.is_some()
         {
-            return Err("--play goes only with --frames, --screenshot and --run".into());
+            return Err("--play goes only with --frames, --screenshot, --run and --zoom".into());
         }
         if frames.is_none() && screenshot.is_none() {
             if run {
                 return Err("--run needs --frames and --screenshot".into());
+            }
+            if zoom.is_some() {
+                return Err("--zoom needs --frames and --screenshot".into());
             }
             return Ok(Cli::PlayLevel(id));
         }
@@ -211,7 +213,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
             frames: frames.ok_or("--frames is required")?,
             screenshot: screenshot.ok_or("--screenshot is required")?,
             hour: None,
-            zoom: None,
+            zoom,
             overlay: None,
             run,
             seed: None,
@@ -323,7 +325,9 @@ fn setup_scenario(
         Target::Scenario(scenario) => *scenario,
         Target::Level(id) => {
             if options.play {
-                // `play::PlayPlugin` loads the level and starts the run.
+                // `play::PlayPlugin` loads the level and starts the run; the framing zoom is
+                // the one thing it leaves to us.
+                level.zoom = options.zoom;
                 return;
             }
             // An empty old map (no highway) under the level.

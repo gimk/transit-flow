@@ -96,6 +96,21 @@ fn play_arguments_parse() {
     };
     assert!(options.play && options.run);
     assert_eq!(options.target, Target::Level(LEVEL.into()));
+    // A framing zoom goes with a play screenshot; without a screenshot it is refused.
+    let Ok(Cli::Capture(zoomed)) = args(&[
+        "--play",
+        LEVEL,
+        "--frames",
+        "5",
+        "--screenshot",
+        "a.png",
+        "--zoom",
+        "2",
+    ]) else {
+        panic!("a zoomed play screenshot")
+    };
+    assert_eq!(zoomed.zoom, Some(2.0));
+    assert!(args(&["--play", LEVEL, "--zoom", "2"]).is_err());
 }
 
 #[test]

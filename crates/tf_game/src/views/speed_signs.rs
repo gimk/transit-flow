@@ -18,7 +18,7 @@ use tf_sim::street::space::Access;
 use super::{ViewMaterial, palette, spawn_shape, z};
 use crate::draw::ShapeBuilder;
 use crate::level::{LoadedLevel, PX_PER_M};
-use crate::views::street::to_bevy;
+use crate::views::street::{crossing_bars, to_bevy};
 
 /// Height of a digit along the lane, metres (the traffic direction). Real markings are
 /// about this tall so that a driver reads them at a low angle.
@@ -32,6 +32,11 @@ pub const DIGIT_GAP_M: f32 = 0.3;
 /// The centre of a marking stands this far from the start of its lane, metres (less on a
 /// short lane).
 pub const SIGN_INSET_M: f32 = 4.0;
+/// A marking keeps this far clear of every crossing (zebra) on its lane, metres: a bar
+/// must not touch the number.
+pub const CROSSING_CLEARANCE_M: f32 = 2.0;
+/// The search for a clear place along the lane goes in steps of this length, metres.
+const SEARCH_STEP_M: f32 = 0.25;
 
 /// A marking to paint: where (street metres, y down), which way the traffic goes there
 /// (a unit vector in street metres) and the limit it shows.
@@ -63,8 +68,52 @@ fn lane_point(line: &[Vec2], along: f32) -> Option<(Vec2, Vec2)> {
     last
 }
 
+/// The distance from `p` to the closed outline of `polygon`, metres.
+fn distance_to_outline(p: Vec2, polygon: &[Vec2]) -> f32 {
+    (0..polygon.len())
+        .map(|i| distance_to_segment(p, polygon[i], polygon[(i + 1) % polygon.len()]))
+        .fold(f32::MAX, f32::min)
+}
+
+fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let t = if ab.length_squared() > 0.0 {
+        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    p.distance(a + ab * t)
+}
+
+/// Whether the marking centred `along` metres down `line` keeps `CROSSING_CLEARANCE_M`
+/// clear of every crossing bar. Its footprint is sampled along its length, on its two
+/// edges across the lane and on the centre line.
+fn clear_of_bars(line: &[Vec2], bars: &[Vec<Vec2>], along: f32) -> bool {
+    let half = DIGIT_HEIGHT_M * 0.5;
+    let across = (2.0 * DIGIT_WIDTH_M + DIGIT_GAP_M) * 0.5;
+    for k in 0..=25 {
+        let t = along - half + k as f32 * (2.0 * half / 25.0);
+        let Some((p, direction)) = lane_point(line, t) else {
+            return false;
+        };
+        let normal = Vec2::new(-direction.y, direction.x);
+        for side in [-across, 0.0, across] {
+            let q = p + normal * side;
+            if bars
+                .iter()
+                .any(|bar| distance_to_outline(q, bar) < CROSSING_CLEARANCE_M)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// The markings of one segment: for each way, the motor lane with the greatest `lateral`
-/// (the right-most one: the one nearest the kerb of its own way).
+/// (the right-most one: the one nearest the kerb of its own way). The marking starts
+/// `SIGN_INSET_M` down the lane and moves further along it until it is clear of the
+/// crossings; a lane with no clear place gets no marking.
 pub fn segment_signs(street: &Street, segment: i32) -> Vec<SignSpot> {
     let mut spots = Vec::new();
     let Some(segment) = street.segments.get(&segment) else {
@@ -78,8 +127,20 @@ pub fn segment_signs(street: &Street, segment: i32) -> Vec<SignSpot> {
             .max_by(|a, b| a.lateral.total_cmp(&b.lateral));
         let Some(lane) = lane else { continue };
         let line = lane.polyline();
-        let inset = SIGN_INSET_M.min(lane.length as f32 * 0.5);
-        if let Some((position, direction)) = lane_point(&line, inset) {
+        let bars: Vec<Vec<Vec2>> = street
+            .crossings
+            .values()
+            .filter(|crossing| crossing.segment == segment.id)
+            .flat_map(|crossing| crossing_bars(street, crossing))
+            .collect();
+        let half = DIGIT_HEIGHT_M * 0.5;
+        let last = lane.length as f32 - half;
+        let placed = (0..)
+            .map(|step| SIGN_INSET_M.max(half) + step as f32 * SEARCH_STEP_M)
+            .take_while(|along| *along <= last)
+            .find(|along| clear_of_bars(&line, &bars, *along));
+        let Some(along) = placed else { continue };
+        if let Some((position, direction)) = lane_point(&line, along) {
             spots.push(SignSpot {
                 segment: segment.id,
                 position,
@@ -251,6 +312,37 @@ mod tests {
                     .filter(|s| s.segment == segment.id)
                     .all(|s| s.kmh == segment.speed_limit_kmh)
             );
+        }
+    }
+
+    #[test]
+    fn the_markings_keep_clear_of_the_crossings() {
+        let street = street();
+        let bars: Vec<Vec<Vec2>> = street
+            .crossings
+            .values()
+            .flat_map(|crossing| crossing_bars(&street, crossing))
+            .collect();
+        assert!(!bars.is_empty(), "the level has zebras");
+        let spots = sign_spots(&street);
+        assert!(!spots.is_empty());
+        // The footprint, on a straight lane: 2.5 m along the traffic, 1.9 m across.
+        for spot in spots {
+            let normal = Vec2::new(-spot.direction.y, spot.direction.x);
+            for k in 0..=25 {
+                let t = -1.25 + k as f32 * 0.1;
+                for side in [-0.95, 0.0, 0.95] {
+                    let q = spot.position + spot.direction * t + normal * side;
+                    for bar in &bars {
+                        let d = distance_to_outline(q, bar);
+                        assert!(
+                            d >= CROSSING_CLEARANCE_M,
+                            "{d} m to a bar, segment {}",
+                            spot.segment
+                        );
+                    }
+                }
+            }
         }
     }
 
