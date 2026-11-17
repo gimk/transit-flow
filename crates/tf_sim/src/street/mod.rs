@@ -9,15 +9,23 @@
 //! - `design`: the player's edits as a command list (JSON).
 //! - `lanes`: lanes on strips and the movements through junctions.
 //! - `model`: `Street`, the space of one level with a design applied.
+//! - `signals`: signal plans (fixed cycles of phases per approach).
+//! - `speed`: the speed a street asks for by its look (width, side friction, sight).
+//! - `run`: one run of a level: the agents, their decisions, conflicts and contacts.
+//! - `score`: score, verdict and report of a star stage, read from the event log.
 
 pub mod design;
 pub mod ids;
 pub mod lanes;
 pub mod level;
 pub mod model;
+pub mod run;
+pub mod score;
+pub mod signals;
 pub mod space;
+pub mod speed;
 
 pub use design::{Design, DesignCommand};
-pub use ids::StreetLaneId;
+pub use ids::{AgentId, StreetLaneId};
 pub use level::LevelFile;
 pub use model::{EditError, Street, StreetChange};

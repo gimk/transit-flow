@@ -7,11 +7,9 @@
 //! arrivals, failures, Flow, trip count, time) must be equal, and at the end every vehicle.
 //! The sim is stepped by hand with the game paused, so both runs see the same ticks.
 
-mod common;
-
+use crate::common::Harness;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
-use common::Harness;
 use serde::Deserialize;
 use serde_json::Value;
 use tf_sim::events::SimEvent;

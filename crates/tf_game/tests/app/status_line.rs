@@ -1,10 +1,8 @@
 //! The status line (M10.3): the day and time, speed, Flow, traffic, the active tool with its
 //! variant and hint, and the last notification, as one text line.
 
-mod common;
-
+use crate::common::Harness;
 use bevy::prelude::*;
-use common::Harness;
 use tf_game::capture::advance_to_hour;
 use tf_game::events::NotificationPosted;
 use tf_game::status::StatusNotice;

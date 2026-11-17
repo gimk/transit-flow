@@ -5,6 +5,7 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use super::signals::SignalPlan;
 use super::space::{Access, Profile};
 use crate::geom::{Circle, Polygon};
 
@@ -79,7 +80,7 @@ pub enum JunctionControl {
     /// The French default rule.
     #[default]
     PriorityToRight,
-    /// Signal plans arrive in Phase 2; the control is only recorded until then.
+    /// Lights, run by the junction's `signal_plan` (or a default plan made from its arms).
     Signals,
 }
 
@@ -114,6 +115,9 @@ pub struct JunctionDef {
     /// The level's default turn bans; the player's come from the design.
     #[serde(default)]
     pub banned_turns: Vec<TurnBan>,
+    /// Used when `control` is `Signals`; without one the run makes a default plan.
+    #[serde(default)]
+    pub signal_plan: Option<SignalPlan>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -126,6 +130,8 @@ pub enum ObstacleKind {
     Pillar,
     MetroExit,
     BusShelter,
+    /// A van parked for good (in a parking strip or a delivery bay): it hides a child.
+    ParkedVan,
 }
 
 impl ObstacleKind {
@@ -137,6 +143,7 @@ impl ObstacleKind {
                 | ObstacleKind::Pillar
                 | ObstacleKind::MetroExit
                 | ObstacleKind::BusShelter
+                | ObstacleKind::ParkedVan
         )
     }
 }
@@ -151,6 +158,37 @@ pub enum Shape {
 pub struct ObstacleDef {
     pub kind: ObstacleKind,
     pub shape: Shape,
+}
+
+/// What a crossing is. Raised crossings, refuge islands and crossings with their own
+/// signals come later (pivot plan §4, "Crossings").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CrossingKind {
+    /// A "passage piéton": pedestrians on it have priority (Code de la route R415-11).
+    #[default]
+    Zebra,
+}
+
+/// The default width of a crossing along its street, metres: about a Paris zebra (at
+/// least 2.5 m wide in France).
+pub const DEFAULT_CROSSING_WIDTH: f32 = 3.0;
+
+fn default_crossing_width() -> f32 {
+    DEFAULT_CROSSING_WIDTH
+}
+
+/// A place where pedestrians cross a street by the rules: across every strip between
+/// the sidewalks, centred `at` metres along the segment's centerline from its `from`
+/// node, `width` metres wide along it. A crossing at a junction arm sits just outside
+/// the junction area; one further along is mid-block.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CrossingDef {
+    #[serde(default)]
+    pub kind: CrossingKind,
+    pub segment: i32,
+    pub at: f32,
+    #[serde(default = "default_crossing_width")]
+    pub width: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -209,6 +247,14 @@ pub enum Constraint {
     MinSidewalkWidth(f32),
 }
 
+/// One star stage: the level with `demand_scale` times its traffic, passed when the score
+/// reaches `pass_score` with no death, serious injury or broken constraint (see `score`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StarStage {
+    pub demand_scale: f64,
+    pub pass_score: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LevelFile {
     pub id: String,
@@ -230,6 +276,9 @@ pub struct LevelFile {
     /// Fixed furniture the player cannot remove.
     #[serde(default)]
     pub obstacles: Vec<ObstacleDef>,
+    /// Crossings the level starts with; the player's come from the design.
+    #[serde(default)]
+    pub crossings: Vec<CrossingDef>,
     #[serde(default)]
     pub areas: Vec<AreaDef>,
     #[serde(default)]
@@ -241,9 +290,9 @@ pub struct LevelFile {
     /// The tools the player may use in this level.
     #[serde(default)]
     pub tools: Vec<String>,
-    /// Scores for 2 and 3 stars.
+    /// The star stages, in order (pivot plan §6): the number of stars is their number.
     #[serde(default)]
-    pub stars: Vec<f64>,
+    pub stages: Vec<StarStage>,
     pub seed: u64,
 }
 
@@ -324,6 +373,14 @@ impl LevelFile {
                         junction.node
                     ));
                 }
+            }
+        }
+        for crossing in &self.crossings {
+            if !has_segment(crossing.segment) {
+                return invalid(format!(
+                    "a crossing is on unknown segment {}",
+                    crossing.segment
+                ));
             }
         }
         for gate in &self.gates {

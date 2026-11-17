@@ -9,8 +9,10 @@ use crate::events::*;
 use crate::game::{self, Announce};
 use crate::input::{Action, ActionInput, GameInputPlugin};
 use crate::level::LevelPlugin;
+use crate::play::not_playing;
 use crate::runner::{RunnerEvent, SimHandle};
 use crate::status::StatusLinePlugin;
+use crate::street_runner::StreetRunPlugin;
 use crate::tools::ToolsPlugin;
 
 pub struct GamePlugin {
@@ -37,9 +39,10 @@ impl Plugin for GamePlugin {
                 ToolsPlugin,
                 StatusLinePlugin,
                 LevelPlugin,
+                StreetRunPlugin,
             ))
             .add_systems(PreUpdate, advance_sim)
-            .add_systems(Update, sim_keys);
+            .add_systems(Update, sim_keys.run_if(not_playing));
     }
 }
 

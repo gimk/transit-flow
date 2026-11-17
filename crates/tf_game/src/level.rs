@@ -51,12 +51,24 @@ pub fn frame(bounds: &Bounds, viewport: Vec2) -> (Vec2, f32) {
     (level_to_world(bounds.center()), zoom)
 }
 
-/// Frames the camera on a level when one is loaded.
-fn frame_new_level(level: Res<LoadedLevel>, mut cameras: Query<&mut MapCamera>) {
+/// Frames the camera when a level is loaded. An edit of the street that is already
+/// shown (play mode changes it often) keeps the camera where the player put it.
+fn frame_new_level(
+    level: Res<LoadedLevel>,
+    mut cameras: Query<&mut MapCamera>,
+    mut framed: Local<Option<String>>,
+) {
     if !level.is_changed() {
         return;
     }
-    let Some(street) = &level.street else { return };
+    let Some(street) = &level.street else {
+        *framed = None;
+        return;
+    };
+    if framed.as_deref() == Some(street.level_id.as_str()) {
+        return;
+    }
+    *framed = Some(street.level_id.clone());
     for mut camera in &mut cameras {
         let (center, zoom) = frame(&street.bounds, camera.viewport);
         camera.zoom = level.zoom.unwrap_or(zoom);

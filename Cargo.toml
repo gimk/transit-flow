@@ -11,7 +11,30 @@ publish = false
 # Don't upgrade Bevy until the migration is done (docs/BEVY_MIGRATION_PLAN.md §8).
 [workspace.dependencies]
 tf_sim = { path = "crates/tf_sim" }
-bevy = "=0.20.1"
+# Bevy features are added only when code needs one (user rule, 2026-11-16): no profile
+# features (`2d`, `ui`, default). No 3D, audio, gamepad, scenes, picking, Linux backends.
+bevy = { version = "=0.20.1", default-features = false, features = [
+    "std",               # everything (bevy_internal std)
+    "multi_threaded",    # parallel ECS and render
+    "async_executor",    # task pools
+    "bevy_asset",        # Assets<Mesh>, Assets<ColorMaterial>
+    "bevy_log",          # LogPlugin, info! / error!
+    "bevy_window",       # Window, PrimaryWindow; also turns on the keyboard, mouse, touch and gesture inputs
+    "bevy_winit",        # the OS window and its events (macOS, Windows)
+    "bevy_camera",       # Camera, NoFrustumCulling, visibility
+    "bevy_mesh",         # Mesh, Indices, VertexAttributeValues
+    "bevy_render",       # renderer, Screenshot
+    "bevy_core_pipeline", # Camera2d
+    "bevy_sprite_render", # Mesh2d, MeshMaterial2d, ColorMaterial
+    "bevy_gizmos",       # Gizmos, GizmoPlugin
+    "bevy_gizmos_render", # draws the gizmos
+    "bevy_state",        # States (play mode phases)
+    "bevy_ui",           # Node (status line)
+    "bevy_ui_render",    # draws the UI
+    "bevy_text",         # Text, TextFont
+    "default_font",      # the status line has no font file
+    "png",               # screenshot save_to_disk writes PNG
+] }
 # Must stay the glam version Bevy uses, so sim and game share one Vec2 type.
 glam = { version = "=0.33.12", features = ["serde"] }
 serde = { version = "=1.0.229", features = ["derive"] }

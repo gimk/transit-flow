@@ -453,6 +453,6 @@ impl Plugin for ToolsPlugin {
         app.init_resource::<ToolManager>()
             .init_resource::<ToolPreview>()
             .init_resource::<ShowGrid>()
-            .add_systems(Update, tool_input);
+            .add_systems(Update, tool_input.run_if(crate::play::not_playing));
     }
 }

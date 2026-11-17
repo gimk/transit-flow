@@ -1,8 +1,14 @@
 //! The headless app the integration tests drive: the game plugins with the sim stepped
 //! inline (no worker thread), keys, the pointer and mouse buttons sent as the window would
-//! send them, and the status line read back as text. Each test file includes it with
-//! `mod common;`.
-#![allow(dead_code)]
+//! send them, and the status line read back as text. The test modules of `app` use it
+//! through `crate::common`.
+//!
+//! All tests run as threads of one process, so process-global state is shared here:
+//! [`data_dir`] sets `TRANSIT_FLOW_DATA_DIR` once, and [`save_lock`] serializes the tests
+//! that write the quicksave in it.
+
+use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
@@ -21,6 +27,33 @@ use tf_sim::roads::RoadType;
 
 pub struct Harness {
     pub app: App,
+}
+
+/// The one save folder of the test process: a temp dir made and exported as
+/// `TRANSIT_FLOW_DATA_DIR` on the first call. `set_var` runs exactly once, inside the
+/// `OnceLock`, before any test that reads the variable gets its path.
+pub fn data_dir() -> &'static Path {
+    static DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let name = format!("transit-flow-test-data-{}", std::process::id());
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        // Safe enough: this is the only place that sets the variable, and the tests that
+        // read it hold `save_lock`, so no other test thread reads it at the same time.
+        unsafe { std::env::set_var("TRANSIT_FLOW_DATA_DIR", &dir) };
+        dir
+    })
+}
+
+/// Held for a whole test that saves or loads the quicksave through the app: those tests
+/// share [`data_dir`] and the file name `quicksave.json`. Starts from an empty folder.
+pub fn save_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    // A failed test poisons the lock; the next test can still use it.
+    let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let dir = data_dir();
+    let _ = std::fs::remove_dir_all(dir);
+    guard
 }
 
 pub fn local() -> &'static RoadType {
@@ -48,6 +81,30 @@ impl Harness {
         // Start from an empty map without the highway.
         harness.sim(|sim| *sim = tf_sim::Simulation::new());
         harness.frames(2);
+        harness
+    }
+
+    /// The app in play mode on `level_id` (`--play`): the old game asleep, the level loaded.
+    /// Reads the design file of the level, so a test that uses it holds `save_lock`.
+    pub fn play(level_id: &str) -> Self {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            bevy::input::InputPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<ColorMaterial>()
+        .add_plugins((
+            GamePlugin { threaded: false },
+            ViewsPlugin,
+            tf_game::play::PlayPlugin {
+                level: level_id.into(),
+                threaded: false,
+            },
+        ));
+        let mut harness = Self { app };
+        harness.frames(3);
         harness
     }
 

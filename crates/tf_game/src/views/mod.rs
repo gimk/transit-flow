@@ -15,6 +15,7 @@ use bevy::prelude::*;
 
 use crate::draw::ShapeBuilder;
 
+pub mod agents;
 pub mod externals;
 pub mod grid;
 pub mod ground;
@@ -22,10 +23,13 @@ pub mod lights;
 pub mod lots;
 pub mod moving;
 pub mod overlays;
+pub mod palette;
 pub mod roads;
+pub mod speed_signs;
 pub mod street;
 pub mod tool_preview;
 pub mod transit;
+pub mod walkers;
 pub mod zones;
 
 /// Draw order: higher z is drawn over lower. Every layer has its own band, so shapes
@@ -67,6 +71,18 @@ pub mod z {
     pub const VEHICLES: f32 = 40.0;
     /// Pedestrians and waiting riders (M9.2).
     pub const PEDESTRIANS: f32 = 45.0;
+    /// The street run's agents (pivot Phase 2): over the street level, under the old map.
+    /// Signal marks at the approaches of signalled junctions (play mode): over the street.
+    pub const SIGNALS: f32 = 5.0;
+    pub const AGENTS: f32 = 6.0;
+    /// The street run's pedestrians (pivot Phase 3): just over the cars, under the old
+    /// map's parked cars and overlays.
+    pub const WALKERS: f32 = 6.2;
+    /// The marks of conflicts and contacts of a run (play mode), over the people.
+    pub const INCIDENTS: f32 = 6.4;
+    /// The ghost of what the active play tool would do, and the outline of the hovered agent.
+    pub const PLAY_PREVIEW: f32 = 6.6;
+    pub const HOVER_OUTLINE: f32 = 6.8;
     /// Light bars at junctions (M9.3).
     pub const LIGHTS: f32 = 50.0;
     /// Debug overlays: lane overlay, heatmap (M9.3).
@@ -123,6 +139,9 @@ impl Plugin for ViewsPlugin {
             overlays::OverlayViewPlugin,
             tool_preview::ToolPreviewPlugin,
             street::StreetViewPlugin,
+            speed_signs::SpeedSignPlugin,
+            agents::AgentViewPlugin,
+            walkers::WalkerViewPlugin,
         ));
     }
 }

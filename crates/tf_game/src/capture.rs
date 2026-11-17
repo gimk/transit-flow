@@ -8,7 +8,9 @@
 //! overlays arrive in M9 and only have to listen for it.
 //!
 //! `--level <id>` in place of `--scenario` shows a level of the street game (pivot plan
-//! Phase 1) on an empty old map, framed by `level::LevelPlugin`.
+//! Phase 1) on an empty old map, framed by `level::LevelPlugin`. With `--run` (only with
+//! `--level`) a street run of the level starts before the first frame, on the inline
+//! `StreetRunner`; `--seed` and `--population` set its options.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,12 +20,17 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use bevy::time::TimeUpdateStrategy;
 use tf_sim::Simulation;
 use tf_sim::clock::SimClock;
+use tf_sim::street::run::agent::Population;
+use tf_sim::street::run::{RunOptions, StreetRun};
+use tf_sim::street::{Design, LevelFile};
 
 use crate::camera::{ZOOM_LEVELS, nearest_level};
 use crate::events::DebugOverlayToggleRequested;
 use crate::game::{self, Announce};
 use crate::level::LoadedLevel;
+use crate::play::{self, PlayMode, PlayPhase, PlayState};
 use crate::runner::SimHandle;
+use crate::street_runner::StreetRunner;
 
 /// Window size in this mode (logical px, scale factor forced to 1) so PNGs compare.
 pub const WINDOW_SIZE: (u32, u32) = (1280, 720);
@@ -31,15 +38,20 @@ pub const WINDOW_SIZE: (u32, u32) = (1280, 720);
 pub const CAPTURE_TIMEOUT_FRAMES: u32 = 600;
 pub const FRAME_DT: Duration = Duration::from_micros(16_667);
 
-pub const USAGE: &str = "usage: transit-flow [(--scenario <empty|bottleneck|bottleneck-bus|town> | --level <id>) --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>]]
+pub const USAGE: &str = "usage: transit-flow [--play <id> [--frames N --screenshot PATH [--run] [--zoom Z]]] [(--scenario <empty|bottleneck|bottleneck-bus|town> | --level <id>) --frames N --screenshot PATH [--hour H] [--zoom Z] [--overlay <heatmap|lanes>] [--run [--seed N] [--population <careful|mixed|careless>]]]
   no arguments: run the game
+  --play        open a level of the street game to design, run and read the report (carrefour-ecole);
+                with --frames and --screenshot it is a screenshot of that screen, and --run starts the run first
   --scenario    map to load (empty = the start map)
   --level       street game level to show instead (carrefour-ecole); not with --hour
   --frames      frames to run before the screenshot (>= 1, at a fixed 1/60 s each)
   --screenshot  PNG file to write; the program then exits
   --hour        advance the sim to this hour of the day (0-24) before the first frame
   --zoom        camera zoom (nearest of 0.25 0.375 0.5 0.75 1 1.5 2 3 4); default: as the F-key frames it
-  --overlay     toggle a debug overlay on (heatmap, lanes)";
+  --overlay     toggle a debug overlay on (heatmap, lanes)
+  --run         with --level: start a run of the level (empty design) before the frames
+  --seed        with --run: the run's seed (default: the level's)
+  --population  with --run: careful, mixed (default) or careless drivers";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scenario {
@@ -66,12 +78,22 @@ pub struct CaptureOptions {
     /// Already snapped to one of `ZOOM_LEVELS`.
     pub zoom: Option<f32>,
     pub overlay: Option<&'static str>,
+    /// Start a street run of the level (only with `Target::Level`).
+    pub run: bool,
+    /// Play mode on the level (`Target::Level`): `play::PlayPlugin` loads it, and `run`
+    /// presses Enter once the window is up.
+    pub play: bool,
+    /// Only with `run`.
+    pub seed: Option<u64>,
+    pub population: Option<Population>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cli {
     /// Normal game.
     Play,
+    /// Play mode on this level (`--play <id>`).
+    PlayLevel(String),
     Capture(CaptureOptions),
 }
 
@@ -80,6 +102,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
     let mut args = args.into_iter();
     let (mut scenario, mut level, mut frames, mut screenshot) = (None, None, None, None);
     let (mut hour, mut zoom, mut overlay) = (None, None, None);
+    let (mut run, mut seed, mut population) = (false, None, None);
+    let mut play = None;
     let mut any = false;
     while let Some(flag) = args.next() {
         any = true;
@@ -136,11 +160,66 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
                     other => return Err(format!("unknown overlay '{other}'")),
                 });
             }
+            "--play" => {
+                let id = value("--play")?;
+                if !tf_sim::street::level::level_ids().any(|known| known == id) {
+                    return Err(format!("unknown level '{id}'"));
+                }
+                play = Some(id);
+            }
+            "--run" => run = true,
+            "--seed" => {
+                let text = value("--seed")?;
+                seed = Some(
+                    text.parse::<u64>()
+                        .map_err(|_| format!("--seed must be a whole number, got '{text}'"))?,
+                );
+            }
+            "--population" => {
+                population = Some(match value("--population")?.as_str() {
+                    "careful" => Population::Careful,
+                    "mixed" => Population::Mixed,
+                    "careless" => Population::Careless,
+                    other => return Err(format!("unknown population '{other}'")),
+                });
+            }
             other => return Err(format!("unknown argument '{other}'")),
         }
     }
     if !any {
         return Ok(Cli::Play);
+    }
+    if let Some(id) = play {
+        if scenario.is_some()
+            || level.is_some()
+            || hour.is_some()
+            || overlay.is_some()
+            || seed.is_some()
+            || population.is_some()
+        {
+            return Err("--play goes only with --frames, --screenshot, --run and --zoom".into());
+        }
+        if frames.is_none() && screenshot.is_none() {
+            if run {
+                return Err("--run needs --frames and --screenshot".into());
+            }
+            if zoom.is_some() {
+                return Err("--zoom needs --frames and --screenshot".into());
+            }
+            return Ok(Cli::PlayLevel(id));
+        }
+        return Ok(Cli::Capture(CaptureOptions {
+            target: Target::Level(id),
+            frames: frames.ok_or("--frames is required")?,
+            screenshot: screenshot.ok_or("--screenshot is required")?,
+            hour: None,
+            zoom,
+            overlay: None,
+            run,
+            seed: None,
+            population: None,
+            play: true,
+        }));
     }
     let target = match (scenario, level) {
         (Some(scenario), None) => Target::Scenario(scenario),
@@ -149,6 +228,12 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
         (Some(_), Some(_)) => return Err("give --scenario or --level, not both".into()),
         (None, None) => return Err("--scenario or --level is required".into()),
     };
+    if run && !matches!(target, Target::Level(_)) {
+        return Err("--run needs --level".into());
+    }
+    if !run && (seed.is_some() || population.is_some()) {
+        return Err("--seed and --population need --run".into());
+    }
     Ok(Cli::Capture(CaptureOptions {
         target,
         frames: frames.ok_or("--frames is required")?,
@@ -156,6 +241,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String
         hour,
         zoom,
         overlay,
+        run,
+        seed,
+        population,
+        play: false,
     }))
 }
 
@@ -220,7 +309,8 @@ impl Plugin for CapturePlugin {
             .insert_resource(FrameCounter::new(self.0.frames))
             .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME_DT))
             .add_systems(Startup, setup_scenario)
-            .add_systems(Update, count_frames);
+            .add_systems(Update, count_frames)
+            .add_systems(Update, start_play_run.run_if(resource_exists::<PlayState>));
     }
 }
 
@@ -229,14 +319,24 @@ fn setup_scenario(
     mut handle: ResMut<SimHandle>,
     mut announce: Announce,
     mut level: ResMut<LoadedLevel>,
+    mut runner: ResMut<StreetRunner>,
 ) {
     let scenario = match &options.target {
         Target::Scenario(scenario) => *scenario,
         Target::Level(id) => {
+            if options.play {
+                // `play::PlayPlugin` loads the level and starts the run; the framing zoom is
+                // the one thing it leaves to us.
+                level.zoom = options.zoom;
+                return;
+            }
             // An empty old map (no highway) under the level.
             handle.replace(Simulation::new());
             level.street = Some(LoadedLevel::load(id).expect("level ids are checked on parsing"));
             level.zoom = options.zoom;
+            if options.run {
+                start_street_run(&mut runner, id, options.seed, options.population);
+            }
             return;
         }
     };
@@ -255,6 +355,43 @@ fn setup_scenario(
         advance_to_hour(&mut sim, hour);
         handle.replace(sim);
     }
+}
+
+/// Starts a run of level `id` with the empty design, inline (screenshots are fixed-step).
+fn start_street_run(
+    runner: &mut StreetRunner,
+    id: &str,
+    seed: Option<u64>,
+    population: Option<Population>,
+) {
+    let file = LevelFile::load(id).expect("level ids are checked on parsing");
+    let mut run_options = RunOptions::for_level(&file);
+    if let Some(seed) = seed {
+        run_options.seed = seed;
+    }
+    if let Some(population) = population {
+        run_options.population = population;
+    }
+    let run = StreetRun::new(&file, &Design::new(&file.id), run_options)
+        .expect("the empty design builds");
+    runner.start(run, false);
+}
+
+/// `--play <id> --run`: presses Enter once, on the second frame, so the screenshot shows the run.
+fn start_play_run(
+    options: Res<CaptureOptions>,
+    counter: Res<FrameCounter>,
+    mode: Res<PlayMode>,
+    mut state: ResMut<PlayState>,
+    mut runner: ResMut<StreetRunner>,
+    mut next: ResMut<NextState<PlayPhase>>,
+    mut started: Local<bool>,
+) {
+    if !options.play || !options.run || *started || counter.done < 2 {
+        return;
+    }
+    *started = true;
+    play::begin_run(&mut state, &mode, &mut runner, &mut next);
 }
 
 fn count_frames(
@@ -371,6 +508,43 @@ mod tests {
             ],
         ] {
             assert!(parse(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn run_flags_parse_with_a_level_only() {
+        let base = ["--frames", "3", "--screenshot", "l.png"];
+        let with = |extra: &[&str]| {
+            let mut args: Vec<&str> = extra.to_vec();
+            args.extend(base);
+            parse(&args)
+        };
+        let Ok(Cli::Capture(o)) = with(&[
+            "--level",
+            "carrefour-ecole",
+            "--run",
+            "--seed",
+            "7",
+            "--population",
+            "careless",
+        ]) else {
+            panic!()
+        };
+        assert!(o.run);
+        assert_eq!(o.seed, Some(7));
+        assert_eq!(o.population, Some(Population::Careless));
+        let Ok(Cli::Capture(o)) = with(&["--level", "carrefour-ecole", "--run"]) else {
+            panic!()
+        };
+        assert_eq!((o.run, o.seed, o.population), (true, None, None));
+        for extra in [
+            &["--level", "carrefour-ecole", "--seed", "7"][..],
+            &["--level", "carrefour-ecole", "--population", "mixed"],
+            &["--scenario", "town", "--run"],
+            &["--level", "carrefour-ecole", "--run", "--seed", "x"],
+            &["--level", "carrefour-ecole", "--run", "--population", "bad"],
+        ] {
+            assert!(with(extra).is_err(), "{extra:?}");
         }
     }
 

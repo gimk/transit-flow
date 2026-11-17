@@ -15,3 +15,17 @@ impl std::fmt::Display for StreetLaneId {
         self.0.fmt(f)
     }
 }
+
+/// An agent of a run (a car, later a cyclist or a pedestrian). Ids are given in spawn
+/// order and never reused, so id order is the update order (pivot plan §5.1).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct AgentId(pub i32);
+
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
