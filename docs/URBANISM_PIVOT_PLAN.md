@@ -357,7 +357,7 @@ Flat shapes stay (the art direction is a later decision). **Target look (user, 2
 The threaded runner stays. The result must not depend on the frame rate: the sim is already tick-based, so the rule is that **nothing from the frame (real delta, batch size) enters the sim**, and a test proves that a run through the threaded runner and a headless run give the same event log.
 
 ### 7.5 UI
-All new (today: one status line). Needed: level select, brief panel, tool palette with unlocks, run HUD (time slice, live score, counters, speed), incident feed (click to go there), report screen with stars, incident list and replay, pause menu, settings. Decide the UI approach (`bevy_ui` only, or an added library) at the start of Phase 5.
+All new (today: one status line). Needed: level select, brief panel, tool palette with unlocks, run HUD (time slice, live score, counters, speed), incident feed (click to go there), report screen with stars, incident list and replay, pause menu, settings. Decided (user, 2026-11-17, start of Phase 5): **`bevy_ui` only**, no added UI library. The play mode already uses it (panels, clickable incident rows); it adds no dependency to keep in step with each Bevy version, and it can look like a game, not a form.
 
 ### 7.6 Replay
 A replay is `level + design + seed` and a tick range. To replay an incident, the game runs the sim again headless to a few seconds before the event and plays from there. No recording format is necessary.
