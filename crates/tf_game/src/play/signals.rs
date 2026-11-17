@@ -12,7 +12,7 @@ use crate::level::{LoadedLevel, PX_PER_M, level_to_world};
 use crate::street_runner::{SignalColor, StreetRunner};
 use crate::views::{ViewMaterial, spawn_shape, z};
 
-pub const OFF_COLOR: Color = Color::srgb(0.55, 0.55, 0.58);
+pub const OFF_COLOR: Color = Color::srgb(0.50, 0.53, 0.58);
 pub const GREEN_COLOR: Color = Color::srgb(0.2, 0.85, 0.3);
 pub const AMBER_COLOR: Color = Color::srgb(1.0, 0.7, 0.1);
 pub const RED_COLOR: Color = Color::srgb(0.9, 0.15, 0.12);

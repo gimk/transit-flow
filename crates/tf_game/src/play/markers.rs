@@ -12,9 +12,10 @@ use crate::level::{PX_PER_M, level_to_world};
 use crate::street_runner::{Incident, IncidentKind, StreetRunner};
 use crate::views::{ViewMaterial, spawn_shape, z};
 
-pub const LIGHT_COLOR: Color = Color::srgba(1.0, 0.92, 0.2, 0.75);
-pub const SERIOUS_COLOR: Color = Color::srgba(1.0, 0.55, 0.1, 0.8);
-pub const CONTACT_COLOR: Color = Color::srgba(0.9, 0.1, 0.1, 0.85);
+// Saturated and a little deeper than on the dark map, to read on the light one.
+pub const LIGHT_COLOR: Color = Color::srgba(0.98, 0.76, 0.0, 0.85);
+pub const SERIOUS_COLOR: Color = Color::srgba(1.0, 0.42, 0.04, 0.88);
+pub const CONTACT_COLOR: Color = Color::srgba(0.84, 0.04, 0.04, 0.92);
 pub const RING_COLOR: Color = Color::srgba(0.1, 0.0, 0.0, 0.9);
 /// Radius of a mark, metres.
 pub const LIGHT_RADIUS_M: f32 = 1.0;

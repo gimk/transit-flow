@@ -17,15 +17,17 @@ use crate::level::{PX_PER_M, level_to_world};
 use crate::snapshot::{Color as SimColor, lerp_angle};
 use crate::street_runner::{StreetRunner, StreetSnapshot};
 
-pub const CAREFUL_COLOR: SimColor = [0.25, 0.45, 0.9, 1.0];
-pub const RESIDENT_COLOR: SimColor = [0.45, 0.62, 0.52, 1.0];
-pub const COMMUTER_COLOR: SimColor = [0.58, 0.58, 0.6, 1.0];
-pub const TAXI_COLOR: SimColor = [0.96, 0.8, 0.15, 1.0];
-pub const DELIVERY_COLOR: SimColor = [0.95, 0.95, 0.95, 1.0];
-pub const CARELESS_COLOR: SimColor = [0.9, 0.2, 0.18, 1.0];
+// Darker and more saturated than the light map (`palette`), so a car reads on the blue-grey
+// carriageway; delivery is charcoal because white would vanish on it.
+pub const CAREFUL_COLOR: SimColor = [0.10, 0.36, 0.84, 1.0];
+pub const RESIDENT_COLOR: SimColor = [0.12, 0.55, 0.34, 1.0];
+pub const COMMUTER_COLOR: SimColor = [0.36, 0.40, 0.48, 1.0];
+pub const TAXI_COLOR: SimColor = [0.94, 0.70, 0.02, 1.0];
+pub const DELIVERY_COLOR: SimColor = [0.17, 0.18, 0.23, 1.0];
+pub const CARELESS_COLOR: SimColor = [0.86, 0.10, 0.10, 1.0];
 pub const CRASHED_COLOR: SimColor = [1.0, 0.0, 1.0, 1.0];
-/// The front mark.
-pub const FRONT_COLOR: SimColor = [0.1, 0.1, 0.12, 1.0];
+/// The front mark (the windscreen): light, so it shows on every body colour.
+pub const FRONT_COLOR: SimColor = [0.94, 0.95, 0.97, 1.0];
 /// A waiting agent's colour is multiplied by this.
 pub const WAITING_SHADE: f32 = 0.6;
 /// The front mark's length (along the heading) and its inset from the nose, metres.

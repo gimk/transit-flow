@@ -15,6 +15,10 @@ pub const BORDER_WIDTH: f32 = 3.0;
 #[derive(Component)]
 pub struct Ground;
 
+/// The thin border of the map (play mode removes it with the ground).
+#[derive(Component)]
+pub struct MapBorder;
+
 pub struct GroundViewPlugin;
 
 impl Plugin for GroundViewPlugin {
@@ -38,5 +42,6 @@ fn spawn_ground(
     // Drawn just inside the map edge so the camera limits show it.
     let mut border = ShapeBuilder::new();
     border.rect_outline(min, max, BORDER_WIDTH, BORDER_COLOR);
-    spawn_shape(&mut commands, &mut meshes, &material, border, z::GRID);
+    let entity = spawn_shape(&mut commands, &mut meshes, &material, border, z::GRID);
+    commands.entity(entity).insert(MapBorder);
 }

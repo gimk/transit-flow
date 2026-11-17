@@ -670,3 +670,141 @@ fn the_check_runs_on_a_worker_thread_and_the_report_follows() {
     );
     assert!(state(&harness).check.is_none());
 }
+
+fn count<T: Component>(harness: &mut Harness) -> usize {
+    harness
+        .app
+        .world_mut()
+        .query::<&T>()
+        .iter(harness.app.world())
+        .count()
+}
+
+#[test]
+fn a_zebra_hover_shows_a_ghost_and_changes_nothing() {
+    use tf_game::play::preview::PreviewShape;
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let crossings = street(&harness).crossings.len();
+    let (_, spot) = free_spot(street(&harness));
+    // No tool: no ghost.
+    harness.move_to(spot * PX_PER_M);
+    assert_eq!(count::<PreviewShape>(&mut harness), 0);
+    harness.key(KeyCode::KeyC);
+    harness.move_to(spot * PX_PER_M);
+    assert_eq!(
+        count::<PreviewShape>(&mut harness),
+        1,
+        "a ghost on the road"
+    );
+    assert_eq!(
+        street(&harness).crossings.len(),
+        crossings,
+        "a hover edits nothing"
+    );
+    assert!(state(&harness).design.commands.is_empty());
+    // Away from any road: the ghost goes.
+    harness.move_to(Vec2::new(-500.0, -500.0) * PX_PER_M);
+    assert_eq!(count::<PreviewShape>(&mut harness), 0);
+    assert!(state(&harness).hover_note.is_none());
+    // Back on the road, then drop the tool: the ghost goes too.
+    harness.move_to(spot * PX_PER_M);
+    assert_eq!(count::<PreviewShape>(&mut harness), 1);
+    harness.key(KeyCode::Escape);
+    assert_eq!(count::<PreviewShape>(&mut harness), 0);
+}
+
+#[test]
+fn the_speed_sign_shows_the_new_limit_after_the_speed_tool() {
+    use tf_game::views::speed_signs::{SpeedSigns, sign_spots};
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let (segment, spot) = free_spot(street(&harness));
+    let signs_mesh = |harness: &mut Harness| {
+        let handle = harness
+            .app
+            .world_mut()
+            .query_filtered::<&Mesh2d, With<SpeedSigns>>()
+            .single(harness.app.world())
+            .expect("one sign mesh")
+            .0
+            .clone();
+        let meshes = harness.app.world().resource::<Assets<Mesh>>();
+        format!(
+            "{:?}",
+            meshes
+                .get(&handle)
+                .expect("the mesh")
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+        )
+    };
+    let before = signs_mesh(&mut harness);
+    let limit = street(&harness).segments[&segment].speed_limit_kmh;
+    harness.key(KeyCode::KeyV);
+    click_street(&mut harness, spot);
+    harness.frames(2);
+    let next = pick::next_speed_limit(limit);
+    let spots = sign_spots(street(&harness));
+    assert!(spots.iter().any(|s| s.segment == segment && s.kmh == next));
+    assert!(
+        spots
+            .iter()
+            .filter(|s| s.segment == segment)
+            .all(|s| s.kmh == next)
+    );
+    assert_ne!(signs_mesh(&mut harness), before, "the sign was redrawn");
+}
+
+#[test]
+fn hovering_an_agent_in_a_run_finds_it_and_the_card_reads_its_traits() {
+    use tf_game::play::inspect::{Hover, Hovered, car_pose_at, card_text, walker_pos_at};
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    assert_eq!(phase(&harness), PlayPhase::Run);
+    // Run on until a car is on the street, then freeze the picture.
+    let mut found = false;
+    for _ in 0..4000 {
+        let mut runner = runner(&mut harness);
+        runner.advance(1.0);
+        if !runner.view_to().agents.is_empty() {
+            runner.set_speed(0);
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "a car came in");
+    let (id, drawn_at) = {
+        let runner = harness.app.world().resource::<StreetRunner>();
+        let pose = &runner.view_to().agents[0];
+        let (pos, _) = car_pose_at(runner.view_from(), pose, runner.view_alpha());
+        (pose.id, pos)
+    };
+    harness.move_to(drawn_at * PX_PER_M);
+    let hovered = harness.app.world().resource::<Hover>().0;
+    assert!(hovered.is_some(), "the pointer is on a car");
+    if let Some(Hovered::Car(hit)) = hovered {
+        // Several cars may stand together: the one found is on the pointer.
+        let runner = harness.app.world().resource::<StreetRunner>();
+        let pose = &runner.view_to().agents[runner.view_to().index_of(hit).expect("in view")];
+        let (pos, _) = car_pose_at(runner.view_from(), pose, runner.view_alpha());
+        assert!(pos.distance(drawn_at) < 5.0);
+        let _ = id;
+    }
+    let text = {
+        let runner = harness.app.world().resource::<StreetRunner>();
+        card_text(hovered.expect("hovered"), runner, Some(street(&harness))).expect("a card")
+    };
+    assert!(text.contains("Speed") && text.contains("State:"), "{text}");
+    if matches!(hovered, Some(Hovered::Car(_))) {
+        assert!(
+            text.contains("Compliance"),
+            "the traits came with the spawn: {text}"
+        );
+    }
+    // Away from every agent: nothing is hovered.
+    harness.move_to(Vec2::new(-500.0, -500.0) * PX_PER_M);
+    assert_eq!(harness.app.world().resource::<Hover>().0, None);
+    let _ = walker_pos_at;
+}

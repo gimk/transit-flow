@@ -36,8 +36,10 @@ use crate::runner::SimHandle;
 use crate::street_runner::{DEFAULT_SPEED_INDEX, StreetRunner};
 
 pub mod file;
+pub mod inspect;
 pub mod markers;
 pub mod pick;
+pub mod preview;
 pub mod signals;
 pub mod tools;
 pub mod ui;
@@ -103,6 +105,9 @@ pub struct PlayState {
     pub tool: Option<PlayTool>,
     /// The last thing to tell the player: an edit refused, a file problem, a result.
     pub message: Option<String>,
+    /// What a click under the pointer would do or why it would fail (`preview`): shown in
+    /// the info panel while designing.
+    pub hover_note: Option<String>,
     pub report: Option<ReportData>,
     /// The stage selected, from 1 (pivot plan §6: each star is a load stage).
     pub stage: usize,
@@ -125,6 +130,7 @@ impl PlayState {
             redo: Vec::new(),
             tool: None,
             message: None,
+            hover_note: None,
             report: None,
             stage: 1,
             stars: 0,
@@ -473,7 +479,7 @@ fn design_input(
     mode: Res<PlayMode>,
     over_ui: Res<PointerOverUi>,
     mut wheel: MessageReader<MouseWheel>,
-    mut drag_start: Local<Option<Vec2>>,
+    mut drag_start: ResMut<preview::DragStart>,
     mut state: ResMut<PlayState>,
     mut loaded: ResMut<LoadedLevel>,
     mut runner: ResMut<StreetRunner>,
@@ -532,10 +538,10 @@ fn design_input(
     {
         if tool.is_drag() {
             if pointer.left.just_pressed {
-                *drag_start = Some(at);
+                drag_start.0 = Some(at);
             }
             if pointer.left.just_released
-                && let Some(start) = drag_start.take()
+                && let Some(start) = drag_start.0.take()
             {
                 edit_with(&mut state, &mut loaded, tool.nothing_text(), |street| {
                     tool.release(street, start, at)
@@ -547,8 +553,8 @@ fn design_input(
             });
         }
     }
-    if !pointer.left.pressed {
-        *drag_start = None;
+    if !pointer.left.pressed && drag_start.0.is_some() {
+        drag_start.0 = None;
     }
 
     // The wheel and +/- change the green time of the junction under the pointer, when the
@@ -664,6 +670,20 @@ pub fn end_text(ended: Option<EndReason>) -> &'static str {
     }
 }
 
+/// The old map's ground and its border.
+type OldMapParts = Or<(
+    With<crate::views::ground::Ground>,
+    With<crate::views::ground::MapBorder>,
+)>;
+
+/// The old city builder's empty map (its dark ground and border) must not show behind the
+/// level: they are static and never needed in play mode, so they are removed once spawned.
+fn hide_old_map(parts: Query<Entity, OldMapParts>, mut commands: Commands) {
+    for entity in &parts {
+        commands.entity(entity).despawn();
+    }
+}
+
 pub struct PlayPlugin {
     pub level: String,
     pub threaded: bool,
@@ -679,19 +699,26 @@ impl Plugin for PlayPlugin {
             threaded: self.threaded,
         })
         .init_resource::<PointerOverUi>()
+        .init_resource::<preview::DragStart>()
+        .init_resource::<preview::Preview>()
+        // The street game is a light map (the old dark background is for the city builder).
+        .insert_resource(ClearColor(crate::views::palette::OUTSIDE))
         .init_state::<PlayPhase>()
         .add_plugins((
             ui::PlayUiPlugin,
             markers::MarkersPlugin,
             signals::SignalMarksPlugin,
+            inspect::InspectPlugin,
         ))
         .add_systems(Startup, start_play)
+        .add_systems(PostStartup, hide_old_map)
         .add_systems(
             Update,
             (
                 ui::update_pointer_over_ui,
                 update_wheel_lock,
                 design_input.run_if(in_state(PlayPhase::Design)),
+                preview::update_preview,
                 check_input.run_if(in_state(PlayPhase::Check)),
                 run_input.run_if(in_state(PlayPhase::Run)),
                 report_input.run_if(in_state(PlayPhase::Report)),

@@ -14,8 +14,8 @@ use super::{PlayPhase, PlayState, PlayTool, ReportData, end_text};
 use crate::street_runner::{STREET_SPEED_MULTIPLIERS, StreetRunner};
 
 const FONT_SIZE: f32 = 14.0;
-const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
-const TEXT: Color = Color::srgb(0.93, 0.93, 0.93);
+const PANEL: Color = crate::views::palette::PANEL;
+const TEXT: Color = crate::views::palette::PANEL_TEXT;
 
 /// On every play panel: a click over one is for the panel, not the map (`PointerOverUi`).
 #[derive(Component)]
@@ -93,6 +93,9 @@ pub fn design_text(state: &PlayState) -> String {
     }
     if let Some(message) = &state.message {
         text += &format!("\n{message}\n");
+    }
+    if let Some(note) = &state.hover_note {
+        text += &format!("\nHere: {note}\n");
     }
     text += "\nPress Enter to start the run.";
     text
@@ -280,7 +283,7 @@ fn panel(top: Val, left: Val, width: Val) -> Node {
     }
 }
 
-fn text_bundle(marker: impl Component, font: &Handle<Font>) -> impl Bundle {
+pub(super) fn text_bundle(marker: impl Component, font: &Handle<Font>) -> impl Bundle {
     (
         marker,
         Text::new(""),
@@ -406,8 +409,11 @@ pub struct PlayUiPlugin;
 
 impl Plugin for PlayUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (load_font, spawn_play_ui).chain())
-            .add_systems(Update, update_play_ui.run_if(resource_exists::<PlayState>));
+        app.add_systems(
+            Startup,
+            (load_font, spawn_play_ui, super::inspect::spawn_card).chain(),
+        )
+        .add_systems(Update, update_play_ui.run_if(resource_exists::<PlayState>));
     }
 }
 

@@ -25,12 +25,13 @@ use crate::level::{PX_PER_M, level_to_world};
 use crate::snapshot::{Color as SimColor, lerp_angle};
 use crate::street_runner::{StreetRunner, StreetSnapshot};
 
-pub const WALK_CAREFUL_COLOR: SimColor = [0.10, 0.62, 0.62, 1.0];
-pub const WALK_COMMUTER_COLOR: SimColor = [0.42, 0.30, 0.72, 1.0];
-pub const WALK_RESIDENT_COLOR: SimColor = [0.68, 0.72, 0.30, 1.0];
-pub const WALK_CHILD_COLOR: SimColor = [0.95, 0.45, 0.75, 1.0];
-pub const WALK_ELDERLY_COLOR: SimColor = [0.62, 0.45, 0.30, 1.0];
-pub const WALK_HURRIED_COLOR: SimColor = [0.98, 0.58, 0.10, 1.0];
+// Darker than the first (dark map) set, to read on the light sidewalks.
+pub const WALK_CAREFUL_COLOR: SimColor = [0.00, 0.50, 0.52, 1.0];
+pub const WALK_COMMUTER_COLOR: SimColor = [0.35, 0.22, 0.65, 1.0];
+pub const WALK_RESIDENT_COLOR: SimColor = [0.52, 0.58, 0.10, 1.0];
+pub const WALK_CHILD_COLOR: SimColor = [0.90, 0.28, 0.64, 1.0];
+pub const WALK_ELDERLY_COLOR: SimColor = [0.50, 0.32, 0.16, 1.0];
+pub const WALK_HURRIED_COLOR: SimColor = [0.95, 0.44, 0.00, 1.0];
 /// The mark of the side a walker goes to.
 pub const WALK_MARK_COLOR: SimColor = [0.1, 0.1, 0.12, 1.0];
 /// A walker hit by a vehicle: magenta, like a crashed car, where it fell.

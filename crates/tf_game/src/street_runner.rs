@@ -13,7 +13,7 @@
 //! Pausing is speed 0. When the run has ended no more ticks are asked for. Without a worker
 //! (`threaded: false`: tests, screenshot mode) batches run inline inside `advance`.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -85,6 +85,56 @@ pub struct WalkerPose {
     pub hit: bool,
 }
 
+/// The traits of a driver, fixed at spawn (pivot plan §5.3). Sent once, with the snapshot
+/// of the tick the agent appeared, and kept by the runner (`StreetRunner::info`), so the
+/// per-tick snapshots stay small. For the inspector card.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CarInfo {
+    pub id: AgentId,
+    pub mode: Mode,
+    pub archetype: &'static str,
+    /// Desired speed as a factor of the limit.
+    pub speed_factor: f64,
+    pub patience_s: f64,
+    pub compliance: f64,
+    pub attention: f64,
+    pub reaction_s: f64,
+    pub risk: f64,
+    pub courtesy: f64,
+}
+
+/// The same for a pedestrian.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalkerInfo {
+    pub id: AgentId,
+    pub archetype: &'static str,
+    pub group_size: usize,
+    /// The speed it walks at on a free sidewalk, m/s.
+    pub desired_speed: f64,
+    pub patience_s: f64,
+    pub compliance: f64,
+    pub attention: f64,
+    pub reaction_s: f64,
+    pub risk: f64,
+    pub courtesy: f64,
+}
+
+/// What never changes about an agent.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentInfo {
+    Car(CarInfo),
+    Walker(WalkerInfo),
+}
+
+impl AgentInfo {
+    pub fn id(&self) -> AgentId {
+        match self {
+            AgentInfo::Car(car) => car.id,
+            AgentInfo::Walker(walker) => walker.id,
+        }
+    }
+}
+
 /// The agents after one tick, in id order (so a pose is found by binary search).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StreetSnapshot {
@@ -98,6 +148,9 @@ pub struct StreetSnapshot {
     /// so the runner can count events and mark incidents without ever reading the run's
     /// log from the main thread.
     pub new_events: Vec<LoggedEvent>,
+    /// The traits of the agents that appeared in this tick. Like `new_events`, filled by
+    /// the batch (from the spawn events), not by `capture`.
+    pub new_info: Vec<AgentInfo>,
 }
 
 impl StreetSnapshot {
@@ -158,8 +211,53 @@ impl StreetSnapshot {
             walkers,
             finished: run.finished(),
             new_events: Vec::new(),
+            new_info: Vec::new(),
             lights: approach_lights(run),
         }
+    }
+
+    /// The traits of the agents named by `events` (the spawns of one tick), read from the
+    /// run as it is after that tick.
+    pub fn info_for(run: &StreetRun, events: &[LoggedEvent]) -> Vec<AgentInfo> {
+        let mut info = Vec::new();
+        for logged in events {
+            match &logged.event {
+                StreetEvent::Spawned { agent, .. } => {
+                    if let Some(car) = run.agents.get(agent) {
+                        info.push(AgentInfo::Car(CarInfo {
+                            id: car.id,
+                            mode: car.mode,
+                            archetype: car.archetype,
+                            speed_factor: car.traits.speed_factor,
+                            patience_s: car.traits.patience_s,
+                            compliance: car.traits.compliance,
+                            attention: car.traits.attention,
+                            reaction_s: car.traits.reaction_s,
+                            risk: car.traits.risk,
+                            courtesy: car.traits.courtesy,
+                        }));
+                    }
+                }
+                StreetEvent::WalkerSpawned { agent, .. } => {
+                    if let Some(walker) = run.walkers.get(agent) {
+                        info.push(AgentInfo::Walker(WalkerInfo {
+                            id: walker.id,
+                            archetype: walker.archetype,
+                            group_size: walker.members.len(),
+                            desired_speed: walker.desired_speed,
+                            patience_s: walker.traits.patience_s,
+                            compliance: walker.traits.compliance,
+                            attention: walker.traits.attention,
+                            reaction_s: walker.traits.reaction_s,
+                            risk: walker.traits.risk,
+                            courtesy: walker.traits.courtesy,
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+        info
     }
 
     /// Where agent `id` is in `agents`.
@@ -339,6 +437,7 @@ fn run_batch(job: Job) -> Done {
         run.step();
         let mut snapshot = StreetSnapshot::capture(&run);
         snapshot.new_events = run.events()[seen..].to_vec();
+        snapshot.new_info = StreetSnapshot::info_for(&run, &snapshot.new_events);
         seen = run.events().len();
         snapshots.push(Arc::new(snapshot));
     }
@@ -399,6 +498,9 @@ pub struct StreetRunner {
     incidents: Vec<Incident>,
     /// Bumped whenever `incidents` changes, so a view redraws only then.
     incident_version: u64,
+    /// The traits of every agent of the run, copied once from the snapshot of its spawn.
+    /// Only looked up by id (for the inspector), never walked.
+    info: HashMap<AgentId, AgentInfo>,
     /// Snapshots ready for the views, oldest first.
     snapshots: VecDeque<Arc<StreetSnapshot>>,
     from: Arc<StreetSnapshot>,
@@ -420,6 +522,7 @@ impl Default for StreetRunner {
             tally: RunTally::default(),
             incidents: Vec::new(),
             incident_version: 0,
+            info: HashMap::new(),
             snapshots: VecDeque::new(),
             from: Arc::default(),
             to: Arc::default(),
@@ -436,6 +539,7 @@ impl StreetRunner {
         self.stop();
         // A new run starts with a clean tally and map: the marks of the last run go now.
         self.tally = RunTally::default();
+        self.info.clear();
         self.clear_incidents();
         let first = Arc::new(StreetSnapshot::capture(&run));
         self.render_tick = first.tick as f64;
@@ -491,6 +595,11 @@ impl StreetRunner {
     /// The marks of the conflicts and contacts of the last run, in the order they happened.
     pub fn incidents(&self) -> &[Incident] {
         &self.incidents
+    }
+
+    /// The traits of agent `id` (a car or a walker), known from its spawn on.
+    pub fn info(&self, id: AgentId) -> Option<&AgentInfo> {
+        self.info.get(&id)
     }
 
     pub fn incident_version(&self) -> u64 {
@@ -585,6 +694,9 @@ impl StreetRunner {
         self.busy = false;
         self.run = Some(done.run);
         for snapshot in &done.snapshots {
+            for info in &snapshot.new_info {
+                self.info.insert(info.id(), info.clone());
+            }
             for logged in &snapshot.new_events {
                 if let Some(incident) = self.tally.add(logged) {
                     self.incidents.push(incident);

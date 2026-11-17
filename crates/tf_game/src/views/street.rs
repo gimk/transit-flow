@@ -8,25 +8,28 @@ use bevy::prelude::*;
 use tf_sim::roads::lane_builder;
 use tf_sim::street::Street;
 use tf_sim::street::level::{AreaKind, ObstacleKind, Shape};
+use tf_sim::street::model::Crossing;
 use tf_sim::street::space::{Profile, Separator, Strip, StripUse};
 
-use super::{ViewMaterial, spawn_shape, z};
+use super::{ViewMaterial, palette, spawn_shape, z};
 use crate::camera::sim_to_bevy;
 use crate::draw::ShapeBuilder;
 use crate::level::{LoadedLevel, PX_PER_M, level_to_world};
 
-pub const OUTSIDE_COLOR: Color = Color::srgb(0.30, 0.33, 0.30);
-pub const BLOCK_COLOR: Color = Color::srgb(0.52, 0.47, 0.42);
-pub const ASPHALT_COLOR: Color = Color::srgb(0.27, 0.28, 0.30);
-pub const SIDEWALK_COLOR: Color = Color::srgb(0.70, 0.69, 0.66);
-pub const PAINT_COLOR: Color = Color::srgb(0.93, 0.93, 0.90);
-pub const KERB_COLOR: Color = Color::srgb(0.84, 0.84, 0.82);
-pub const BOLLARD_COLOR: Color = Color::srgb(0.15, 0.15, 0.17);
-pub const GREEN_COLOR: Color = Color::srgb(0.27, 0.48, 0.25);
-pub const ARROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.45);
-pub const MOVEMENT_COLOR: Color = Color::srgba(1.0, 0.82, 0.25, 0.6);
+pub const OUTSIDE_COLOR: Color = palette::OUTSIDE;
+pub const BLOCK_COLOR: Color = palette::BLOCK;
+pub const ASPHALT_COLOR: Color = palette::CARRIAGEWAY;
+pub const SIDEWALK_COLOR: Color = palette::SIDEWALK;
+pub const PAINT_COLOR: Color = palette::PAINT;
+pub const KERB_COLOR: Color = palette::KERB;
+pub const BOLLARD_COLOR: Color = palette::BOLLARD;
+pub const GREEN_COLOR: Color = palette::PLANTING;
+pub const ARROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.7);
+/// The thin lines of the movements through a junction: faint white on the carriageway.
+pub const MOVEMENT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.35);
 
 /// Metres.
+pub const BLOCK_OUTLINE_WIDTH: f32 = 0.4;
 pub const PAINT_WIDTH: f32 = 0.15;
 pub const KERB_WIDTH: f32 = 0.3;
 pub const MOVEMENT_WIDTH: f32 = 0.15;
@@ -43,23 +46,23 @@ pub fn strip_color(use_: StripUse) -> Color {
     match use_ {
         StripUse::Sidewalk => SIDEWALK_COLOR,
         StripUse::CarLane => ASPHALT_COLOR,
-        StripUse::BusLane => Color::srgb(0.55, 0.24, 0.22),
-        StripUse::BikeLane => Color::srgb(0.24, 0.47, 0.35),
-        StripUse::BikeTrack => Color::srgb(0.20, 0.52, 0.38),
-        StripUse::Parking => Color::srgb(0.33, 0.34, 0.36),
-        StripUse::DeliveryBay => Color::srgb(0.42, 0.37, 0.25),
-        StripUse::Median => Color::srgb(0.55, 0.55, 0.53),
+        StripUse::BusLane => palette::BUS_LANE,
+        StripUse::BikeLane => palette::BIKE_LANE,
+        StripUse::BikeTrack => palette::BIKE_TRACK,
+        StripUse::Parking => palette::PARKING,
+        StripUse::DeliveryBay => palette::DELIVERY_BAY,
+        StripUse::Median => palette::MEDIAN,
         StripUse::Planting => GREEN_COLOR,
-        StripUse::Terrace => Color::srgb(0.62, 0.48, 0.35),
+        StripUse::Terrace => palette::TERRACE,
     }
 }
 
 /// Street metres (y down) to the Bevy world.
-fn to_bevy(p: Vec2) -> Vec2 {
+pub fn to_bevy(p: Vec2) -> Vec2 {
     sim_to_bevy(level_to_world(p))
 }
 
-fn points(points: &[Vec2]) -> Vec<Vec2> {
+pub fn points(points: &[Vec2]) -> Vec<Vec2> {
     points.iter().map(|p| to_bevy(*p)).collect()
 }
 
@@ -73,7 +76,13 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
     let (a, b) = (to_bevy(street.bounds.min), to_bevy(street.bounds.max));
     ground.rect(a.min(b), a.max(b), OUTSIDE_COLOR);
     for block in &street.blocks {
-        ground.polygon(&points(&block.points), BLOCK_COLOR);
+        let outline = points(&block.points);
+        ground.polygon(&outline, BLOCK_COLOR);
+        ground.closed_polyline(
+            &outline,
+            BLOCK_OUTLINE_WIDTH * PX_PER_M,
+            palette::BLOCK_OUTLINE,
+        );
     }
 
     let mut surfaces = ShapeBuilder::new();
@@ -94,7 +103,7 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
     for area in street.areas.values() {
         let color = match area.kind {
             AreaKind::Green => GREEN_COLOR,
-            AreaKind::Rest => Color::srgb(0.60, 0.55, 0.40),
+            AreaKind::Rest => palette::REST_AREA,
         };
         surfaces.polygon(&points(&area.polygon.points), color);
     }
@@ -132,8 +141,8 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
     let mut things = ShapeBuilder::new();
     for obstacle in street.obstacles.values() {
         let color = match obstacle.kind {
-            ObstacleKind::Tree | ObstacleKind::Planter => Color::srgb(0.18, 0.40, 0.18),
-            ObstacleKind::Bench => Color::srgb(0.45, 0.30, 0.18),
+            ObstacleKind::Tree | ObstacleKind::Planter => palette::TREE,
+            ObstacleKind::Bench => palette::BENCH,
             _ => BOLLARD_COLOR,
         };
         match &obstacle.shape {
@@ -166,38 +175,46 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
 /// (8 m of carriageway: 8 bars; 7 m: 7 bars). The bars span the road only, because a zebra
 /// paints the carriageway, not the sidewalks.
 pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
+    street
+        .crossings
+        .values()
+        .flat_map(|crossing| crossing_bars(street, crossing))
+        .collect()
+}
+
+/// The bars of one crossing (see `zebra_bars`). Also draws the preview of a crossing that
+/// is not in the street yet.
+pub fn crossing_bars(street: &Street, crossing: &Crossing) -> Vec<Vec<Vec2>> {
     let mut bars = Vec::new();
     let period = ZEBRA_BAR_WIDTH_M + ZEBRA_GAP_M;
-    for crossing in street.crossings.values() {
-        let Some(segment) = street.segments.get(&crossing.segment) else {
-            continue;
-        };
-        let Some((left, right)) = carriageway(&segment.profile) else {
-            continue;
-        };
-        let across = right - left;
-        let count = ((across + ZEBRA_GAP_M) / period).floor() as usize;
-        if count == 0 {
-            continue;
-        }
-        let used = count as f32 * ZEBRA_BAR_WIDTH_M + (count - 1) as f32 * ZEBRA_GAP_M;
-        let margin = (across - used) * 0.5;
-        let start = crossing.at - crossing.width * 0.5;
-        let end = crossing.at + crossing.width * 0.5;
-        for k in 0..count {
-            let from = left + margin + k as f32 * period;
-            let to = from + ZEBRA_BAR_WIDTH_M;
-            let from_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(from));
-            let to_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(to));
-            let mut polygon: Vec<Vec2> =
-                lane_builder::sub_polyline(&from_edge, f64::from(start), f64::from(end));
-            let mut other: Vec<Vec2> =
-                lane_builder::sub_polyline(&to_edge, f64::from(start), f64::from(end));
-            other.reverse();
-            polygon.extend(other);
-            if polygon.len() >= 3 {
-                bars.push(polygon);
-            }
+    let Some(segment) = street.segments.get(&crossing.segment) else {
+        return bars;
+    };
+    let Some((left, right)) = carriageway(&segment.profile) else {
+        return bars;
+    };
+    let across = right - left;
+    let count = ((across + ZEBRA_GAP_M) / period).floor() as usize;
+    if count == 0 {
+        return bars;
+    }
+    let used = count as f32 * ZEBRA_BAR_WIDTH_M + (count - 1) as f32 * ZEBRA_GAP_M;
+    let margin = (across - used) * 0.5;
+    let start = crossing.at - crossing.width * 0.5;
+    let end = crossing.at + crossing.width * 0.5;
+    for k in 0..count {
+        let from = left + margin + k as f32 * period;
+        let to = from + ZEBRA_BAR_WIDTH_M;
+        let from_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(from));
+        let to_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(to));
+        let mut polygon: Vec<Vec2> =
+            lane_builder::sub_polyline(&from_edge, f64::from(start), f64::from(end));
+        let mut other: Vec<Vec2> =
+            lane_builder::sub_polyline(&to_edge, f64::from(start), f64::from(end));
+        other.reverse();
+        polygon.extend(other);
+        if polygon.len() >= 3 {
+            bars.push(polygon);
         }
     }
     bars
