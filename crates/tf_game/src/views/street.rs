@@ -199,7 +199,7 @@ pub fn zebra_bars(street: &Street) -> Vec<Vec<Vec2>> {
 /// The span of a profile's carriageway, as offsets from its centerline: from the kerb of
 /// the leftmost strip that is not a foot strip to the kerb of the rightmost one. A level's
 /// profiles put the sidewalks at both ends (a median or a bike lane in the middle is road).
-fn carriageway(profile: &Profile) -> Option<(f32, f32)> {
+pub fn carriageway(profile: &Profile) -> Option<(f32, f32)> {
     let foot = |strip: &Strip| matches!(strip.use_, StripUse::Sidewalk | StripUse::Terrace);
     let first = profile.strips.iter().position(|strip| !foot(strip))?;
     let last = profile.strips.iter().rposition(|strip| !foot(strip))?;

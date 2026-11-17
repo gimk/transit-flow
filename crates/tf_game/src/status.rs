@@ -52,9 +52,12 @@ pub struct StatusLinePlugin;
 impl Plugin for StatusLinePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StatusNotice>()
-            .add_systems(Startup, spawn_status_line)
+            .add_systems(Startup, spawn_status_line.run_if(crate::play::not_playing))
             // After the frame's messages and tool changes, so the line shows them at once.
-            .add_systems(PostUpdate, update_status_line);
+            .add_systems(
+                PostUpdate,
+                update_status_line.run_if(crate::play::not_playing),
+            );
     }
 }
 

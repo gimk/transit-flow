@@ -28,6 +28,7 @@ bevy = { version = "=0.20.1", default-features = false, features = [
     "bevy_sprite_render", # Mesh2d, MeshMaterial2d, ColorMaterial
     "bevy_gizmos",       # Gizmos, GizmoPlugin
     "bevy_gizmos_render", # draws the gizmos
+    "bevy_state",        # States (play mode phases)
     "bevy_ui",           # Node (status line)
     "bevy_ui_render",    # draws the UI
     "bevy_text",         # Text, TextFont

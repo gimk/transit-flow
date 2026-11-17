@@ -9,7 +9,9 @@ use bevy::window::WindowResolution;
 use tf_game::bench::{self, BenchPlugin};
 use tf_game::camera::MapCamera;
 use tf_game::capture::{self, Cli, WINDOW_SIZE};
+use tf_game::play::PlayPlugin;
 use tf_game::plugin::GamePlugin;
+use tf_game::runner::SimHandle;
 
 /// Behind everything the map doesn't cover.
 const BACKGROUND: Color = Color::srgb(0.11, 0.12, 0.14);
@@ -51,6 +53,14 @@ fn main() {
             camera.zoom = zoom;
         }
     }
+    let play_level = match &cli {
+        Cli::PlayLevel(id) => Some((id.clone(), SimHandle::default_threaded())),
+        Cli::Capture(options) if options.play => match &options.target {
+            capture::Target::Level(id) => Some((id.clone(), false)),
+            _ => None,
+        },
+        _ => None,
+    };
     if bench.is_some() {
         window.present_mode = bevy::window::PresentMode::AutoNoVsync;
     }
@@ -65,6 +75,9 @@ fn main() {
     .add_systems(Startup, move |mut commands: Commands| {
         commands.spawn(camera.clone());
     });
+    if let Some((level, threaded)) = play_level {
+        app.add_plugins(PlayPlugin { level, threaded });
+    }
     if let Some(options) = bench {
         app.add_plugins(BenchPlugin(options));
     }

@@ -21,9 +21,15 @@ use std::thread::JoinHandle;
 use bevy::prelude::*;
 use tf_sim::street::ids::AgentId;
 use tf_sim::street::level::Mode;
-use tf_sim::street::run::{CauseKind, StreetRun, TICK_RATE};
+use tf_sim::street::run::{
+    CauseKind, Grade, LoggedEvent, Outcome, StreetEvent, StreetRun, TICK_RATE,
+};
 
-use crate::runner::{LEAD_TICKS, MAX_TICKS_PER_BATCH, SPEED_MULTIPLIERS};
+use crate::runner::{LEAD_TICKS, MAX_TICKS_PER_BATCH};
+
+/// Run speeds: index 0 is paused. The first four are the old runner's `SPEED_MULTIPLIERS`
+/// (so keys 1 to 3 mean the same); x8 is new, to watch a long slice of the day.
+pub const STREET_SPEED_MULTIPLIERS: [u32; 5] = [0, 1, 2, 4, 8];
 
 /// Speed index a run starts at: x1.
 pub const DEFAULT_SPEED_INDEX: usize = 1;
@@ -85,6 +91,10 @@ pub struct StreetSnapshot {
     pub agents: Vec<AgentPose>,
     pub walkers: Vec<WalkerPose>,
     pub finished: bool,
+    /// What the run logged in this tick. `capture` leaves it empty; the batch fills it,
+    /// so the runner can count events and mark incidents without ever reading the run's
+    /// log from the main thread.
+    pub new_events: Vec<LoggedEvent>,
 }
 
 impl StreetSnapshot {
@@ -144,6 +154,7 @@ impl StreetSnapshot {
             agents,
             walkers,
             finished: run.finished(),
+            new_events: Vec::new(),
         }
     }
 
@@ -170,6 +181,99 @@ fn walk_direction(vel: Vec2, step: Vec2) -> Vec2 {
     }
 }
 
+/// What happened on the street that the player should see where it happened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IncidentKind {
+    /// A near miss (post-encroachment time or a hard brake).
+    LightConflict,
+    SeriousConflict,
+    /// A vehicle touched a vehicle or a walker, with how it ended.
+    Contact(Outcome),
+}
+
+/// A mark the play view keeps on the map until the next run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Incident {
+    pub tick: u64,
+    /// Metres, y down.
+    pub position: Vec2,
+    pub kind: IncidentKind,
+}
+
+/// Running counts of a run, for the HUD, added up from the events as snapshots arrive.
+/// The final figures are the run's `summary()`; this is the live view of them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunTally {
+    /// The slice of the day now running.
+    pub slice: Option<String>,
+    pub spawned: u32,
+    pub walkers_spawned: u32,
+    pub arrived: u32,
+    pub walkers_arrived: u32,
+    pub gave_up: u32,
+    pub conflicts_light: u32,
+    pub conflicts_serious: u32,
+    pub contacts: u32,
+    /// Light or serious injuries (vehicles and walkers), and deaths.
+    pub injuries: u32,
+    pub deaths: u32,
+}
+
+impl RunTally {
+    pub fn conflicts(&self) -> u32 {
+        self.conflicts_light + self.conflicts_serious
+    }
+
+    /// Counts one logged event; returns the mark it leaves on the map, if any.
+    pub fn add(&mut self, logged: &LoggedEvent) -> Option<Incident> {
+        let tick = logged.tick;
+        match &logged.event {
+            StreetEvent::SliceStarted { name, .. } => self.slice = Some(name.clone()),
+            StreetEvent::Spawned { .. } => self.spawned += 1,
+            StreetEvent::WalkerSpawned { .. } => self.walkers_spawned += 1,
+            StreetEvent::TripEnded { .. } => self.arrived += 1,
+            StreetEvent::WalkEnded { .. } => self.walkers_arrived += 1,
+            StreetEvent::GaveUp { .. } => self.gave_up += 1,
+            StreetEvent::Conflict {
+                grade, position, ..
+            } => {
+                let kind = match grade {
+                    Grade::Light => {
+                        self.conflicts_light += 1;
+                        IncidentKind::LightConflict
+                    }
+                    Grade::Serious => {
+                        self.conflicts_serious += 1;
+                        IncidentKind::SeriousConflict
+                    }
+                };
+                return Some(Incident {
+                    tick,
+                    position: *position,
+                    kind,
+                });
+            }
+            StreetEvent::Contact {
+                position, outcome, ..
+            } => {
+                self.contacts += 1;
+                match outcome {
+                    Outcome::LightInjury | Outcome::SeriousInjury => self.injuries += 1,
+                    Outcome::Death => self.deaths += 1,
+                    Outcome::NoInjury => {}
+                }
+                return Some(Incident {
+                    tick,
+                    position: *position,
+                    kind: IncidentKind::Contact(*outcome),
+                });
+            }
+            _ => {}
+        }
+        None
+    }
+}
+
 struct Job {
     run: Box<StreetRun>,
     count: usize,
@@ -184,9 +288,14 @@ struct Done {
 fn run_batch(job: Job) -> Done {
     let Job { mut run, count } = job;
     let mut snapshots = Vec::with_capacity(count);
+    // Every earlier tick was snapshotted, so the log up to here is already reported.
+    let mut seen = run.events().len();
     for _ in 0..count {
         run.step();
-        snapshots.push(Arc::new(StreetSnapshot::capture(&run)));
+        let mut snapshot = StreetSnapshot::capture(&run);
+        snapshot.new_events = run.events()[seen..].to_vec();
+        seen = run.events().len();
+        snapshots.push(Arc::new(snapshot));
     }
     Done { run, snapshots }
 }
@@ -239,6 +348,12 @@ pub struct StreetRunner {
     worker: Option<Worker>,
     busy: bool,
     speed_index: usize,
+    /// The speed to go back to when a paused run is resumed.
+    resume_index: usize,
+    tally: RunTally,
+    incidents: Vec<Incident>,
+    /// Bumped whenever `incidents` changes, so a view redraws only then.
+    incident_version: u64,
     /// Snapshots ready for the views, oldest first.
     snapshots: VecDeque<Arc<StreetSnapshot>>,
     from: Arc<StreetSnapshot>,
@@ -256,6 +371,10 @@ impl Default for StreetRunner {
             worker: None,
             busy: false,
             speed_index: DEFAULT_SPEED_INDEX,
+            resume_index: DEFAULT_SPEED_INDEX,
+            tally: RunTally::default(),
+            incidents: Vec::new(),
+            incident_version: 0,
             snapshots: VecDeque::new(),
             from: Arc::default(),
             to: Arc::default(),
@@ -270,6 +389,9 @@ impl StreetRunner {
     /// otherwise inline.
     pub fn start(&mut self, run: StreetRun, threaded: bool) {
         self.stop();
+        // A new run starts with a clean tally and map: the marks of the last run go now.
+        self.tally = RunTally::default();
+        self.clear_incidents();
         let first = Arc::new(StreetSnapshot::capture(&run));
         self.render_tick = first.tick as f64;
         self.run = Some(Box::new(run));
@@ -279,7 +401,8 @@ impl StreetRunner {
         self.update_view();
     }
 
-    /// Drops the run (after the batch in flight) and clears the views' snapshots.
+    /// Drops the run (after the batch in flight) and clears the views' snapshots. The
+    /// incident marks stay until the next `start`, so the player can study them.
     pub fn stop(&mut self) {
         self.wait_for_worker();
         self.run = None;
@@ -301,7 +424,48 @@ impl StreetRunner {
     }
 
     pub fn set_speed(&mut self, index: usize) {
-        self.speed_index = index.min(SPEED_MULTIPLIERS.len() - 1);
+        self.speed_index = index.min(STREET_SPEED_MULTIPLIERS.len() - 1);
+        if self.speed_index > 0 {
+            self.resume_index = self.speed_index;
+        }
+    }
+
+    /// Space: pause, or go on at the speed before the pause.
+    pub fn toggle_pause(&mut self) {
+        if self.speed_index == 0 {
+            self.set_speed(self.resume_index);
+        } else {
+            self.speed_index = 0;
+        }
+    }
+
+    pub fn tally(&self) -> &RunTally {
+        &self.tally
+    }
+
+    /// The marks of the conflicts and contacts of the last run, in the order they happened.
+    pub fn incidents(&self) -> &[Incident] {
+        &self.incidents
+    }
+
+    pub fn incident_version(&self) -> u64 {
+        self.incident_version
+    }
+
+    fn clear_incidents(&mut self) {
+        if !self.incidents.is_empty() {
+            self.incidents.clear();
+            self.incident_version += 1;
+        }
+    }
+
+    /// The run has ended (a death, or the day is over and the street is empty). Looks at
+    /// the run itself when the main thread has it, else at the newest snapshot it got.
+    pub fn run_ended(&self) -> bool {
+        match &self.run {
+            Some(run) => run.finished(),
+            None => self.snapshots.back().is_some_and(|s| s.finished),
+        }
     }
 
     pub fn view_from(&self) -> &StreetSnapshot {
@@ -332,7 +496,7 @@ impl StreetRunner {
         if self.busy {
             self.try_collect();
         }
-        let multiplier = f64::from(SPEED_MULTIPLIERS[self.speed_index]);
+        let multiplier = f64::from(STREET_SPEED_MULTIPLIERS[self.speed_index]);
         self.render_tick += real_dt_s.max(0.0) * multiplier * f64::from(TICK_RATE);
         let newest = self.snapshots.back().expect("a snapshot").tick as f64;
         if self.render_tick > newest {
@@ -375,6 +539,14 @@ impl StreetRunner {
     fn collect(&mut self, done: Done) {
         self.busy = false;
         self.run = Some(done.run);
+        for snapshot in &done.snapshots {
+            for logged in &snapshot.new_events {
+                if let Some(incident) = self.tally.add(logged) {
+                    self.incidents.push(incident);
+                    self.incident_version += 1;
+                }
+            }
+        }
         self.snapshots.extend(done.snapshots);
     }
 

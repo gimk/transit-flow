@@ -49,10 +49,17 @@ pub enum Action {
     DebugRushHour,
     DebugNewEmptyMap,
     DebugLoadBusLanesScenario,
+    /// Play mode (`play`): Enter starts the run, ends it early, and leaves the report.
+    PlayConfirm,
+    /// Backspace. Ctrl+Z and Ctrl+Y are read from the raw keys by the play system: `Z` alone
+    /// must stay unbound.
+    PlayUndo,
+    /// x8 (keys 1 to 3 are `SimSpeed1` to `SimSpeed3`).
+    PlaySpeed4,
 }
 
 impl Action {
-    pub const ALL: [Action; 32] = [
+    pub const ALL: [Action; 35] = [
         Action::CameraPanLeft,
         Action::CameraPanRight,
         Action::CameraPanUp,
@@ -85,6 +92,9 @@ impl Action {
         Action::DebugRushHour,
         Action::DebugNewEmptyMap,
         Action::DebugLoadBusLanesScenario,
+        Action::PlayConfirm,
+        Action::PlayUndo,
+        Action::PlaySpeed4,
     ];
 
     /// Tool shortcuts (`ToolManager.TOOL_SHORTCUTS`): the tool ids of M10 (node names in
@@ -112,7 +122,7 @@ impl Default for KeyBindings {
     fn default() -> Self {
         use Action::*;
         use KeyCode::*;
-        let table: [(Action, &[KeyCode]); 32] = [
+        let table: [(Action, &[KeyCode]); 35] = [
             (CameraPanLeft, &[KeyA, ArrowLeft]),
             (CameraPanRight, &[KeyD, ArrowRight]),
             (CameraPanUp, &[KeyW, ArrowUp]),
@@ -145,6 +155,9 @@ impl Default for KeyBindings {
             (DebugRushHour, &[F10, KeyP]),
             (DebugNewEmptyMap, &[F12, KeyN]),
             (DebugLoadBusLanesScenario, &[Digit0]),
+            (PlayConfirm, &[Enter, NumpadEnter]),
+            (PlayUndo, &[Backspace]),
+            (PlaySpeed4, &[Digit4]),
         ];
         Self {
             keys: table.into_iter().map(|(a, k)| (a, k.to_vec())).collect(),

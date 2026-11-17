@@ -84,6 +84,30 @@ impl Harness {
         harness
     }
 
+    /// The app in play mode on `level_id` (`--play`): the old game asleep, the level loaded.
+    /// Reads the design file of the level, so a test that uses it holds `save_lock`.
+    pub fn play(level_id: &str) -> Self {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            bevy::input::InputPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<ColorMaterial>()
+        .add_plugins((
+            GamePlugin { threaded: false },
+            ViewsPlugin,
+            tf_game::play::PlayPlugin {
+                level: level_id.into(),
+                threaded: false,
+            },
+        ));
+        let mut harness = Self { app };
+        harness.frames(3);
+        harness
+    }
+
     pub fn frames(&mut self, n: usize) {
         for _ in 0..n {
             self.app.update();

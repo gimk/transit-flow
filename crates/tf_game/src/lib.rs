@@ -13,6 +13,7 @@ pub mod events;
 pub mod game;
 pub mod input;
 pub mod level;
+pub mod play;
 pub mod plugin;
 pub mod runner;
 pub mod snapshot;

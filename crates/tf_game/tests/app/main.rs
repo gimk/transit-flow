@@ -11,6 +11,7 @@ mod camera_input;
 mod debug_keys;
 mod map_views;
 mod moving_views;
+mod play;
 mod playtest_parity;
 mod runner;
 mod status_line;

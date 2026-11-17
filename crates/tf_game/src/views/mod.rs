@@ -74,6 +74,8 @@ pub mod z {
     /// The street run's pedestrians (pivot Phase 3): just over the cars, under the old
     /// map's parked cars and overlays.
     pub const WALKERS: f32 = 6.2;
+    /// The marks of conflicts and contacts of a run (play mode), over the people.
+    pub const INCIDENTS: f32 = 6.4;
     /// Light bars at junctions (M9.3).
     pub const LIGHTS: f32 = 50.0;
     /// Debug overlays: lane overlay, heatmap (M9.3).
