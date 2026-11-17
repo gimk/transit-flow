@@ -39,6 +39,9 @@ pub const BRAKE_RISE_S: f64 = 0.3;
 /// The braking at which the pedal needs the whole `BRAKE_RISE_S` (about the middle of a
 /// car's maximum, see `draw_max_brake`); softer braking needs a proportionally shorter rise.
 const REFERENCE_BRAKE: f64 = 8.5;
+/// A drop in wanted speed of at most this (m/s) between two lanes is eased into at the
+/// comfortable braking, however little room is left (start value).
+const SMALL_STEP: f64 = 1.0;
 /// Salt of the stream that draws a vehicle's maximum braking: a stream of its own, so
 /// that the draws the agent makes later (distractions) keep their values.
 const BRAKE_STREAM: u64 = 0xB4A4_E5ED;
@@ -763,8 +766,19 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
             break;
         }
         let speed = desired_speed(agent, route.lanes[next], world);
-        target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * distance).sqrt());
-        need = need.max(needed_brake(v, speed, distance));
+        // The pedal takes time to build up (as in `needed_brake`, at the comfortable rate),
+        // so the curve starts a little earlier. A step of `SMALL_STEP` or less (a junction
+        // movement a bit slower than the road before it) is eased into at the comfortable
+        // rate, never braked for hard: the curve alone would bind only in the last metre.
+        let eased =
+            (distance - v * BRAKE_RISE_S * 0.5 * COMFORT_BRAKE / REFERENCE_BRAKE).max(0.0);
+        target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * eased).sqrt());
+        let step_need = needed_brake(v, speed, distance);
+        need = need.max(if v - speed <= SMALL_STEP {
+            step_need.min(COMFORT_BRAKE)
+        } else {
+            step_need
+        });
     }
 
     // The junction ahead: go, or stop at the line.

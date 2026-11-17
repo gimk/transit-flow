@@ -151,3 +151,55 @@ fn the_maximum_brake_is_drawn_per_vehicle_in_its_range() {
         draw_max_brake(Mode::Car, 7, AgentId(3))
     );
 }
+
+/// The school crossing with 20 km/h on every street, at the busiest star stage.
+fn slow_school_run(seed: u64) -> StreetRun {
+    let level = LevelFile::load("carrefour-ecole").expect("the school level loads");
+    let commands: Vec<String> = (1..=4)
+        .map(|segment| format!(r#"{{"SetSpeedLimit":{{"segment":{segment},"kmh":20.0}}}}"#))
+        .collect();
+    let json = format!(
+        r#"{{"version":1,"level":"carrefour-ecole","commands":[{}]}}"#,
+        commands.join(",")
+    );
+    let design = Design::from_json(&json).expect("the design parses");
+    let options = RunOptions {
+        seed,
+        population: Population::Mixed,
+        demand_scale: 2.5,
+    };
+    let mut run = StreetRun::new(&level, &design, options).expect("builds");
+    while !run.finished() {
+        run.step();
+    }
+    run
+}
+
+/// Seed 2 had a car brake at 9.4 m/s² because a junction movement is a little slower
+/// than the road before it (a step of 0.5 m/s asked of the last metre); seed 8 had two
+/// cars brake at 7.9-8.5 m/s² at the exit zebra for walkers who were still on the
+/// pavement, 6-12 m away. Neither is a hard brake a driver does.
+#[test]
+fn a_20_kmh_street_has_no_serious_brake_for_a_small_speed_step_or_a_walker_still_on_the_pavement() {
+    for seed in [2, 8] {
+        let run = slow_school_run(seed);
+        for entry in run.events() {
+            if let StreetEvent::Conflict {
+                kind: ConflictKind::HardBrake,
+                grade: tf_sim::street::run::Grade::Serious,
+                causes,
+                measure,
+                ..
+            } = &entry.event
+            {
+                assert!(
+                    !causes
+                        .iter()
+                        .any(|c| c.what == tf_sim::street::run::CauseKind::TooFastToStop),
+                    "seed {seed}, tick {}: a serious brake at {measure} m/s² (too fast to stop)",
+                    entry.tick
+                );
+            }
+        }
+    }
+}
