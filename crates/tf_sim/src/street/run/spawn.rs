@@ -181,6 +181,7 @@ impl StreetRun {
             routes: &self.routes,
             moves: &self.moves,
             plans: &self.plans,
+            street_speeds: &self.street_speeds,
             time_s: self.tick as f64 * DT,
             peds: None,
         };

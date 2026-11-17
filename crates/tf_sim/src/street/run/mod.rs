@@ -186,6 +186,8 @@ pub struct StreetRun {
     /// Per junction node, the segments traffic comes in from, in movement order.
     approaches: IndexMap<i32, Vec<i32>>,
     plans: IndexMap<i32, SignalPlan>,
+    /// Street speed of every road lane, computed once (the street is fixed in a run).
+    street_speeds: IndexMap<StreetLaneId, f64>,
     routes: Vec<RoutePath>,
     /// Per route (same index): the road areas of the walk space it drives through, with
     /// its route distances in and out and its line through them (`kerb::road_areas_of`).
@@ -335,6 +337,7 @@ impl StreetRun {
         let street = Street::from_level_and_design(level, design)?;
         let (moves, approaches) = movement_table(&street);
         let plans = signal_plans(&street, &moves, &approaches);
+        let street_speeds = crate::street::speed::street_speeds(&street);
         let mut end = 0;
         let slice_ends = level
             .demand
@@ -386,6 +389,7 @@ impl StreetRun {
             moves,
             approaches,
             plans,
+            street_speeds,
             routes: Vec::new(),
             route_areas: Vec::new(),
             walk_signals,
@@ -570,7 +574,7 @@ impl StreetRun {
                         yields,
                         looks,
                         entered: false,
-                        pending_yield: None,
+                        pending_yield: Vec::new(),
                         worst_fast: None,
                     });
                 }
@@ -610,6 +614,7 @@ impl StreetRun {
             routes: &self.routes,
             moves: &self.moves,
             plans: &self.plans,
+            street_speeds: &self.street_speeds,
             time_s: self.tick as f64 * DT,
             peds: Some(&peds),
         };
@@ -650,8 +655,10 @@ impl StreetRun {
                 if let Some((not_yielding, too_fast)) = decision.crossing_pending {
                     // Kept until the front enters the zebra: close to it a careful driver
                     // could no longer stop, but it would have stopped earlier.
-                    if not_yielding.is_some() {
-                        crossing.pending_yield = not_yielding;
+                    for walker in not_yielding {
+                        if !crossing.pending_yield.contains(&walker) {
+                            crossing.pending_yield.push(walker);
+                        }
                     }
                     if let Some((speed, limit)) = too_fast
                         && crossing

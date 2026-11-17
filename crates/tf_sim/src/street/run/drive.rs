@@ -19,6 +19,7 @@ use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::level::Sign;
 use crate::street::model::Street;
 use crate::street::signals::{Light, SignalPlan};
+use crate::street::speed::STREET_TOLERANCE;
 
 /// Seconds per tick (20 Hz).
 pub const DT: f64 = 0.05;
@@ -122,6 +123,8 @@ pub struct World<'a> {
     pub routes: &'a [RoutePath],
     pub moves: &'a IndexMap<StreetLaneId, MoveInfo>,
     pub plans: &'a IndexMap<i32, SignalPlan>,
+    /// What the look of each road lane asks for (`street::speed`), m/s.
+    pub street_speeds: &'a IndexMap<StreetLaneId, f64>,
     pub time_s: f64,
     /// The walkers' world, for drivers who decide (`None` where only speeds are asked).
     pub peds: Option<&'a PedWorld<'a>>,
@@ -141,8 +144,8 @@ pub enum Block {
 }
 
 /// What a careful driver would have done at the zebra ahead that this one does not:
-/// the walker it would yield to, and (speed, careful limit) at a hidden kerb.
-pub type CrossingPending = (Option<AgentId>, Option<(f64, f64)>);
+/// the walkers it would yield to, and (speed, careful limit) at a hidden kerb.
+pub type CrossingPending = (Vec<AgentId>, Option<(f64, f64)>);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decision {
@@ -234,15 +237,22 @@ pub fn must_yield(me: &MoveInfo, other: &MoveInfo) -> bool {
     turn_rank(me.turn) > turn_rank(other.turn)
 }
 
-/// The speed this agent wants on lane `id`: its own share of the limit, and what the
-/// bend allows.
+/// The speed this agent wants on lane `id`. On a road lane the sign and the look of the
+/// street (`street::speed`) are mixed by compliance: a fully compliant driver takes the
+/// lower of the two, one who ignores the sign follows the street, and nobody goes over
+/// `STREET_TOLERANCE` times the street speed (real drivers read the
+/// street, not the sign). In a junction movement it is the limit and what the bend allows.
 pub fn desired_speed(agent: &Agent, id: StreetLaneId, world: &World) -> f64 {
     let lane = &world.street.lanes[&id];
-    let mut speed = lane.speed_limit * agent.traits.speed_factor;
     if let Some(info) = world.moves.get(&id) {
-        speed = speed.min(info.turn_speed * agent.traits.speed_factor);
+        let speed = lane.speed_limit * agent.traits.speed_factor;
+        return speed.min(info.turn_speed * agent.traits.speed_factor);
     }
-    speed
+    let limit = lane.speed_limit;
+    let street = world.street_speeds.get(&id).copied().unwrap_or(limit);
+    let c = agent.traits.compliance;
+    let wanted = agent.traits.speed_factor * (c * limit.min(street) + (1.0 - c) * street);
+    wanted.min(STREET_TOLERANCE * street)
 }
 
 /// The time gap this agent keeps to what is ahead.
@@ -786,7 +796,11 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
             && !yielding::is_careful(agent)
         {
             let careful = yielding::walker_view(agent, snapshot, peds, true, tau);
-            let not_yielding = careful.yield_to.filter(|_| view.yield_to.is_none());
+            let not_yielding = if view.yield_to.is_none() {
+                careful.yield_all
+            } else {
+                Vec::new()
+            };
             let too_fast = careful
                 .hidden
                 .filter(|(limit, _)| v > limit + 1.0)
