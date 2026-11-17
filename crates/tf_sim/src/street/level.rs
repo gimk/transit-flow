@@ -247,6 +247,14 @@ pub enum Constraint {
     MinSidewalkWidth(f32),
 }
 
+/// One star stage: the level with `demand_scale` times its traffic, passed when the score
+/// reaches `pass_score` with no death, serious injury or broken constraint (see `score`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StarStage {
+    pub demand_scale: f64,
+    pub pass_score: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LevelFile {
     pub id: String,
@@ -282,9 +290,9 @@ pub struct LevelFile {
     /// The tools the player may use in this level.
     #[serde(default)]
     pub tools: Vec<String>,
-    /// Scores for 2 and 3 stars.
+    /// The star stages, in order (pivot plan §6): the number of stars is their number.
     #[serde(default)]
-    pub stars: Vec<f64>,
+    pub stages: Vec<StarStage>,
     pub seed: u64,
 }
 
