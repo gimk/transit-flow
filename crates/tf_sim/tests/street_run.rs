@@ -247,26 +247,32 @@ fn the_same_inputs_give_the_same_log_hash() {
 // Moved on purpose with the pedestrian decisions (WP9: red lights, zebra or free way,
 // gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
 // c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
+// Moved on purpose with the local street speed (WP15: the street speed is a profile along
+// the lane, drivers look at the cells ahead): old 7bcf23c003b136af, f83b4be3e0ec9a3b,
+// c67d95ae8ac22058, e1636157bb65fa60.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x7bcf_23c0_03b1_36af),
-    (2, Population::Mixed, 1.0, 0xf83b_4be3_e0ec_9a3b),
-    (1, Population::Careless, 4.0, 0xc67d_95ae_8ac2_2058),
-    (2, Population::Careless, 4.0, 0xe163_6157_bb65_fa60),
+    (1, Population::Mixed, 1.0, 0x7864_4365_565b_bb77),
+    (2, Population::Mixed, 1.0, 0xb7b4_0344_5c80_ff10),
+    (1, Population::Careless, 4.0, 0x6bbb_e6eb_0287_14d6),
+    (2, Population::Careless, 4.0, 0x5c53_ad09_f84c_b7ca),
 ];
 
 #[test]
 fn replay_hashes_have_not_moved() {
     let level = level();
     let design = Design::new(&level.id);
+    // All four are checked before the test fails, so one failure shows every new hash.
+    let mut moved = Vec::new();
     for (seed, population, scale, hash) in REPLAY_HASHES {
         let run = run_to_end(&level, &design, seed, population, scale);
-        assert_eq!(
-            run.log_hash(),
-            hash,
-            "seed {seed}, {population:?}, x{scale}: the hash is now {:#018x}",
-            run.log_hash()
-        );
+        if run.log_hash() != hash {
+            moved.push(format!(
+                "seed {seed}, {population:?}, x{scale}: the hash is now {:#018x}",
+                run.log_hash()
+            ));
+        }
     }
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
 }
 
 // --- (d) driving styles --------------------------------------------------------------
