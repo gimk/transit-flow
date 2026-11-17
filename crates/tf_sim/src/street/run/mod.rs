@@ -57,6 +57,7 @@ use crate::street::level::{Gate, JunctionControl, LevelFile, Mode, Sign, Slice};
 use crate::street::model::{EditError, Street};
 use crate::street::signals::{
     DEFAULT_ALL_RED_S, DEFAULT_AMBER_S, DEFAULT_GREEN_S, Light, SignalPhase, SignalPlan,
+    pair_opposite_arms,
 };
 
 /// Ticks per second of play time.
@@ -305,23 +306,14 @@ fn signal_plans(
                 .find(|m| m.node == *node && m.from_segment == segment)
                 .map_or(Vec2::ZERO, |m| m.heading)
         };
-        let mut left: Vec<i32> = approaches.get(node).cloned().unwrap_or_default();
-        let mut phases = Vec::new();
-        while !left.is_empty() {
-            let first = left.remove(0);
-            let mut green = vec![first];
-            left.retain(|other| {
-                let opposite = heading_of(first).dot(heading_of(*other)) < -0.7;
-                if opposite {
-                    green.push(*other);
-                }
-                !opposite
-            });
-            phases.push(SignalPhase {
+        let arms = approaches.get(node).cloned().unwrap_or_default();
+        let phases = pair_opposite_arms(&arms, heading_of)
+            .into_iter()
+            .map(|green| SignalPhase {
                 green,
                 green_s: DEFAULT_GREEN_S,
-            });
-        }
+            })
+            .collect();
         plans.insert(
             *node,
             SignalPlan {
