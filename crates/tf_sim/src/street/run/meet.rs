@@ -15,7 +15,9 @@
 //!   and what the walker did (crossed out of a crossing, on red, in a short gap).
 //! - **Near misses.** Post-encroachment time in the band a vehicle route cuts through a
 //!   road area: the band is the part of the road area within half a car width and a body
-//!   of the route's line. A walker entering the band this soon after a vehicle left it,
+//!   of the route's line, cut in cells of `BAND_CELL_M` along the route (a PET conflict
+//!   means the two nearly used the same spot, not the same carriageway piece). A standing
+//!   vehicle is no conflict. A walker entering the band this soon after a vehicle left it,
 //!   or a vehicle after a walker, is a conflict (`PET_LIGHT_S`, `PET_SERIOUS_S`), and so
 //!   is the two in the band at once (time 0). Braking hard for a walker is logged like
 //!   braking for a vehicle.
@@ -43,7 +45,7 @@ use crate::street::ids::AgentId;
 const MEET_REACH: f32 = 2.0;
 /// The band of a vehicle route through a road area: this far each side of its line,
 /// beyond the walker's body, metres (half a car width).
-const BAND_HALF_WIDTH: f32 = 0.9;
+pub(super) const BAND_HALF_WIDTH: f32 = 0.9;
 
 /// Does a circle touch a rectangle body?
 pub fn circle_touches(body: &Body, center: Vec2, radius: f32) -> bool {
@@ -71,7 +73,13 @@ pub(super) struct Band {
     walker_left: Option<(AgentId, u64)>,
 }
 
-pub(super) type Bands = IndexMap<(usize, usize), Band>;
+/// A band cell: (road area, route, cell along the route).
+pub(super) type BandKey = (usize, usize, i32);
+pub(super) type Bands = IndexMap<BandKey, Band>;
+
+/// Band cells are this long along the route, metres (start value: about a car length, so
+/// that two road users in one cell nearly used the same spot).
+const BAND_CELL_M: f64 = 4.0;
 
 impl StreetRun {
     /// What the driver of `car` and the walker did that bears on their meeting.
@@ -233,18 +241,35 @@ impl StreetRun {
         }
     }
 
-    /// Near misses between vehicles and walkers: post-encroachment time in the bands.
+    /// Near misses between vehicles and walkers: post-encroachment time (PET, Allen et al.
+    /// 1978: the time between the first road user leaving a place and the second reaching
+    /// it) in the bands. A PET conflict means the two nearly used the same spot, so a band is
+    /// cut in cells of `BAND_CELL_M` along the route and only road users in the same cell
+    /// count, not those in the same carriageway piece (which can be 160 m long). A
+    /// vehicle standing (slower than `STANDING_VEHICLE`) is solid for walkers and waits for
+    /// them: it is not a conflict. One event per walker and vehicle per
+    /// `CONFLICT_COOLDOWN_S` (`log_conflict`), so a walker at the edge of the band does not
+    /// repeat it.
     pub(super) fn walker_pet_stage(&mut self) {
         let tick = self.tick;
-        // Who is in which band now.
-        let mut now: IndexMap<(usize, usize), (Vec<AgentId>, Vec<AgentId>)> = IndexMap::new();
+        // Who is in which cell of which band now. A moving vehicle occupies the cells its
+        // body covers inside the road area; a walker the cell of its place along the route.
+        let mut now: IndexMap<BandKey, (Vec<AgentId>, Vec<AgentId>)> = IndexMap::new();
         for car in self.agents.values() {
+            if car.speed <= STANDING_VEHICLE {
+                continue;
+            }
             for area in &self.route_areas[car.route] {
                 if car.d > area.enter && car.d - car.length < area.exit {
-                    now.entry((area.area, car.route))
-                        .or_default()
-                        .0
-                        .push(car.id);
+                    let (from, to) = ((car.d - car.length).max(area.enter), car.d.min(area.exit));
+                    let first = (from / BAND_CELL_M).floor() as i32;
+                    let last = (to / BAND_CELL_M).floor() as i32;
+                    for cell in first..=last {
+                        now.entry((area.area, car.route, cell))
+                            .or_default()
+                            .0
+                            .push(car.id);
+                    }
                 }
             }
         }
@@ -257,15 +282,19 @@ impl StreetRun {
                 let Some(route_area) = areas.iter().find(|a| a.area == area) else {
                     continue;
                 };
-                if project(&route_area.line, walker.pos)
-                    .is_some_and(|(_, beside)| beside < BAND_HALF_WIDTH + walker.radius)
+                if let Some((at, beside)) = project(&route_area.line, walker.pos)
+                    && beside < BAND_HALF_WIDTH + walker.radius
                 {
-                    now.entry((area, route)).or_default().1.push(walker.id);
+                    let cell = (at / BAND_CELL_M).floor() as i32;
+                    now.entry((area, route, cell))
+                        .or_default()
+                        .1
+                        .push(walker.id);
                 }
             }
         }
         let mut found: Vec<(AgentId, AgentId, f64, Vec2)> = Vec::new();
-        let keys: Vec<(usize, usize)> = self.bands.keys().chain(now.keys()).copied().collect();
+        let keys: Vec<BandKey> = self.bands.keys().chain(now.keys()).copied().collect();
         for key in keys {
             let (vehicles, walkers) = now.get(&key).cloned().unwrap_or_default();
             let band = self.bands.entry(key).or_default();

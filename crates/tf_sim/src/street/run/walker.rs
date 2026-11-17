@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use super::agent::Population;
 use super::crowd::ARRIVE_DISTANCE;
 use super::events::{CauseKind, StreetEvent};
-use super::walk::{AreaKind, WalkPath, path_length, string_pull};
+use super::walk::{AreaKind, WalkPath, path_length, road_factor, string_pull, weighted_pull};
 use super::{StreetRun, mix};
 use crate::geom::polygon::segment_intersection;
 use crate::geom::segment::closest_point_to_segment;
@@ -118,6 +118,24 @@ pub struct KerbDraw {
     pub look: f32,
     /// Cuts the corner at a zebra here when below `kerb::corner_chance`.
     pub corner: f32,
+    /// Keeps its pace on the road when a car that can still stop comes, when below
+    /// `kerb::assertive_chance` (made last at spawn; never drawn again).
+    pub assertive: f32,
+}
+
+/// What a walker on a carriageway does about the vehicles it sees (`kerb::road_look`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoadAct {
+    /// Walks on as it planned.
+    Free,
+    /// Stops where it is and lets the vehicle pass.
+    Stop,
+    /// Steps back toward the kerb it came from.
+    Back,
+    /// Hurries forward (a fast walk) to clear the vehicle's path.
+    Hurry,
+    /// Keeps its pace although a car comes: it expects the driver to stop.
+    Hold,
 }
 
 /// The two ways of a trip from one entry to a gate.
@@ -385,6 +403,8 @@ pub struct Walker {
     pub recent: Vec<(u64, CauseKind)>,
     /// Hit by a vehicle: it stays where it fell until this tick, then is taken away.
     pub hit_until: Option<u64>,
+    /// What it does about the vehicles it saw on the road at its last look.
+    pub road_act: RoadAct,
 }
 
 impl Walker {
@@ -448,7 +468,7 @@ impl StreetRun {
             None
         } else {
             let detour_m = match (&rule, &free) {
-                (Some(r), Some(f)) => (r.length - f.length).max(0.0),
+                (Some(r), Some(f)) => (r.cost - f.cost).max(0.0),
                 _ => 0.0,
             };
             let legal = free
@@ -519,8 +539,13 @@ impl StreetRun {
     }
 
     /// Where a walker at `pos` on `path` heads first, and the length of its whole way.
-    pub(super) fn walk_target(path: &WalkPath, area_index: usize, pos: Vec2) -> (Vec2, f32) {
-        Self::walk_target_in(path, &path.portals, area_index, pos)
+    pub(super) fn walk_target(
+        path: &WalkPath,
+        area_index: usize,
+        pos: Vec2,
+        factor: f32,
+    ) -> (Vec2, f32) {
+        Self::walk_target_in(path, &path.portals, area_index, pos, factor)
     }
 
     /// `walk_target` through `portals` (the path's, or the ones a corner cutter uses).
@@ -529,6 +554,7 @@ impl StreetRun {
         portals: &[(Vec2, Vec2)],
         area_index: usize,
         pos: Vec2,
+        factor: f32,
     ) -> (Vec2, f32) {
         let last = path.areas.len() - 1;
         let end = if area_index >= last {
@@ -537,7 +563,18 @@ impl StreetRun {
             let (l, r) = portals[last - 1];
             closest_point_to_segment((l + r) * 0.5, path.goal.0, path.goal.1)
         };
-        let points = string_pull(pos, &portals[area_index.min(last)..], end);
+        let from = area_index.min(last);
+        // A way with costly areas (the free way) is steered through weighted points, so it
+        // crosses the carriageway close to the perpendicular; any other through corners.
+        let points = if path.on_road.iter().any(|r| *r) {
+            let weights: Vec<f32> = path.on_road[from..]
+                .iter()
+                .map(|r| if *r { factor } else { 1.0 })
+                .collect();
+            weighted_pull(pos, &portals[from..], &weights, end)
+        } else {
+            string_pull(pos, &portals[from..], end)
+        };
         let mut target = points[1.min(points.len() - 1)];
         if target.distance(pos) < 0.01 && points.len() > 2 {
             target = points[2];
@@ -638,11 +675,14 @@ impl StreetRun {
             let look: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             let corner: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             d.traits.draw_habits(&d.archetype, &mut d.rng);
+            // Last, so that every draw before it keeps its place in the stream.
+            let assertive: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             (0..kerbs)
                 .map(|i| KerbDraw {
                     red: red[i],
                     look: look[i],
                     corner: corner[i],
+                    assertive: assertive[i],
                 })
                 .collect::<Vec<KerbDraw>>()
         };
@@ -698,7 +738,7 @@ impl StreetRun {
         let mut ids = Vec::with_capacity(size);
         let mut spawned = Vec::with_capacity(size);
         for ((d, pos), kerb_draws) in drawn.into_iter().zip(positions).zip(draws) {
-            let (target, length) = Self::walk_target(path, 0, pos);
+            let (target, length) = Self::walk_target(path, 0, pos, road_factor(d.traits.risk));
             let vel = (target - pos).normalize_or_zero() * speed as f32;
             ids.push(d.id);
             spawned.push(Walker {
@@ -739,6 +779,7 @@ impl StreetRun {
                 frustration: 0.0,
                 recent: Vec::new(),
                 hit_until: None,
+                road_act: RoadAct::Free,
             });
         }
         self.next_walker += size as i32;

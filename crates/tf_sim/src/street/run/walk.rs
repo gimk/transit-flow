@@ -19,7 +19,7 @@
 //! goes through. Two ways are found for every trip: the **rule** way, which crosses
 //! streets only on crossings (and on carriageways where the law allows it, see
 //! `walker`), and the **free** way, which may cross a carriageway anywhere and costs
-//! `ROAD_COST` times its length there (people walk on the sidewalk, not down the
+//! `ROAD_COST_FACTOR` times its length there (people walk on the sidewalk, not down the
 //! street). Inside the corridor the walker steers to the first corner of the shortest
 //! path through the remaining portals (the "simple stupid funnel" of M. Mononen, 2010),
 //! so it cuts corners like a person and never walks into a wall corner. Areas are convex
@@ -42,9 +42,25 @@ pub const SIGNAL_REACH: f32 = 10.0;
 /// Long portals get a graph point every this many metres, so a way that crosses a kerb
 /// can do it where it wants to (start value).
 pub const PORTAL_STEP: f32 = 4.0;
-/// Walking a metre down a carriageway costs this many metres on the sidewalk, in the
-/// free way (start value).
-pub const ROAD_COST: f32 = 1.5;
+/// A metre on a carriageway costs this many metres on a sidewalk, in the free way: people
+/// treat time on the road as exposure, with cars or without. It picks the corridor and
+/// bends the steered line toward the perpendicular: the best angle on the road, from the
+/// perpendicular, has `sin = 1 / factor` (24 degrees for 2.5), like light at a boundary.
+/// Start value, to calibrate in Phase 8.
+pub const ROAD_COST_FACTOR: f32 = 2.5;
+/// A walker's own factor runs from `ROAD_COST_MIN` (risk-tolerant: hurried people, children)
+/// to `ROAD_COST_MAX` (risk-averse: they cross straight and leave the road soon). Start
+/// values. The shared corridor search uses `ROAD_COST_FACTOR`; only the steering is per walker.
+pub const ROAD_COST_MIN: f32 = 1.5;
+pub const ROAD_COST_MAX: f32 = 4.0;
+
+/// The road cost factor of a walker of `risk` (0 = averse, 1 = tolerant).
+pub fn road_factor(risk: f64) -> f32 {
+    ROAD_COST_MIN + (ROAD_COST_MAX - ROAD_COST_MIN) * (1.0 - risk.clamp(0.0, 1.0) as f32)
+}
+/// Sweeps and bisection steps of `weighted_pull`; fixed, so a run stays deterministic.
+const PULL_SWEEPS: usize = 12;
+const PULL_STEPS: usize = 18;
 /// Carriageway pieces shorter than this (between two crossings) are left out.
 const MIN_PIECE: f32 = 0.3;
 /// A walker steers this far from the ends of a portal, so it does not graze the corner
@@ -175,6 +191,12 @@ pub struct WalkPath {
     pub off_crossing: bool,
     /// The length of the way through the portal points, metres.
     pub length: f32,
+    /// Whether each area of the corridor is a carriageway (a metre there costs a walker
+    /// `road_factor(risk)`, see `weighted_pull`).
+    pub on_road: Vec<bool>,
+    /// The cost of the steered way from the entry's middle to the goal's, in foot metres
+    /// (a road metre counts `ROAD_COST_FACTOR`): what the zebra-or-free-way choice compares.
+    pub cost: f32,
     pub to_entry: usize,
     /// The destination line, shortened at both ends like the portals and moved
     /// `CORNER_CLEARANCE` into the area (a walker heads for the door, not the façade).
@@ -289,6 +311,54 @@ pub fn string_pull(start: Vec2, portals: &[(Vec2, Vec2)], end: Vec2) -> Vec<Vec2
         points.push(end);
     }
     points
+}
+
+/// The cheapest path from `start` to `end` through the portals when a metre in area `k`
+/// costs `weights[k]` (`weights[0]` is the area `start` is in: one more than portals).
+/// Corners are not enough here, so one point sits on every portal and each is moved in
+/// turn along its portal to the best place between its neighbours (the cost is convex, so
+/// this converges). A uniform cost gives the shortest path, like `string_pull`.
+/// Returns `start`, one point per portal, `end`. Only `sqrt`, a fixed number of steps.
+pub fn weighted_pull(
+    start: Vec2,
+    portals: &[(Vec2, Vec2)],
+    weights: &[f32],
+    end: Vec2,
+) -> Vec<Vec2> {
+    let n = portals.len();
+    let mut pts = Vec::with_capacity(n + 2);
+    pts.push(start);
+    pts.extend(portals.iter().map(|(l, r)| (*l + *r) * 0.5));
+    pts.push(end);
+    for _ in 0..PULL_SWEEPS {
+        let mut moved: f32 = 0.0;
+        for i in 1..=n {
+            let (l, r) = portals[i - 1];
+            let (prev, next) = (pts[i - 1], pts[i + 1]);
+            let (w1, w2) = (weights[i - 1], weights[i]);
+            let cost = |t: f32| {
+                let p = l.lerp(r, t);
+                w1 * p.distance(prev) + w2 * p.distance(next)
+            };
+            let (mut lo, mut hi) = (0.0f32, 1.0f32);
+            for _ in 0..PULL_STEPS {
+                let a = lo + (hi - lo) / 3.0;
+                let b = hi - (hi - lo) / 3.0;
+                if cost(a) <= cost(b) {
+                    hi = b;
+                } else {
+                    lo = a;
+                }
+            }
+            let p = l.lerp(r, (lo + hi) * 0.5);
+            moved = moved.max(p.distance(pts[i]));
+            pts[i] = p;
+        }
+        if moved < 1e-3 {
+            break;
+        }
+    }
+    pts
 }
 
 pub fn path_length(points: &[Vec2]) -> f32 {
@@ -820,7 +890,11 @@ impl WalkSpace {
                 let road = shared(a, b).is_some_and(|area| {
                     matches!(self.areas[area].kind, AreaKind::Carriageway { .. })
                 });
-                if road { distance * ROAD_COST } else { distance }
+                if road {
+                    distance * ROAD_COST_FACTOR
+                } else {
+                    distance
+                }
             },
             |a, b| a.distance(b),
         );
@@ -860,7 +934,7 @@ impl WalkSpace {
             let distance = graph.position(pair[0]).distance(graph.position(pair[1]));
             length += distance;
             cost += if matches!(self.areas[area].kind, AreaKind::Carriageway { .. }) {
-                distance * ROAD_COST
+                distance * ROAD_COST_FACTOR
             } else {
                 distance
             };
@@ -893,6 +967,25 @@ impl WalkSpace {
             b + end.inward * CORNER_CLEARANCE,
         );
         let cuts = self.cut_ways(&areas, &crossed, (goal.0 + goal.1) * 0.5);
+        let on_road: Vec<bool> = areas
+            .iter()
+            .map(|a| matches!(self.areas[*a].kind, AreaKind::Carriageway { .. }))
+            .collect();
+        let weights: Vec<f32> = on_road
+            .iter()
+            .map(|r| if *r { ROAD_COST_FACTOR } else { 1.0 })
+            .collect();
+        let steered = weighted_pull(
+            (start.a + start.b) * 0.5,
+            &portals,
+            &weights,
+            (goal.0 + goal.1) * 0.5,
+        );
+        let steered_cost: f32 = steered
+            .windows(2)
+            .zip(&weights)
+            .map(|(pair, w)| w * pair[0].distance(pair[1]))
+            .sum();
         Some((
             cost,
             WalkPath {
@@ -901,6 +994,8 @@ impl WalkSpace {
                 kerbs,
                 off_crossing,
                 length,
+                on_road,
+                cost: steered_cost,
                 to_entry: to,
                 goal,
                 cuts,
@@ -1012,6 +1107,45 @@ mod tests {
         let path = string_pull(Vec2::new(1.0, 1.0), &corner_portals(), Vec2::new(9.0, 10.0));
         assert_eq!(path.len(), 3, "{path:?}");
         assert_eq!(path[1], Vec2::new(8.0, 2.0), "the inner corner: {path:?}");
+    }
+
+    #[test]
+    fn a_costly_area_is_crossed_close_to_the_perpendicular() {
+        // Sidewalk below y = 0, road y in [0, 8], sidewalk above; start and goal 20 m
+        // apart along x. The kerbs are wide portals.
+        let kerb_a = (Vec2::new(-5.0, 0.0), Vec2::new(30.0, 0.0));
+        let kerb_b = (Vec2::new(-5.0, 8.0), Vec2::new(30.0, 8.0));
+        let portals = [kerb_a, kerb_b];
+        let (start, end) = (Vec2::new(0.0, -1.0), Vec2::new(20.0, 9.0));
+        let pts = weighted_pull(start, &portals, &[1.0, ROAD_COST_FACTOR, 1.0], end);
+        let (enter, leave) = (pts[1], pts[2]);
+        let dx = (leave.x - enter.x).abs();
+        // The angle from the perpendicular: sin = dx / length, at most 1 / factor.
+        let sin = dx / enter.distance(leave);
+        assert!(sin < 0.5, "road leg {enter:?} -> {leave:?}, sin {sin}");
+        assert!(start.distance(enter) > 1.0 && leave.distance(end) > 1.0);
+        let plain = weighted_pull(start, &portals, &[1.0; 3], end);
+        assert!(
+            (plain[1].x - plain[2].x).abs() > dx + 3.0,
+            "a plain way crosses on the long diagonal: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn a_risk_averse_walker_spends_less_road_than_a_risk_tolerant_one() {
+        let portals = [
+            (Vec2::new(-5.0, 0.0), Vec2::new(30.0, 0.0)),
+            (Vec2::new(-5.0, 8.0), Vec2::new(30.0, 8.0)),
+        ];
+        let (start, end) = (Vec2::new(0.0, -1.0), Vec2::new(20.0, 9.0));
+        let road_leg = |risk: f64| {
+            let f = road_factor(risk);
+            let pts = weighted_pull(start, &portals, &[1.0, f, 1.0], end);
+            pts[1].distance(pts[2])
+        };
+        let (averse, tolerant) = (road_leg(0.0), road_leg(1.0));
+        assert!(averse < tolerant - 0.2, "{averse} vs {tolerant}");
+        assert!(averse < 8.8, "nearly perpendicular: {averse}");
     }
 
     #[test]

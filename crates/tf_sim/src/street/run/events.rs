@@ -60,6 +60,11 @@ pub enum CauseKind {
     AcceptedShortGap {
         gap_s: f64,
     },
+    /// A walker on the road had to hurry to clear a vehicle that did not slow down.
+    HurriedOnRoad,
+    /// A walker already on the road kept its pace when a car came, expecting the driver
+    /// to stop (it has priority once engaged, R415-11 at a crossing).
+    KeptPaceOnRoad,
 }
 
 impl CauseKind {

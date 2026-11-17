@@ -36,9 +36,10 @@ use super::drive::DT;
 use super::drive::Seen;
 use super::events::{CauseKind, StreetEvent, rounded, rounded_point};
 use super::grid::Grid;
-use super::kerb::KerbChoice;
+use super::kerb::{HURRY_FACTOR, KerbChoice};
+use super::walk::road_factor;
 use super::walk::{WalkSpace, Wall};
-use super::walker::{Walker, WalkerSeen};
+use super::walker::{RoadAct, Walker, WalkerSeen};
 use super::{CONFLICT_COOLDOWN_S, GIVE_UP_S};
 use crate::geom::polygon::segment_intersection;
 use crate::geom::segment::closest_point_to_segment;
@@ -213,6 +214,8 @@ struct Decided {
     kerb: Option<KerbChoice>,
     /// The obstacle it goes around and on which side (true = right).
     detour: Option<(usize, bool)>,
+    /// The decision of a look at the vehicles made this tick, by a walker on the road.
+    road: Option<RoadAct>,
 }
 
 /// The push of a gap that closes under `range`.
@@ -340,7 +343,20 @@ impl StreetRun {
             going || walker.cleared_kerb == Some(walker.area_index),
         );
         let portals = self.walker_portals(walker);
-        let (target, _) = Self::walk_target_in(path, &portals, walker.area_index, walker.pos);
+        let (target, _) = Self::walk_target_in(
+            path,
+            &portals,
+            walker.area_index,
+            walker.pos,
+            road_factor(walker.traits.risk),
+        );
+        let road = self.road_look(walker);
+        let act = road.unwrap_or(walker.road_act);
+        let target = if act == RoadAct::Back {
+            self.road_back_target(walker)
+        } else {
+            target
+        };
         let (target, detour) = self.detour(walker, target);
         let to_target = (target - walker.pos).normalize_or_zero();
         let heading = if walker.vel.length_squared() > 0.01 {
@@ -452,6 +468,10 @@ impl StreetRun {
         }
         if kerb == Some(KerbChoice::Wait) || (car_ahead && !open.is_empty()) {
             pace = 0.0;
+        } else if act == RoadAct::Hurry {
+            pace *= HURRY_FACTOR as f32;
+        } else if act == RoadAct::Stop {
+            pace = 0.0;
         }
         let desired = to_target * (walker.desired_speed as f32 * pace);
         force += (desired - v) / RELAX_S;
@@ -460,6 +480,7 @@ impl StreetRun {
             density,
             kerb,
             detour,
+            road,
         }
     }
 
@@ -576,6 +597,7 @@ impl StreetRun {
                 density,
                 kerb,
                 detour,
+                road,
             },
             cut_blocked,
         ) in self
@@ -586,6 +608,16 @@ impl StreetRun {
             .map(|((w, d), b)| (w, d, b))
         {
             walker.detour = detour;
+            if let Some(act) = road
+                && act != walker.road_act
+            {
+                match act {
+                    RoadAct::Hurry => walker.recent.push((tick, CauseKind::HurriedOnRoad)),
+                    RoadAct::Hold => walker.recent.push((tick, CauseKind::KeptPaceOnRoad)),
+                    _ => {}
+                }
+                walker.road_act = act;
+            }
             walker
                 .recent
                 .retain(|(t, _)| (tick - t) as f64 * DT <= WALKER_CAUSE_S);
@@ -638,7 +670,12 @@ impl StreetRun {
             walker.accel = force;
             walker.vel_before = walker.vel;
             walker.density += (density - walker.density) * (DT / DENSITY_SMOOTH_S).min(1.0);
-            let cap = (walker.desired_speed as f32 * MAX_SPEED_FACTOR).max(0.1);
+            let top = if walker.road_act == RoadAct::Hurry {
+                HURRY_FACTOR as f32
+            } else {
+                MAX_SPEED_FACTOR
+            };
+            let cap = (walker.desired_speed as f32 * top).max(0.1);
             walker.vel = (walker.vel + force * DT as f32).clamp_length_max(cap);
             walker.prev_pos = walker.pos;
             walker.pos += walker.vel * DT as f32;
