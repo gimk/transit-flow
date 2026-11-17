@@ -34,7 +34,7 @@
 
 use indexmap::IndexMap;
 
-use super::drive::{COMFORT_BRAKE, DT, travel_time};
+use super::drive::{BRAKE_RISE_S, COMFORT_BRAKE, DT, travel_time};
 use super::route::RoutePath;
 use super::walk::{AreaKind, WalkSpace};
 use super::walker::Walker;
@@ -131,6 +131,32 @@ pub(super) fn road_areas_of(
                     line: vec![(d, point)],
                 }),
             }
+        }
+    }
+    // The samples are `ROUTE_STEP` apart: the true edges of the area are found between the
+    // last sample outside and the first inside (and the other way at the exit), so a
+    // vehicle's stop line is the painted edge, not the sample after it.
+    for entry in &mut found {
+        let polygon = &space.areas[entry.area].polygon;
+        let inside = |d: f64| polygon.contains(route.point(street, d));
+        let edge = |outside: f64, within: f64| {
+            let (mut out, mut inn) = (outside, within);
+            for _ in 0..20 {
+                let mid = 0.5 * (out + inn);
+                if inside(mid) {
+                    inn = mid;
+                } else {
+                    out = mid;
+                }
+            }
+            inn
+        };
+        let (enter, exit) = (entry.enter, entry.exit);
+        if enter > 0.0 {
+            entry.enter = edge((enter - ROUTE_STEP).max(0.0), enter);
+        }
+        if exit < route.length {
+            entry.exit = edge((exit + ROUTE_STEP).min(route.length), exit);
         }
     }
     found
@@ -355,14 +381,26 @@ impl StreetRun {
                     continue;
                 }
                 let distance = enter - front;
+                // Whether it can stop is measured to the line its driver stops at: on a
+                // zebra the painted edge less the margin (`yielding::stop_line`).
+                let to_line = if matches!(
+                    self.walk_space.areas[route_area.area].kind,
+                    AreaKind::Crossing { .. }
+                ) {
+                    super::yielding::stop_line(route_area) - front
+                } else {
+                    distance
+                };
                 let v = seen.speed;
                 let (time, can_stop) = if distance <= 0.0 {
                     (0.0, false)
                 } else if v > STANDING_SPEED {
-                    let stop = v * v / (2.0 * COMFORT_BRAKE) + v * TRUST_REACTION_S;
+                    // The driver reacts after its reaction time, then the brake builds up.
+                    let stop =
+                        v * v / (2.0 * COMFORT_BRAKE) + v * (TRUST_REACTION_S + BRAKE_RISE_S * 0.5);
                     (
                         (distance / v - age).max(0.0),
-                        distance - v * age > stop + TRUST_MARGIN,
+                        to_line - v * age > stop + TRUST_MARGIN,
                     )
                 } else {
                     let limit = self.street.lanes[&seen.lane].speed_limit;
@@ -371,7 +409,7 @@ impl StreetRun {
                         .is_some_and(|since| (self.tick - since) as f64 * DT >= INTENT_SHOWN_S);
                     (
                         travel_time(distance, 0.0, limit),
-                        distance > START_REACH || shown,
+                        to_line > START_REACH || shown,
                     )
                 };
                 found.push((time, can_stop));

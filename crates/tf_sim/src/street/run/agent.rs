@@ -208,6 +208,8 @@ pub struct Agent {
     /// Metres per second.
     pub speed: f64,
     pub accel: f64,
+    /// The hardest braking this vehicle does on a dry road, m/s² (`drive::draw_max_brake`).
+    pub max_brake: f64,
     pub length: f64,
     pub width: f64,
     /// Middle of the body and unit heading; `prev_*` is the pose one tick before (for

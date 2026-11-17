@@ -241,11 +241,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// constant, a new rule), and then the commit must say so (CLAUDE.md, "Golden and trace
 /// tests"); if it is not, the change is a bug. Never edit a hash to make a test pass
 /// without knowing why it moved.
+// Moved on purpose with the braking model (needed deceleration over the distance left,
+// per-vehicle maximum brake, brake build-up): old c59d2a872df0c53f, 0148f27719f690e1,
+// ac1abcfab98750b6, 6cd5807b2a438da1.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0xc59d_2a87_2df0_c53f),
-    (2, Population::Mixed, 1.0, 0x0148_f277_19f6_90e1),
-    (1, Population::Careless, 4.0, 0xac1a_bcfa_b987_50b6),
-    (2, Population::Careless, 4.0, 0x6cd5_807b_2a43_8da1),
+    (1, Population::Mixed, 1.0, 0xb038_60f6_6190_c142),
+    (2, Population::Mixed, 1.0, 0xc998_a0ed_29cb_b4b7),
+    (1, Population::Careless, 4.0, 0x29d4_0c18_a8e4_40e3),
+    (2, Population::Careless, 4.0, 0x515b_3374_5471_b714),
 ];
 
 #[test]
