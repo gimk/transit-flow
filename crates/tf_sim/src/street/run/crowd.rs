@@ -333,12 +333,14 @@ impl StreetRun {
         let kerb = self.kerb_choice(walker);
         let path = &self.walk_paths[walker.path];
         let going = matches!(kerb, Some(KerbChoice::Go { .. }));
-        let open = self.walk_space.open_roads(
+        let open = Self::open_for(
+            &self.walk_space,
             path,
-            walker.area_index,
+            walker,
             going || walker.cleared_kerb == Some(walker.area_index),
         );
-        let (target, _) = Self::walk_target(path, walker.area_index, walker.pos);
+        let portals = self.walker_portals(walker);
+        let (target, _) = Self::walk_target_in(path, &portals, walker.area_index, walker.pos);
         let (target, detour) = self.detour(walker, target);
         let to_target = (target - walker.pos).normalize_or_zero();
         let heading = if walker.vel.length_squared() > 0.01 {
@@ -525,11 +527,20 @@ impl StreetRun {
         if self.walkers.is_empty() {
             return;
         }
+        self.way_stage();
         let snapshot = self.history.back().expect("there is always a snapshot");
         let decided: Vec<Decided> = self
             .walkers
             .values()
             .map(|w| self.walker_force(w, &snapshot.walkers, &snapshot.walker_grid, &snapshot.seen))
+            .collect();
+        let blocked: Vec<bool> = self
+            .walkers
+            .values()
+            .zip(&decided)
+            .map(|(walker, d)| {
+                matches!(d.kerb, Some(KerbChoice::Go { .. })) && self.cut_blocked(walker)
+            })
             .collect();
         let mut stats = self.walk_stats;
         let tick = self.tick;
@@ -566,7 +577,13 @@ impl StreetRun {
                 kerb,
                 detour,
             },
-        ) in self.walkers.values_mut().zip(decided)
+            cut_blocked,
+        ) in self
+            .walkers
+            .values_mut()
+            .zip(decided)
+            .zip(blocked)
+            .map(|((w, d), b)| (w, d, b))
         {
             walker.detour = detour;
             walker
@@ -594,6 +611,9 @@ impl StreetRun {
                     on_red,
                     short_gap,
                 }) => {
+                    if cut_blocked {
+                        walker.no_cut = Some(walker.area_index);
+                    }
                     walker.cleared_kerb = Some(walker.area_index);
                     walker.kerb_since = None;
                     if on_red {
@@ -653,7 +673,7 @@ impl StreetRun {
                 }
                 let path = &self.walk_paths[walker.path];
                 let cleared = walker.cleared_kerb == Some(walker.area_index);
-                let open = self.walk_space.open_roads(path, walker.area_index, cleared);
+                let open = Self::open_for(&self.walk_space, path, walker, cleared);
                 walker.pos = push_out(
                     &self.walk_space,
                     walker.pos,
@@ -672,7 +692,7 @@ impl StreetRun {
         for walker in self.walkers.values_mut() {
             let path = &self.walk_paths[walker.path];
             let cleared = walker.cleared_kerb == Some(walker.area_index);
-            let open = self.walk_space.open_roads(path, walker.area_index, cleared);
+            let open = Self::open_for(&self.walk_space, path, walker, cleared);
             if !self.walk_space.contains_for(walker.pos, &open) {
                 walker.pos = walker.prev_pos;
                 stats.held_back += 1;
@@ -874,7 +894,7 @@ impl StreetRun {
                     vel: walker.vel,
                     radius: walker.radius,
                     group: walker.group,
-                    area: Some(path.areas[k]),
+                    area: Some(self.walker_area(walker)),
                     intent: if about_to_step { next } else { None },
                     hit: walker.hit(),
                 }
