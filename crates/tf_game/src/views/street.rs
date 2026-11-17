@@ -15,6 +15,7 @@ use super::{ViewMaterial, palette, spawn_shape, z};
 use crate::camera::sim_to_bevy;
 use crate::draw::ShapeBuilder;
 use crate::level::{LoadedLevel, PX_PER_M, level_to_world};
+use crate::views::speed_signs::{lane_point, marking_span};
 
 pub const OUTSIDE_COLOR: Color = palette::OUTSIDE;
 pub const BLOCK_COLOR: Color = palette::BLOCK;
@@ -122,7 +123,12 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
             }
         }
         for lane in street.segment_lanes(segment.id) {
-            draw_arrows(&mut markings, &lane.polyline());
+            draw_arrows(
+                &mut markings,
+                &lane.polyline(),
+                lane.length as f32,
+                marking_span(street, lane),
+            );
         }
     }
     for bar in zebra_bars(street) {
@@ -260,31 +266,50 @@ fn draw_separator(shapes: &mut ShapeBuilder, separator: Separator, edge: &[Vec2]
     }
 }
 
-/// A small chevron every `ARROW_SPACING` metres along a lane, pointing its way.
-fn draw_arrows(shapes: &mut ShapeBuilder, lane: &[Vec2]) {
-    let mut walked = 0.0;
-    let mut next = ARROW_SPACING * 0.5;
-    for pair in lane.windows(2) {
-        let length = pair[0].distance(pair[1]);
-        let direction = (pair[1] - pair[0]).normalize_or_zero();
-        let side = Vec2::new(-direction.y, direction.x);
-        while next <= walked + length {
-            let tip = pair[0] + direction * (next - walked);
-            let back = tip - direction * ARROW_SIZE;
-            let width = 0.12 * PX_PER_M;
-            shapes.polyline(
-                &[to_bevy(back + side * ARROW_SIZE * 0.6), to_bevy(tip)],
-                width,
-                ARROW_COLOR,
-            );
-            shapes.polyline(
-                &[to_bevy(back - side * ARROW_SIZE * 0.6), to_bevy(tip)],
-                width,
-                ARROW_COLOR,
-            );
-            next += ARROW_SPACING;
+/// Metres kept between an arrow and the speed marking on its lane: an arrow whose shape
+/// comes closer is not drawn.
+pub const ARROW_CLEARANCE_M: f32 = 1.0;
+
+/// The distances along a lane of length `length` metres where its arrow tips are, in order.
+pub fn arrow_tips(length: f32) -> impl Iterator<Item = f32> {
+    (0..)
+        .map(|k| ARROW_SPACING * 0.5 + k as f32 * ARROW_SPACING)
+        .take_while(move |tip| *tip <= length)
+}
+
+/// Whether the arrow with its tip `tip` metres down a lane stays clear of the lane's speed
+/// marking `span` (see `speed_signs::marking_span`). The arrow covers `ARROW_SIZE` metres
+/// back from its tip. The arrow and the marking are both on the lane line, so their
+/// distance is the gap along the lane.
+pub fn arrow_clear_of(tip: f32, span: Option<(f32, f32)>) -> bool {
+    match span {
+        None => true,
+        Some((from, to)) => {
+            tip + ARROW_CLEARANCE_M <= from || tip - ARROW_SIZE >= to + ARROW_CLEARANCE_M
         }
-        walked += length;
+    }
+}
+
+/// A small chevron every `ARROW_SPACING` metres along a lane, pointing its way. Arrows that
+/// would touch the lane's speed marking are left out.
+fn draw_arrows(shapes: &mut ShapeBuilder, lane: &[Vec2], length: f32, span: Option<(f32, f32)>) {
+    for tip in arrow_tips(length).filter(|tip| arrow_clear_of(*tip, span)) {
+        let Some((at, direction)) = lane_point(lane, tip) else {
+            continue;
+        };
+        let side = Vec2::new(-direction.y, direction.x);
+        let back = at - direction * ARROW_SIZE;
+        let width = 0.12 * PX_PER_M;
+        shapes.polyline(
+            &[to_bevy(back + side * ARROW_SIZE * 0.6), to_bevy(at)],
+            width,
+            ARROW_COLOR,
+        );
+        shapes.polyline(
+            &[to_bevy(back - side * ARROW_SIZE * 0.6), to_bevy(at)],
+            width,
+            ARROW_COLOR,
+        );
     }
 }
 
@@ -316,5 +341,86 @@ pub struct StreetViewPlugin;
 impl Plugin for StreetViewPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, rebuild_street_view);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::views::speed_signs::{DIGIT_GAP_M, DIGIT_HEIGHT_M, DIGIT_WIDTH_M};
+    use tf_sim::street::{Design, LevelFile};
+
+    fn street() -> Street {
+        let level = LevelFile::load("carrefour-ecole").expect("loads");
+        Street::from_level_and_design(&level, &Design::new(&level.id)).expect("builds")
+    }
+
+    #[test]
+    fn the_clearance_rule_at_its_edges() {
+        // The arrow with its tip at 7.5 m covers 6.5 m to 7.5 m.
+        let tip = 7.5;
+        // Clear: the marking ends 1 m before the arrow's back, or starts 1 m after its tip.
+        assert!(arrow_clear_of(tip, None));
+        assert!(arrow_clear_of(tip, Some((2.75, 5.25))));
+        assert!(arrow_clear_of(tip, Some((0.0, 5.5))));
+        assert!(arrow_clear_of(tip, Some((8.5, 9.0))));
+        // Not clear: less than 1 m between them, or the marking under the arrow.
+        assert!(!arrow_clear_of(tip, Some((5.6, 6.4))));
+        assert!(!arrow_clear_of(tip, Some((6.0, 8.0))));
+        assert!(!arrow_clear_of(tip, Some((8.0, 9.0))));
+    }
+
+    #[test]
+    fn no_drawn_arrow_comes_within_1_m_of_a_speed_marking() {
+        let street = street();
+        let across = (2.0 * DIGIT_WIDTH_M + DIGIT_GAP_M) * 0.5;
+        let half = DIGIT_HEIGHT_M * 0.5;
+        let mut markings = 0;
+        for segment in street.segments.keys() {
+            for lane in street.segment_lanes(*segment) {
+                let Some((from, to)) = marking_span(&street, lane) else {
+                    continue;
+                };
+                markings += 1;
+                let line = lane.polyline();
+                // The marking's footprint, sampled on its edges and its centre line.
+                let mut marking = Vec::new();
+                for k in 0..=40 {
+                    let t = from + k as f32 * (to - from) / 40.0;
+                    let (p, d) = lane_point(&line, t).expect("on the lane");
+                    let n = Vec2::new(-d.y, d.x);
+                    for side in [-across, 0.0, across] {
+                        marking.push(p + n * side);
+                    }
+                }
+                assert!((to - from - 2.0 * half).abs() < 1e-3);
+                for tip in arrow_tips(lane.length as f32) {
+                    if !arrow_clear_of(tip, Some((from, to))) {
+                        continue;
+                    }
+                    // A drawn arrow: its footprint (0.6 m either side of the line, from
+                    // ARROW_SIZE back to the tip) must stay 1 m from the marking.
+                    let mut closest = f32::MAX;
+                    for k in 0..=20 {
+                        let t = tip - ARROW_SIZE + k as f32 * ARROW_SIZE / 20.0;
+                        let (p, d) = lane_point(&line, t).expect("on the lane");
+                        let n = Vec2::new(-d.y, d.x);
+                        for side in [-0.6, 0.0, 0.6] {
+                            let q = p + n * side;
+                            for m in &marking {
+                                closest = closest.min(q.distance(*m));
+                            }
+                        }
+                    }
+                    // Sampling can miss the closest pair by about 0.1 m.
+                    assert!(
+                        closest >= ARROW_CLEARANCE_M - 0.1,
+                        "arrow at {tip} m is {closest} m from a marking (segment {})",
+                        lane.segment_id.unwrap_or(-1)
+                    );
+                }
+            }
+        }
+        assert!(markings > 0, "the level has speed markings");
     }
 }

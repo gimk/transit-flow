@@ -13,6 +13,7 @@
 use bevy::color::Alpha;
 use bevy::prelude::*;
 use tf_sim::street::Street;
+use tf_sim::street::lanes::StreetLane;
 use tf_sim::street::space::Access;
 
 use super::{ViewMaterial, palette, spawn_shape, z};
@@ -50,7 +51,7 @@ pub struct SignSpot {
 
 /// The point `along` metres down `line`, clamped to its ends, and the unit direction of
 /// travel there.
-fn lane_point(line: &[Vec2], along: f32) -> Option<(Vec2, Vec2)> {
+pub fn lane_point(line: &[Vec2], along: f32) -> Option<(Vec2, Vec2)> {
     let mut walked = 0.0;
     let mut last = None;
     for pair in line.windows(2) {
@@ -110,42 +111,71 @@ fn clear_of_bars(line: &[Vec2], bars: &[Vec<Vec2>], along: f32) -> bool {
     true
 }
 
-/// The markings of one segment: for each way, the motor lane with the greatest `lateral`
-/// (the right-most one: the one nearest the kerb of its own way). The marking starts
-/// `SIGN_INSET_M` down the lane and moves further along it until it is clear of the
-/// crossings; a lane with no clear place gets no marking.
+/// The motor lane of `segment` that carries the marking of one way (`forward` or not): the
+/// one with the greatest `lateral`, the right-most one, nearest the kerb of its own way.
+fn marked_lane(street: &Street, segment: i32, forward: bool) -> Option<&StreetLane> {
+    let from = street.segments.get(&segment)?.from;
+    street
+        .segment_lanes(segment)
+        .filter(|lane| lane.access.intersects(Access::MOTOR))
+        .filter(|lane| (lane.from_node == from) == forward)
+        .max_by(|a, b| a.lateral.total_cmp(&b.lateral))
+}
+
+/// Where the marking sits on `lane`: the metres from its start to the centre of the
+/// marking, or `None` when the lane carries no marking. The marking starts `SIGN_INSET_M`
+/// down the lane and moves further along it until it is clear of the crossings; a lane
+/// with no clear place gets no marking.
+fn marking_place(street: &Street, lane: &StreetLane) -> Option<f32> {
+    let segment = lane.segment_id?;
+    let forward = lane.from_node == street.segments.get(&segment)?.from;
+    if marked_lane(street, segment, forward)?.id != lane.id {
+        return None;
+    }
+    let line = lane.polyline();
+    let bars: Vec<Vec<Vec2>> = street
+        .crossings
+        .values()
+        .filter(|crossing| crossing.segment == segment)
+        .flat_map(|crossing| crossing_bars(street, crossing))
+        .collect();
+    let half = DIGIT_HEIGHT_M * 0.5;
+    let last = lane.length as f32 - half;
+    (0..)
+        .map(|step| SIGN_INSET_M.max(half) + step as f32 * SEARCH_STEP_M)
+        .take_while(|along| *along <= last)
+        .find(|along| clear_of_bars(&line, &bars, *along))
+}
+
+/// The stretch of `lane` (metres from its start, first and last) that its speed marking
+/// covers along the traffic, or `None` when the lane carries no marking. Direction arrows
+/// on the lane keep clear of it (`views::street`). The marking is centred on the lane
+/// line, so this span is also where it lies across the lane.
+pub fn marking_span(street: &Street, lane: &StreetLane) -> Option<(f32, f32)> {
+    let along = marking_place(street, lane)?;
+    let half = DIGIT_HEIGHT_M * 0.5;
+    Some((along - half, along + half))
+}
+
+/// The markings of one segment: one for each way, on its marked lane (see `marked_lane`).
 pub fn segment_signs(street: &Street, segment: i32) -> Vec<SignSpot> {
     let mut spots = Vec::new();
-    let Some(segment) = street.segments.get(&segment) else {
+    let Some(kmh) = street.segments.get(&segment).map(|s| s.speed_limit_kmh) else {
         return spots;
     };
     for forward in [true, false] {
-        let lane = street
-            .segment_lanes(segment.id)
-            .filter(|lane| lane.access.intersects(Access::MOTOR))
-            .filter(|lane| (lane.from_node == segment.from) == forward)
-            .max_by(|a, b| a.lateral.total_cmp(&b.lateral));
-        let Some(lane) = lane else { continue };
-        let line = lane.polyline();
-        let bars: Vec<Vec<Vec2>> = street
-            .crossings
-            .values()
-            .filter(|crossing| crossing.segment == segment.id)
-            .flat_map(|crossing| crossing_bars(street, crossing))
-            .collect();
-        let half = DIGIT_HEIGHT_M * 0.5;
-        let last = lane.length as f32 - half;
-        let placed = (0..)
-            .map(|step| SIGN_INSET_M.max(half) + step as f32 * SEARCH_STEP_M)
-            .take_while(|along| *along <= last)
-            .find(|along| clear_of_bars(&line, &bars, *along));
-        let Some(along) = placed else { continue };
-        if let Some((position, direction)) = lane_point(&line, along) {
+        let Some(lane) = marked_lane(street, segment, forward) else {
+            continue;
+        };
+        let Some(along) = marking_place(street, lane) else {
+            continue;
+        };
+        if let Some((position, direction)) = lane_point(&lane.polyline(), along) {
             spots.push(SignSpot {
-                segment: segment.id,
+                segment,
                 position,
                 direction,
-                kmh: segment.speed_limit_kmh,
+                kmh,
             });
         }
     }
