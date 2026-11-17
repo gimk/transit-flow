@@ -4,7 +4,9 @@
 //! hash; `--events` prints the event log first. Use it to check a design or a
 //! population without the window.
 //! Run: `cargo run -p tf_sim --release --bin run_level -- <level-id> [--design <file.json>]
-//! [--seed <n>] [--population careful|mixed|careless] [--demand-scale <x>] [--events]`.
+//! [--seed <n>] [--population careful|mixed|careless] [--demand-scale <x>] [--stage <n>]
+//! [--events]`. `--stage` sets the demand scale of that star stage (from 1) and prints the
+//! stage report; `--demand-scale` overrides the scale.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -13,16 +15,18 @@ use tf_sim::street::design::Design;
 use tf_sim::street::level::{LevelError, LevelFile, level_ids};
 use tf_sim::street::run::agent::Population;
 use tf_sim::street::run::{RunOptions, StreetRun, TICK_RATE};
+use tf_sim::street::score::{StageReport, stage_options, stage_report};
 
 const USAGE: &str = "usage: run_level <level-id> [--design <file.json>] [--seed <n>] \
-[--population careful|mixed|careless] [--demand-scale <x>] [--events]";
+[--population careful|mixed|careless] [--demand-scale <x>] [--stage <n>] [--events]";
 
 struct Args {
     level: String,
     design: Option<String>,
     seed: Option<u64>,
     population: Population,
-    demand_scale: f64,
+    demand_scale: Option<f64>,
+    stage: Option<usize>,
     events: bool,
 }
 
@@ -48,7 +52,8 @@ fn parse(raw: &[String]) -> Result<Args, String> {
         design: None,
         seed: None,
         population: Population::Mixed,
-        demand_scale: 1.0,
+        demand_scale: None,
+        stage: None,
         events: false,
     };
     let mut rest = raw.iter();
@@ -65,9 +70,16 @@ fn parse(raw: &[String]) -> Result<Args, String> {
             "--population" => args.population = population(&value(&mut rest, arg)?)?,
             "--demand-scale" => {
                 let text = value(&mut rest, arg)?;
-                args.demand_scale = match text.parse::<f64>() {
+                args.demand_scale = Some(match text.parse::<f64>() {
                     Ok(scale) if scale.is_finite() && scale >= 0.0 => scale,
                     _ => return Err(format!("demand scale {text} must be a number of 0 or more")),
+                });
+            }
+            "--stage" => {
+                let text = value(&mut rest, arg)?;
+                args.stage = match text.parse::<usize>() {
+                    Ok(stage) if stage >= 1 => Some(stage),
+                    _ => return Err(format!("stage {text} must be a whole number from 1")),
                 };
             }
             "--events" => args.events = true,
@@ -81,6 +93,39 @@ fn parse(raw: &[String]) -> Result<Args, String> {
     }
     args.level = level.ok_or_else(|| "missing level id".to_string())?;
     Ok(args)
+}
+
+fn print_report(report: &StageReport) {
+    let verdict = if report.passed { "PASSED" } else { "FAILED" };
+    println!(
+        "stage {}: {verdict}, score {:.1} (needs {:.0}); safety -{:.1}, serenity -{:.1}, life +{:.1}",
+        report.stage,
+        report.score,
+        report.pass_score,
+        report.parts.safety,
+        report.parts.serenity,
+        report.parts.life
+    );
+    if let Some(reason) = &report.hard_fail {
+        println!("hard fail: {reason:?}");
+    }
+    for mode in &report.per_mode {
+        println!(
+            "  {:?}: spawned {}, arrived {}, gave up {}, mean delay {:.1} s, mean annoyance {:.3}",
+            mode.mode,
+            mode.spawned,
+            mode.arrived,
+            mode.gave_up,
+            mode.mean_delay_s,
+            mode.mean_annoyance
+        );
+    }
+    for reason in &report.top_reasons {
+        println!("  why: {reason}");
+    }
+    for incident in &report.incidents {
+        println!("  [{:.1} s] {}", incident.time_s, incident.text);
+    }
 }
 
 fn run(args: &Args) -> Result<(), String> {
@@ -110,11 +155,23 @@ fn run(args: &Args) -> Result<(), String> {
 
     let mut options = RunOptions::for_level(&level);
     options.population = args.population;
-    options.demand_scale = args.demand_scale;
+    if let Some(stage) = args.stage {
+        options = stage_options(&level, stage).ok_or_else(|| {
+            format!(
+                "level {} has {} stages, not {stage}",
+                level.id,
+                level.stages.len()
+            )
+        })?;
+        options.population = args.population;
+    }
+    if let Some(scale) = args.demand_scale {
+        options.demand_scale = scale;
+    }
     if let Some(seed) = args.seed {
         options.seed = seed;
     }
-    let (seed, population) = (options.seed, args.population);
+    let (seed, population, scale) = (options.seed, args.population, options.demand_scale);
     let mut run = StreetRun::new(&level, &design, options)
         .map_err(|error| format!("the design does not build: {error:?}"))?;
 
@@ -122,7 +179,7 @@ fn run(args: &Args) -> Result<(), String> {
         "level {} seed {seed} population {} scale {}",
         level.id,
         format!("{population:?}").to_lowercase(),
-        args.demand_scale
+        scale
     );
 
     let start = Instant::now();
@@ -154,6 +211,9 @@ fn run(args: &Args) -> Result<(), String> {
         run.walkers.len()
     );
     println!("log hash: {:016x}", run.log_hash());
+    if let Some(stage) = args.stage {
+        print_report(&stage_report(&run, &level, stage));
+    }
 
     let sim_s = summary.ticks as f64 / f64::from(TICK_RATE);
     let speed = if wall_s > 0.0 {

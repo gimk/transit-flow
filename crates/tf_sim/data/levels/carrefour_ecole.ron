@@ -158,6 +158,10 @@
     ],
     constraints: [MinSidewalkWidth(1.8)],
     tools: ["zebra", "speed_limit", "bollards", "signals"],
-    stars: [60.0, 80.0],
+    stages: [
+        (demand_scale: 1.0, pass_score: 60.0),
+        (demand_scale: 1.6, pass_score: 60.0),
+        (demand_scale: 2.5, pass_score: 60.0),
+    ],
     seed: 1,
 )
