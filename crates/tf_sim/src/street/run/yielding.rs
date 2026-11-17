@@ -70,9 +70,11 @@ pub struct CrossingApproach {
     pub looks: bool,
     /// The front has entered it (the careful check has been made).
     pub entered: bool,
-    /// Coming up to it, the last walker a careful driver would have yielded to and this
-    /// one did not (kept until the front enters the zebra).
-    pub pending_yield: Option<AgentId>,
+    /// Coming up to it, every walker a careful driver would have yielded to and this one
+    /// did not, in the order they came up (kept until the front enters the zebra). All of
+    /// them, not the first: a person who steps out later, while an earlier one is still on
+    /// the zebra, must still be named when the driver hits them.
+    pub pending_yield: Vec<AgentId>,
     /// Coming up to it with a hidden kerb, the worst (speed, careful limit), m/s.
     pub worst_fast: Option<(f64, f64)>,
 }
@@ -96,6 +98,8 @@ pub struct WalkerView {
     pub blocker: Option<AgentId>,
     /// The walker a careful driver yields to at the next zebra.
     pub yield_to: Option<AgentId>,
+    /// Every walker a careful driver yields to at the next zebra (`yield_to` is the first).
+    pub yield_all: Vec<AgentId>,
     /// The limit of a hidden zebra, and what hides its kerb.
     pub hidden: Option<(f64, Hider)>,
 }
@@ -225,6 +229,7 @@ pub fn walker_view(
                         view.blocker = Some(walker.id);
                     }
                     view.yield_to.get_or_insert(walker.id);
+                    view.yield_all.push(walker.id);
                 }
             }
         }
@@ -292,11 +297,11 @@ pub fn stop_point(agent: &Agent, line_d: f64, peds: Option<&PedWorld>) -> (f64, 
 /// slower: what the careful check found while the driver came up to it.
 pub fn crossing_causes(approach: &CrossingApproach) -> Vec<CauseKind> {
     let mut causes = Vec::new();
-    if let Some(walker) = approach.pending_yield {
+    for walker in &approach.pending_yield {
         causes.push(if approach.looks {
-            CauseKind::DidNotYieldToWalker { to: walker }
+            CauseKind::DidNotYieldToWalker { to: *walker }
         } else {
-            CauseKind::DidNotLook { at: walker }
+            CauseKind::DidNotLook { at: *walker }
         });
     }
     if let Some((speed, limit)) = approach.worst_fast {

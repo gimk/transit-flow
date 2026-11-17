@@ -10,6 +10,7 @@ use tf_sim::street::Design;
 use tf_sim::street::level::{LevelFile, Mode};
 use tf_sim::street::run::GIVE_UP_S;
 use tf_sim::street::run::drive::DT;
+use tf_sim::street::run::events::EndReason;
 use tf_sim::street::run::{
     Population, RunOptions, StreetEvent, StreetRun, WalkSpawn, Walker, is_walker,
 };
@@ -158,12 +159,21 @@ impl Arrivals {
                 _ => None,
             })
             .collect();
+        // A walker taken out by a logged contact with a vehicle does not arrive.
+        let hit: Vec<AgentId> = run
+            .events()
+            .iter()
+            .filter_map(|e| match e.event {
+                StreetEvent::Contact { b, .. } if is_walker(b) => Some(b),
+                _ => None,
+            })
+            .collect();
         let mut due = 0;
         for (id, (spawn_s, free_s)) in &self.seen {
             if spawn_s + 2.0 * free_s + 20.0 + GIVE_UP_S <= end_s {
                 due += 1;
                 assert!(
-                    arrived.contains(id) || gone.contains(id),
+                    arrived.contains(id) || gone.contains(id) || hit.contains(id),
                     "{what}: {id:?} came in at {spawn_s} s (free walk {free_s:.1} s) and has \
                      not arrived by {end_s} s"
                 );
@@ -501,9 +511,15 @@ fn pedestrians_spawn_from_the_level_demand_and_do_not_shift_the_vehicles() {
                 .collect()
         };
         if scale == 1.0 {
+            // A death ends the run with people on the street: the run without them goes
+            // on, so only the cars that came in before the end are compared.
+            let mut cars_without = vehicle_events(&without);
+            if with.ended() == Some(EndReason::Death) {
+                cars_without.truncate(vehicle_events(&with).len());
+            }
             assert_eq!(
                 vehicle_events(&with),
-                vehicle_events(&without),
+                cars_without,
                 "seed {seed} {population:?} x{scale}"
             );
         }

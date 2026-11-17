@@ -10,6 +10,7 @@
 //! - `lanes`: lanes on strips and the movements through junctions.
 //! - `model`: `Street`, the space of one level with a design applied.
 //! - `signals`: signal plans (fixed cycles of phases per approach).
+//! - `speed`: the speed a street asks for by its look (width, side friction, sight).
 //! - `run`: one run of a level: the agents, their decisions, conflicts and contacts.
 
 pub mod design;
@@ -20,6 +21,7 @@ pub mod model;
 pub mod run;
 pub mod signals;
 pub mod space;
+pub mod speed;
 
 pub use design::{Design, DesignCommand};
 pub use ids::{AgentId, StreetLaneId};
