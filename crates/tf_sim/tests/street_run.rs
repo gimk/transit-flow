@@ -241,22 +241,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// constant, a new rule), and then the commit must say so (CLAUDE.md, "Golden and trace
 /// tests"); if it is not, the change is a bug. Never edit a hash to make a test pass
 /// without knowing why it moved.
-// Moved on purpose with the braking model (needed deceleration over the distance left,
-// per-vehicle maximum brake, brake build-up): old c59d2a872df0c53f, 0148f27719f690e1,
-// ac1abcfab98750b6, 6cd5807b2a438da1.
-// Moved on purpose with the pedestrian decisions (WP9: red lights, zebra or free way,
-// gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
-// c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
-// Merge of WP14 (soft brake, careless hashes moved) and WP15 (local street speed): the
-// combined hashes are set by the next commit of the WP14 branch, which reruns this test.
-// Moved on purpose with the local street speed (WP15: the street speed is a profile along
-// the lane, drivers look at the cells ahead): old 7bcf23c003b136af, f83b4be3e0ec9a3b,
-// c67d95ae8ac22058, e1636157bb65fa60.
+// Moved on purpose with the soft-brake and walker-intent fixes (WP14) on top of the local
+// street speed (WP15); before WP14 (WP15 only): 78644365565bbb77, b7b403445c80ff10,
+// 6bbbe6eb028714d6, 5c53ad09f84cb7ca.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x7864_4365_565b_bb77),
-    (2, Population::Mixed, 1.0, 0xb7b4_0344_5c80_ff10),
-    (1, Population::Careless, 4.0, 0x6bbb_e6eb_0287_14d6),
-    (2, Population::Careless, 4.0, 0x5c53_ad09_f84c_b7ca),
+    (1, Population::Mixed, 1.0, 0x5cfe_9cc1_4a6f_d06a),
+    (2, Population::Mixed, 1.0, 0xf299_f8c3_4180_579a),
+    (1, Population::Careless, 4.0, 0x69a8_6433_e41e_329b),
+    (2, Population::Careless, 4.0, 0xba8b_d3e8_1ff3_9825),
 ];
 
 #[test]
