@@ -1,12 +1,20 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). **Next: Phase 3.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). **Next: Phase 4, the vertical slice and the "is this fun?" checkpoint.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
 ## Progress notes
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
+
+### 2026-11-17: Phase 3 done on the Mac
+
+**State.** Branch `pivot-phase-3` (made from `pivot-phase-2`; not merged into `main`, not pushed). `scripts/check.sh` passes. The work was done in four stages (A walking, B crossings, C cars against pedestrians, D the view), each one reviewed by a second agent, and the review fixes are in their own commits. The record is under Phase 3 in section 8.
+
+**Look at it:** `(caffeinate -u -t 120 &); sleep 1`, then `cargo play -- --level carrefour-ecole --run --frames 3300 --zoom 4 --screenshot <scratch>/run.png` (add `--population careless` for people who break rules). At the default framing a walker is 2 pixels wide: zoom in.
+
+**Then:** Phase 4. Before it starts, the user decides: the proposal of section 5.7 (addition 1, speed from the look of the street), and whether level 1 keeps its four default zebras (they are there so that Phase 3 could run; a tutorial that teaches the zebra tool may want to start without them).
 
 ### 2026-11-16: Phase 2 checked on the Mac
 
@@ -258,6 +266,23 @@ One unit for all modes, so that the score can add them:
 - forced detours;
 - an agent who gives up its trip.
 
+### 5.7 Realism improvements (proposed 2026-11-16)
+
+The personality of 5.3 is in the code since Phase 2 (seven traits per agent, drawn from an archetype, plus frustration). These additions would make behaviour depend on the street and on the situation, not only on the person. Each one changes behaviour, so each one is the user's decision when its phase starts. The order is the order of value for the game.
+
+| # | Addition | What it changes | Phase |
+|---|---|---|---|
+| 1 | **Speed from the look of the street** | The wanted speed is today a share of the speed limit. Real drivers go slower in a narrow lane, between parked cars, near trees and obstacles, on a raised crossing, and faster on a wide, empty street, whatever the sign says. The wanted speed gets a factor from the lane width, the side friction (what is next to the lane) and the sight distance. This gives the player a second tool for speed: geometry, not only the sign. | 4 |
+| 2 | **Attention with a direction** | Attention is today one probability that a look is made. In real crashes the driver looks, but at the wrong place: a driver who turns left looks at the oncoming cars and does not see the pedestrian on the exit crossing. A driver gets a gaze direction that its task sets, and sees an unexpected kind of road user (a cyclist, a child) less well than a car. The cause chain can then say "looked left for a gap, did not look at the zebra". | 6 |
+| 3 | **Reaction time that depends on surprise** | The reaction time is today one fixed value per agent. A driver reacts in about 0.7 s to an expected event and in about 1.5 s to a surprise (a person who comes out from behind a van). The reaction time gets a factor for unexpected events. | 6 |
+| 4 | **Imitation** | A pedestrian crosses on red much more often when another person goes first. A driver follows the vehicle in front through an amber light. Compliance gets a factor from what the neighbours do. One careless person can then lead a group into danger. | 8 |
+| 5 | **Linked traits** | The seven traits are drawn independently, so a driver can be very fast and also very careful with gaps. One hidden "aggressiveness" value per agent pulls the speed, the risk, the compliance and the courtesy in the same direction. | 8 |
+| 6 | **Hurry** | Section 5.3 has it (set by the time slice and the archetype), but the code does not yet. | 8 |
+
+Smaller ideas, not planned: familiarity with the place (a tourist hesitates; a resident does not look because nobody ever comes from there), and vehicle differences (the braking distance of a van against a car).
+
+Additions 2 and 3 are with the cyclists because the blind-spot conflict of Phase 6 needs them. Additions 4 to 6 are with the calibration because they need real figures. All of them change the replay hashes.
+
 ---
 
 ## 6. Score
@@ -365,9 +390,46 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 
 **Done when:** two opposite crowds on a 2 m sidewalk form lanes and slow down, with no overlap; a zebra placed 40 m from the desire line is ignored by a measurable part of the people; a hidden pedestrian can be hit by an inattentive driver and never by a careful one at 30 km/h.
 
+**Done (2026-11-17).** All three criteria hold. The figures below are the ones the implementing agents measured and reported; the tests assert them with bands.
+
+- Code, in `tf_sim::street::run`: `walk` (walkable space, walk graph), `walker` (the pedestrian and its archetypes), `crowd` (forces and constraints), `kerb` (waiting, gaps, lights, the choice of a way), `sight` (lines of sight), `yielding` (drivers and people on foot), `meet` (car-against-walker contacts and near misses). Crossings are in `street::space` / `model` / `design` (`CrossingDef`, `DesignCommand::AddCrossing` / `RemoveCrossing`). Tests: `tf_sim/tests/street_walk.rs`, `street_cross.rs`, `street_meet.rs`. In `tf_game`: `WalkerPose` in `street_runner.rs`, `views/walkers.rs`, the zebras in `views/street.rs`.
+- Done when:
+  - Crowds: two opposite crowds on a 2 m sidewalk form lanes (correlation between the side and the direction 0.86 to 0.90; the test asks for more than 0.6) and slow down to 75 to 82 % of the free speed. Two bodies overlap by 0.02 m at most (asserted on every tick).
+  - Zebra 40 m from the desire line: 28 % of a mixed population cross out of it, 0 % of a careful one, 92 % of a careless one; 0 % when the zebra is on the desire line.
+  - Hidden pedestrian (a parked van hides the kerb of a zebra, 30 km/h): careful drivers, 788 crossings over 20 seeds, 0 contacts; careless drivers, 5 contacts, each one with a cause that names the hidden walker, the look not made, a distraction, the speed too high for the sight, or the yield not made.
+  - Also: careful drivers and careful walkers have 0 contacts over 50 seeds on the test level, at 1 and 4 times the demand, with and without signals. The severity shares agree with the curves at 20, 30 and 50 km/h. A death ends the run.
+- How it works:
+  - **Two collections.** Vehicles are in `StreetRun::agents`, pedestrians in `StreetRun::walkers`, with ids from `WALKER_ID_BASE`, so that a walker never shifts the id or the random stream of a vehicle. All the draws of a walker are made at spawn, in a documented order.
+  - **Walking.** The walkable space is the sidewalk and terrace strips and the level's plazas, less the obstacles. A path is a chain of areas (A* on the kept `routing::astar`); the walker steers through it with a funnel. The crowd model is a goal force, an anticipation of the closest approach, a step to the right when two people meet, body and wall forces, a detour around obstacles, group cohesion, and Weidmann's density-speed curve; then position constraints remove the overlaps. Only square roots and polynomials are used, so every platform gives the same bits.
+  - **Groups.** A spawn can bring a pair or a group of three, which walks at the pace of its slowest member. `per_hour` in the level counts people, not groups.
+  - **Crossings are data.** A crossing (a zebra for now) has a segment, a position and a width. The level gives the default ones and the player's design adds and removes them. `carrefour-ecole` has one zebra on each arm.
+  - **Where to cross.** Each walker has a rule way (streets are crossed on crossings only) and a free way (anywhere). It takes the free way when that is legal (no crossing within 50 m, Code de la route R412-37) and saves 5 m or more; otherwise with a probability that grows with the detour and falls with its compliance. The choice is made at spawn.
+  - **At the kerb.** A walker looks at the vehicles it can see, in the snapshot as old as its reaction time, and goes when the gap is enough for its crossing time. Risk and frustration make the gap shorter. On a zebra it trusts a driver who can still stop comfortably. At signals it has a walk light (on while no conflicting approach has green, and only if its own crossing fits before the conflicting green); a walker with low compliance can go on red.
+  - **Drivers.** A driver brakes for any walker it sees in its path, and yields at a zebra to people on it or about to step on it (at signals only while they have walk; a turning driver on a permissive green yields too). When it cannot see a kerb of a zebra ahead, it slows to the speed from which it can stop (about 10 km/h at the van of the test), and never below a creep of 1 m/s. It does not stop on a zebra, and it does not enter the junction while the zebra past its exit is busy. The personality bends this with two draws per zebra (yields, looks).
+  - **Sight.** A sight line is cut by tall obstacles (trees, pillars, metro exits, bus shelters, a parked van) and by vans and buses. Cars do not hide people.
+  - **Contacts.** A swept walker circle against the swept car rectangle; the outcome is drawn from the pedestrian curves (Rosén & Sander 2009, Tefft 2011). Causes come from both sides: for the driver `Distracted`, `RanRed`, `DidNotYieldToWalker`, `DidNotLook`, `TooFastForSight`, `HiddenWalker`, `Speeding`, `TooFastToStop`; for the walker `CrossedOutOfCrossing`, `WalkedOnRed`, `AcceptedShortGap`. Near misses use the post-encroachment time where a route cuts a road area, and hard braking for a walker.
+  - **Annoyance** of a walker: its delay against the free walk (the wait at the kerb is in it), the time in a dense crowd, the bumps and the forced detour, divided by its patience.
+  - **The view.** A walker is a circle of its real radius with a dark mark on the side it walks to, one colour per archetype, darker while it waits, magenta when hit, with a red ring when it crosses out of a crossing or on red. A zebra is drawn as bars 0.5 m wide, long in the direction of the traffic.
+- Tick rate (open point 5): **20 Hz stays.** A walker moves 0.12 m per tick at most, so it cannot pass through a wall. In dense contact the force changes direction often, at 20 Hz and at 40 Hz alike, so the step size is not the cause; the position constraints keep the result bounded (no walker held back, no reversal of the motion, both asserted in the counterflow test).
+- Speed (release, `run_level`): the default run of the test level is about 1 370 times real time (25 cars and about 30 walkers), and 220 to 330 times at 4 times the demand. Not measured at 400 agents. Each walker scans all the walls every tick: a wall grid is the next speed-up.
+- Replay hashes: they changed in each stage, each time with the cause in the commit message (pedestrians spawn; the fixes of the reviews; kerbs and crossings; cars react to walkers).
+- Decisions of the user (2026-11-16):
+  - The two Phase 2 tests of careful drivers (`careful_drivers_never_touch_and_everybody_arrives`, `careful_drivers_cope_with_signals_on_a_busy_street`) run without the pedestrian flows, with their assertions as they were: their subject is drivers among themselves. With pedestrians, `careful_drivers_and_walkers_never_touch` asserts no contact and at most 1 % of give-ups.
+  - A few careful drivers give up when steady streams of walkers and the priority to the right leave them no gap: 6 of 1 549 at the normal demand without signals, 0 with signals, 16 of 5 762 at 4 times the demand with signals. This is a problem for the player to solve.
+- Open points and limits:
+  - A car that entered the junction with its exit zebra free can be held inside it when walkers then step onto that zebra (seen one time in 50 seeds).
+  - The choice of a way is made at spawn from the compliance only; a walker does not change its mind at the kerb. Groups split at kerbs. People do not cross a junction area diagonally.
+  - Parked vehicles are obstacles (`ObstacleKind::ParkedVan`), not agents. A parking strip is part of the carriageway that a walker crosses.
+  - A walker whose centre is found inside a standing vehicle after the constraints is logged as a contact at 0 km/h, so that the invariant "nobody inside a vehicle without a contact" holds. It did not occur in the test runs.
+  - Curved streets: the funnel needs convex areas, and strips are convex only on straight segments.
+  - The crowd density is a count in a 1 m circle, not corrected near walls. Lane formation is helped by the keep-right rule; the test does not separate the rule from the crowd effect.
+  - At the default framing a walker is 2 pixels wide. A minimum drawn size is a question for the art direction.
+  - Bicycle flows are still not simulated (Phase 6). The run is still not inside `Simulation`.
+
 ### Phase 4 — Vertical slice: design, run, report (M) ⭐ "is this fun?" checkpoint
 - `Phase` state, run clock rule (7.4), minimal HUD, minimal report (score parts, incident list, markers on the map).
 - First tools: signal plan from templates, zebra, speed limit, bollards. First score (section 6).
+- Proposed (section 5.7, addition 1): the wanted speed depends on the look of the street, so that the speed limit and the bollards have a believable effect.
 - The test level becomes level 1, playable from start to stars.
 
 **Done when:** the user plays level 1 several times, and a better design gives a better score for reasons that the report explains. **Stop and decide** here if the direction is right before the rest.
@@ -383,6 +445,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Corridor movement, overtaking, filtering, bicycle box, bicycle lanes and tracks, contraflow.
 - Cyclist archetypes and rule-breaking (red lights, sidewalk, wrong way).
 - Classic conflicts: right-turning vehicle against a cyclist going straight (blind spot), door of a parked car, pedestrian against cyclist at a crossing, van stopped on the bicycle lane.
+- Proposed (section 5.7, additions 2 and 3): attention with a gaze direction, and a reaction time that depends on surprise.
 
 **Done when:** on a test street, a protected track gives measurably fewer serious conflicts than a painted lane, and a painted lane fewer than none; a right-turn conflict can be removed by a design change (bicycle box, separate phase, kerb).
 
@@ -397,6 +460,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - The four slices, modifiers per slice, night visibility, all archetypes.
 - Calibration pass with real figures (walking speed, cycling speed, reaction times, braking, gap acceptance, share of red-light running). A table in this document records the source of each value.
 - Score tuning.
+- Proposed (section 5.7, additions 4 to 6): imitation, linked traits, hurry.
 
 **Done when:** the same design gives a different, plausible picture in each slice, and the reference values are inside their bands in a statistical test.
 
