@@ -18,7 +18,9 @@ The newest entry is first. Each entry tells what was done, where, and what to do
 
 **Measured** (empty design, 10 seeds, after the merge): stage 1 passes 10 of 10 (scores 74-95), stage 2 passes 5 of 10, stage 3 passes 3 of 10 and fails with the level seed. Over the 30 runs, most lost points are "serious near miss: car could not stop in time" (hard braking of 8 m/s², 92 of about 140 serious near misses), and at stage 3 drivers wait 95 s on average with priority to the right. The near-miss count looks too high for a 30 km/h school street: to check against reality before tuning (Phase 4 checkpoint: "is this credible?").
 
-**Then:** the user plays level 1 several times (Phase 4 "done when"). Open: clicking an incident line does not move the camera yet.
+**After the first playtest (same day).** The near-miss excess had one cause: the braking applied (and logged) was the deceleration that reaches the target speed in one tick, cut at 8 m/s². Now each driver brakes with the deceleration needed over the real distance, each vehicle draws its own maximum (cars 7.5-9.5, vans 6.5-8.0 m/s², NCHRP 400 and ABS tests; `ROAD_GRIP` for weather later), braking builds up in 0.3 s, and one `stop_line()` (the painted zebra edge, found exactly) is used by drivers and by the careful walker's trust check. Over 30 runs: hard-brake near misses 158 → 60, mean stage scores 84 / 62 / 60 → 94 / 79 / 78; no injury before or after. The empty design now passes all three stages on most seeds; the user accepts it (section 6). Also: light Google-Maps palette, speed limits painted on the carriageway, tool previews, the agent inspector.
+
+**Then:** the user plays level 1 several times (Phase 4 "done when"). Open: clicking an incident line does not move the camera yet; direction arrows are still drawn on zebras.
 
 ### 2026-11-17: direction changed (realism first, stars are load stages)
 
@@ -322,6 +324,7 @@ The numbers below are start values for tuning.
 - **Stars (load stages, user decision 2026-11-17).** Each star is a stage of the level with more traffic than the one before (section 3.4). A stage is passed when the run has no death, no serious injury, no broken constraint, and its score is at or above the threshold of that stage. Passing a stage gives its star and opens the next stage on the same design. A failed stage ends the progress of that design at the stars already won: the stages show the load at which the design breaks, and the report tells why (which conflict point, which mode, which slice).
   - A star belongs to a design (user, 2026-11-17): to have 3 stars, one design must pass stages 1, 2 and 3. When the player changes the design, the lower stages are run again headless before the current stage, so the stars always describe the design that is on the map.
   - The number of stages per level is level data (3 by default).
+  - Difficulty is not tuned yet (user, 2026-11-17): with real braking, the empty design of a simple crossing passes all its stages on most seeds, and that is realistic. How stages become hard (load, mix, time of day, several seeds per verdict) is decided later; the stage scales are not adjusted to force failures.
 
 The score is a measure of the simulation, not a reward system that changes it: with realism first (section 1), the weights are set to agree with what a road-safety expert would say about the design, and tuned for fun only later.
 
