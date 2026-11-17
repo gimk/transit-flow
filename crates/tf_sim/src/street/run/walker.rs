@@ -118,6 +118,24 @@ pub struct KerbDraw {
     pub look: f32,
     /// Cuts the corner at a zebra here when below `kerb::corner_chance`.
     pub corner: f32,
+    /// Keeps its pace on the road when a car that can still stop comes, when below
+    /// `kerb::assertive_chance` (made last at spawn; never drawn again).
+    pub assertive: f32,
+}
+
+/// What a walker on a carriageway does about the vehicles it sees (`kerb::road_look`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoadAct {
+    /// Walks on as it planned.
+    Free,
+    /// Stops where it is and lets the vehicle pass.
+    Stop,
+    /// Steps back toward the kerb it came from.
+    Back,
+    /// Hurries forward (a fast walk) to clear the vehicle's path.
+    Hurry,
+    /// Keeps its pace although a car comes: it expects the driver to stop.
+    Hold,
 }
 
 /// The two ways of a trip from one entry to a gate.
@@ -385,6 +403,8 @@ pub struct Walker {
     pub recent: Vec<(u64, CauseKind)>,
     /// Hit by a vehicle: it stays where it fell until this tick, then is taken away.
     pub hit_until: Option<u64>,
+    /// What it does about the vehicles it saw on the road at its last look.
+    pub road_act: RoadAct,
 }
 
 impl Walker {
@@ -655,11 +675,14 @@ impl StreetRun {
             let look: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             let corner: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             d.traits.draw_habits(&d.archetype, &mut d.rng);
+            // Last, so that every draw before it keeps its place in the stream.
+            let assertive: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
             (0..kerbs)
                 .map(|i| KerbDraw {
                     red: red[i],
                     look: look[i],
                     corner: corner[i],
+                    assertive: assertive[i],
                 })
                 .collect::<Vec<KerbDraw>>()
         };
@@ -756,6 +779,7 @@ impl StreetRun {
                 frustration: 0.0,
                 recent: Vec::new(),
                 hit_until: None,
+                road_act: RoadAct::Free,
             });
         }
         self.next_walker += size as i32;

@@ -45,7 +45,7 @@ use indexmap::IndexMap;
 use super::drive::{BRAKE_RISE_S, COMFORT_BRAKE, DT, travel_time};
 use super::route::RoutePath;
 use super::walk::{AreaKind, CUT_M, WalkPath, WalkSpace};
-use super::walker::{DECISION_RANGE_M, KerbDraw, Walker, jaywalk_chance};
+use super::walker::{DECISION_RANGE_M, KerbDraw, RoadAct, Walker, jaywalk_chance};
 use super::{MoveInfo, StreetRun};
 use crate::geom::segment::closest_point_to_segment;
 use crate::roads::lane::Turn;
@@ -141,6 +141,46 @@ pub const START_REACH: f64 =
 /// How long a walker shows it will cross (waiting at the kerb) before it trusts a car
 /// standing close: longer than a driver's reaction time, seconds (start value).
 pub const INTENT_SHOWN_S: f64 = 1.5;
+/// On the road a walker looks again this often, seconds (start value; staggered by id so
+/// they do not all look on the same tick).
+pub const ROAD_LOOK_S: f64 = 0.6;
+const ROAD_LOOK_TICKS: u64 = (ROAD_LOOK_S / DT) as u64;
+/// A vehicle that reaches the walker's path within this many seconds and does not slow
+/// down makes it react (start value).
+pub const ROAD_THREAT_S: f64 = 4.0;
+/// On a zebra drivers are meant to yield and brake late and hard, so only a vehicle this
+/// close in time that still does not slow down is a threat (start value).
+pub const ZEBRA_THREAT_S: f64 = 2.0;
+/// How far behind itself the walker extends its path, to know whether it stands in a
+/// vehicle's lane, metres.
+const ROAD_LOOK_BACK_M: f32 = 3.0;
+/// A walker not yet in the lane stops if it is at least this far from it, else it steps
+/// back, metres (start value).
+pub const ROAD_STOP_CLEARANCE_M: f32 = 1.5;
+/// A fast walk, as a share of the desired speed (start value; a short run is about 2).
+pub const HURRY_FACTOR: f64 = 1.5;
+/// Spare time wanted when it hurries or steps back to clear a vehicle, seconds (start
+/// value).
+pub const HURRY_MARGIN_S: f64 = 0.3;
+/// A vehicle was slowing if it lost `SLOWING_DROP` m/s over `SLOW_LOOK_S` (0.5 m/s2).
+/// Slower than this, a vehicle is not a threat on the road, m/s (start value).
+pub const ROAD_MOVING_SPEED: f64 = 2.5;
+const SLOW_LOOK_S: f64 = 0.5;
+const SLOWING_DROP: f64 = 0.25;
+/// An assertive walker keeps its pace only if the car is still this much later than its
+/// own reaction time, seconds (start value): nobody walks into a sure hit on purpose.
+pub const ASSERT_MARGIN_S: f64 = 0.5;
+/// The base chance that a walker on the road ignores a car that can stop (start value,
+/// about 5 %, to calibrate in Phase 8), grown by risk tolerance and lack of courtesy.
+pub const ASSERTIVE_BASE: f64 = 0.05;
+
+/// The chance that a walker keeps its pace on the road when a car comes that can still
+/// stop (French law gives priority to a walker already engaged, R415-11 at a crossing):
+/// more with low courtesy and high risk tolerance.
+pub fn assertive_chance(courtesy: f64, risk: f64) -> f64 {
+    (ASSERTIVE_BASE * (1.0 + risk - courtesy)).clamp(0.0, 0.25)
+}
+
 /// Routes are sampled this often to find the road areas they cross, metres.
 const ROUTE_STEP: f64 = 0.5;
 /// A vehicle meets a walker where its route line comes this close to the walker's
@@ -149,6 +189,23 @@ pub const CROSSING_REACH: f32 = 2.0;
 /// At signals, seconds a walker wants on top of its crossing time before the
 /// conflicting traffic gets green (start value).
 pub const SIGNAL_MARGIN_S: f64 = 2.0;
+
+/// A vehicle on its way to meet a walker's line, as the walker saw it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Meeting {
+    /// Seconds until it gets there, and whether it can still stop comfortably before.
+    pub time: f64,
+    pub can_stop: bool,
+    /// Where its route comes within reach of the line and where it leaves it, metres
+    /// along the line from its start.
+    pub enter_m: f32,
+    pub leave_m: f32,
+    /// It was braking a moment ago.
+    pub slowing: bool,
+    /// It moves faster than `ROAD_MOVING_SPEED`: a standing or creeping vehicle waits for
+    /// people and is no threat.
+    pub moving: bool,
+}
 
 /// The part of a vehicle route inside one road area of the walk space.
 #[derive(Clone, Debug, PartialEq)]
@@ -374,6 +431,7 @@ impl StreetRun {
             red: 1.0,
             look: 1.0,
             corner: 1.0,
+            assertive: 1.0,
         });
         // A walker who does not look properly here judges from an older view.
         let stale = f64::from(draw.look) < miss_chance(t.attention);
@@ -637,6 +695,23 @@ impl StreetRun {
         stale: bool,
         reach: f32,
     ) -> Vec<(f64, bool)> {
+        self.vehicles_meeting(walker, roads, from, far, stale, reach)
+            .into_iter()
+            .map(|m| (m.time, m.can_stop))
+            .collect()
+    }
+
+    /// `vehicles_ahead` with where along `from`-`far` each vehicle meets the line, and
+    /// whether it is slowing down.
+    fn vehicles_meeting(
+        &self,
+        walker: &Walker,
+        roads: &[usize],
+        from: glam::Vec2,
+        far: glam::Vec2,
+        stale: bool,
+        reach: f32,
+    ) -> Vec<Meeting> {
         let reaction = walker.traits.reaction_s + if stale { STALE_VIEW_S } else { 0.0 };
         let back = ((reaction / DT).round() as usize)
             .max(1)
@@ -669,9 +744,14 @@ impl StreetRun {
                 }
                 // Where the route meets the walker's line.
                 let mut meet: Option<(f64, f64)> = None;
+                let (mut near_m, mut far_m) = (f32::INFINITY, f32::NEG_INFINITY);
+                let along = (far - from).normalize_or_zero();
                 for &(d, point) in &route_area.line {
                     if closest_point_to_segment(point, from, far).distance(point) < reach {
                         meet = Some(meet.map_or((d, d), |(a, b)| (a.min(d), b.max(d))));
+                        let m = (point - from).dot(along);
+                        near_m = near_m.min(m);
+                        far_m = far_m.max(m);
                     }
                 }
                 let Some((enter, leave)) = meet else {
@@ -712,10 +792,173 @@ impl StreetRun {
                         to_line > START_REACH || shown,
                     )
                 };
-                found.push((time, can_stop));
+                found.push(Meeting {
+                    time,
+                    can_stop,
+                    enter_m: near_m,
+                    leave_m: far_m,
+                    slowing: self.was_slowing(seen, back),
+                    moving: seen.speed > ROAD_MOVING_SPEED,
+                });
             }
         }
         found
+    }
+}
+
+impl StreetRun {
+    /// Was the vehicle braking at the view the walker looks at (`view_back` snapshots back)?
+    /// It lost speed over the half second before it.
+    fn was_slowing(&self, seen: &super::drive::Seen, view_back: usize) -> bool {
+        let back = (SLOW_LOOK_S / DT).round() as usize;
+        let len = self.history.len();
+        // With too little history nothing is known, so it counts as not slowing.
+        let Some(older) = len
+            .checked_sub(view_back + back)
+            .and_then(|i| self.history.get(i))
+        else {
+            return false;
+        };
+        older
+            .seen
+            .iter()
+            .find(|s| s.id == seen.id)
+            .is_some_and(|s| s.speed - seen.speed > SLOWING_DROP)
+    }
+
+    /// The index of the kerb portal the walker's current road run starts at.
+    fn road_entry_kerb(&self, walker: &Walker) -> Option<usize> {
+        let path = &self.walk_paths[walker.path];
+        (0..=walker.area_index.min(path.kerbs.len().saturating_sub(1)))
+            .rev()
+            .find(|&i| path.kerbs[i])
+    }
+
+    /// Where a walker that steps back goes: just inside the road from the kerb it came
+    /// from (it never leaves the area it is in).
+    pub(super) fn road_back_target(&self, walker: &Walker) -> Vec2 {
+        let path = &self.walk_paths[walker.path];
+        let Some(kerb) = self.road_entry_kerb(walker) else {
+            return walker.pos;
+        };
+        let (l, r) = path.portals[kerb];
+        let at = closest_point_to_segment(walker.pos, l, r);
+        at + (walker.pos - at).normalize_or_zero() * (walker.radius + 0.15)
+    }
+
+    /// A walker on a carriageway (a zebra or not) keeps looking at the vehicles, from the
+    /// same delayed views as at the kerb (a look it misses there it misses here: the same
+    /// draw), every `ROAD_LOOK_S`. A vehicle that reaches its path within `ROAD_THREAT_S`
+    /// and is not slowing down makes it react: if it has not yet reached that vehicle's
+    /// lane it stops, or steps back when too close to the lane; if it is in or near the
+    /// lane it hurries forward or steps back, whichever gets it out of the path sooner.
+    /// A rare assertive walker (`assertive_chance`, a draw per kerb made at spawn) keeps
+    /// its pace for a car that can still stop, as long as the car has more than the
+    /// walker's reaction time and `ASSERT_MARGIN_S` left. `Some` is the decision of a look
+    /// made this tick; `None`, no look: the last decision stands.
+    pub(super) fn road_look(&self, walker: &Walker) -> Option<RoadAct> {
+        let path = &self.walk_paths[walker.path];
+        let k = walker.area_index;
+        let area = self.walker_area(walker);
+        let on_road = !walker.hit() && self.walk_space.areas[area].kind.is_road();
+        if !on_road {
+            return (walker.road_act != RoadAct::Free).then_some(RoadAct::Free);
+        }
+        if !(self.tick + walker.id.0 as u64).is_multiple_of(ROAD_LOOK_TICKS) {
+            return None;
+        }
+        let base = if self.walk_space.areas[path.areas[k]].kind.is_road() {
+            k.saturating_sub(1)
+        } else {
+            k
+        };
+        let (mut roads, exit) = self.roads_ahead_on(path, base);
+        if area != path.areas[k] && !roads.contains(&area) {
+            roads.push(area);
+        }
+        let portals = self.walker_portals(walker);
+        let far = match portals.get(exit) {
+            Some(&(l, r)) => closest_point_to_segment(walker.pos, l, r),
+            None => closest_point_to_segment(walker.pos, path.goal.0, path.goal.1),
+        };
+        let to_far = far - walker.pos;
+        if to_far.length() < 0.3 {
+            return Some(RoadAct::Free);
+        }
+        let dir = to_far.normalize_or_zero();
+        let entry = self.road_entry_kerb(walker);
+        let ordinal = entry.map_or(0, |kerb| path.kerbs[..kerb].iter().filter(|x| **x).count());
+        let draw = walker.kerb_draws.get(ordinal).copied().unwrap_or(KerbDraw {
+            red: 1.0,
+            look: 1.0,
+            corner: 1.0,
+            assertive: 1.0,
+        });
+        let t = &walker.traits;
+        let stale = f64::from(draw.look) < miss_chance(t.attention);
+        // A walker who missed its look at the kerb is distracted for the whole crossing of
+        // it (phone, talk): it keeps only the short-range reflex of `crowd` (`CAR_AHEAD`).
+        if stale {
+            return Some(RoadAct::Free);
+        }
+        let assertive = f64::from(draw.assertive) < assertive_chance(t.courtesy, t.risk);
+        let from = walker.pos - dir * ROAD_LOOK_BACK_M;
+        let meetings = self.vehicles_meeting(walker, &roads, from, far, stale, CROSSING_REACH);
+        let radius = walker.radius;
+        let speed = walker.desired_speed.max(0.1);
+        let back_room = entry.map_or(0.0, |i| {
+            let (l, r) = path.portals[i];
+            closest_point_to_segment(walker.pos, l, r).distance(walker.pos) - radius - 0.15
+        });
+        let on_zebra = matches!(self.walk_space.areas[area].kind, AreaKind::Crossing { .. });
+        let mut worst: Option<&Meeting> = None;
+        let mut holds = false;
+        for m in &meetings {
+            let leave = m.leave_m - ROAD_LOOK_BACK_M;
+            if m.time > ROAD_THREAT_S || m.slowing || !m.moving || leave < -radius {
+                continue;
+            }
+            if assertive && m.can_stop && m.time > t.reaction_s + ASSERT_MARGIN_S {
+                holds = true;
+                continue;
+            }
+            // On a zebra it trusts a driver who can still stop, as at the kerb, and
+            // drivers brake late there, so only a vehicle very close in time is a threat.
+            if on_zebra && (m.can_stop || m.time > ZEBRA_THREAT_S) {
+                continue;
+            }
+            if worst.is_none_or(|w| m.time < w.time) {
+                worst = Some(m);
+            }
+        }
+        let Some(m) = worst else {
+            return Some(if holds { RoadAct::Hold } else { RoadAct::Free });
+        };
+        let enter = m.enter_m - ROAD_LOOK_BACK_M;
+        let leave = m.leave_m - ROAD_LOOK_BACK_M + radius;
+        if enter > radius + 0.5 {
+            // Not in its lane yet.
+            return Some(if enter < ROAD_STOP_CLEARANCE_M && back_room > 0.2 {
+                RoadAct::Back
+            } else {
+                RoadAct::Stop
+            });
+        }
+        let hurry_s = f64::from(leave.max(0.0)) / (speed * HURRY_FACTOR);
+        let out_back = radius - enter;
+        let back_s = if back_room >= out_back {
+            f64::from(out_back.max(0.0)) / speed
+        } else {
+            f64::INFINITY
+        };
+        let ok = |s: f64| s + HURRY_MARGIN_S <= m.time;
+        let back = match (ok(hurry_s), ok(back_s)) {
+            (true, true) => back_s < hurry_s,
+            (false, true) => true,
+            (true, false) => false,
+            (false, false) => back_s < hurry_s,
+        };
+        Some(if back { RoadAct::Back } else { RoadAct::Hurry })
     }
 }
 
