@@ -1,65 +1,47 @@
-//! Input: `KeyBindings` (actions bound to physical keys, as `project.godot`'s `[input]`)
-//! and `Pointer` (the cursor in world space, which tools read instead of the window so
-//! tests can drive them). `KeyCode` is the physical key, so WASD = ZQSD on AZERTY.
+//! Input: `KeyBindings` (actions bound to physical keys) and `Pointer` (the cursor in world
+//! space, which the play tools read instead of the window so tests can drive them).
+//! `KeyCode` is the physical key, so WASD = ZQSD on AZERTY.
 
 use std::collections::HashMap;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use tf_sim::grid;
 
 use crate::camera::MapCamera;
 
-/// Every input action of the game (the names are `project.godot`'s, in CamelCase).
+/// Every input action of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     CameraPanLeft,
     CameraPanRight,
     CameraPanUp,
     CameraPanDown,
+    /// Space: pause the run.
     SimTogglePause,
+    /// Keys 1 to 3: run speed x1, x2, x4.
     SimSpeed1,
     SimSpeed2,
     SimSpeed3,
-    ToolRoad,
-    ToolBulldoze,
-    ToolRoute,
-    ToolResidential,
-    ToolCommercial,
-    ToolIndustrial,
-    ToolDezone,
-    ToolSignals,
-    ToolBus,
+    /// Esc: drop the active tool.
     ToolCancel,
-    RoadCurveMode,
-    /// Godot folded the debug panel with F1. The Bevy build has no panel (M10.3), so
-    /// nothing is bound.
-    ToggleDebugMenu,
-    ToggleLateness,
-    ToggleLaneOverlay,
-    ToggleHeatmap,
-    QuickSave,
-    QuickLoad,
-    DebugStressTraffic,
-    DebugLoadScenario,
-    DebugLoadTown,
+    /// The play tools: C zebra, V speed limit, B bollards, L signals.
+    ToolZebra,
+    ToolSpeedLimit,
+    ToolBollards,
+    ToolSignals,
     ToggleFullscreen,
-    /// New keys for functions that only had a debug-menu button in Godot.
-    DebugRushHour,
-    DebugNewEmptyMap,
-    DebugLoadBusLanesScenario,
-    /// Play mode (`play`): Enter starts the run, ends it early, and leaves the report.
+    /// Enter starts the run, ends it early, and leaves the report.
     PlayConfirm,
     /// Backspace. Ctrl+Z and Ctrl+Y are read from the raw keys by the play system: `Z` alone
     /// must stay unbound.
     PlayUndo,
-    /// x8 (keys 1 to 3 are `SimSpeed1` to `SimSpeed3`).
+    /// Key 4: run speed x8.
     PlaySpeed4,
 }
 
 impl Action {
-    pub const ALL: [Action; 35] = [
+    pub const ALL: [Action; 17] = [
         Action::CameraPanLeft,
         Action::CameraPanRight,
         Action::CameraPanUp,
@@ -68,51 +50,19 @@ impl Action {
         Action::SimSpeed1,
         Action::SimSpeed2,
         Action::SimSpeed3,
-        Action::ToolRoad,
-        Action::ToolBulldoze,
-        Action::ToolRoute,
-        Action::ToolResidential,
-        Action::ToolCommercial,
-        Action::ToolIndustrial,
-        Action::ToolDezone,
-        Action::ToolSignals,
-        Action::ToolBus,
         Action::ToolCancel,
-        Action::RoadCurveMode,
-        Action::ToggleDebugMenu,
-        Action::ToggleLateness,
-        Action::ToggleLaneOverlay,
-        Action::ToggleHeatmap,
-        Action::QuickSave,
-        Action::QuickLoad,
-        Action::DebugStressTraffic,
-        Action::DebugLoadScenario,
-        Action::DebugLoadTown,
+        Action::ToolZebra,
+        Action::ToolSpeedLimit,
+        Action::ToolBollards,
+        Action::ToolSignals,
         Action::ToggleFullscreen,
-        Action::DebugRushHour,
-        Action::DebugNewEmptyMap,
-        Action::DebugLoadBusLanesScenario,
         Action::PlayConfirm,
         Action::PlayUndo,
         Action::PlaySpeed4,
     ];
-
-    /// Tool shortcuts (`ToolManager.TOOL_SHORTCUTS`): the tool ids of M10 (node names in
-    /// Godot), in the same order.
-    pub const TOOL_SHORTCUTS: [(Action, &'static str); 9] = [
-        (Action::ToolRoad, "RoadTool"),
-        (Action::ToolBulldoze, "BulldozeTool"),
-        (Action::ToolRoute, "RouteTool"),
-        (Action::ToolResidential, "ResidentialZoneTool"),
-        (Action::ToolCommercial, "CommercialZoneTool"),
-        (Action::ToolIndustrial, "IndustrialZoneTool"),
-        (Action::ToolDezone, "DezoneTool"),
-        (Action::ToolSignals, "SignalTool"),
-        (Action::ToolBus, "BusLineTool"),
-    ];
 }
 
-/// Actions to physical keys; the defaults are `project.godot`'s `[input]`.
+/// Actions to physical keys.
 #[derive(Resource, Clone, Debug)]
 pub struct KeyBindings {
     keys: HashMap<Action, Vec<KeyCode>>,
@@ -122,7 +72,7 @@ impl Default for KeyBindings {
     fn default() -> Self {
         use Action::*;
         use KeyCode::*;
-        let table: [(Action, &[KeyCode]); 35] = [
+        let table: [(Action, &[KeyCode]); 17] = [
             (CameraPanLeft, &[KeyA, ArrowLeft]),
             (CameraPanRight, &[KeyD, ArrowRight]),
             (CameraPanUp, &[KeyW, ArrowUp]),
@@ -131,30 +81,12 @@ impl Default for KeyBindings {
             (SimSpeed1, &[Digit1]),
             (SimSpeed2, &[Digit2]),
             (SimSpeed3, &[Digit3]),
-            (ToolRoad, &[KeyR]),
-            (ToolBulldoze, &[KeyB]),
-            (ToolRoute, &[KeyT]),
-            (ToolResidential, &[KeyH]),
-            (ToolCommercial, &[KeyC]),
-            (ToolIndustrial, &[KeyI]),
-            (ToolDezone, &[KeyX]),
-            (ToolSignals, &[KeyL]),
-            (ToolBus, &[KeyU]),
             (ToolCancel, &[Escape]),
-            (RoadCurveMode, &[KeyV]),
-            (ToggleDebugMenu, &[]),
-            (ToggleLateness, &[F2]),
-            (ToggleLaneOverlay, &[F3]),
-            (ToggleHeatmap, &[F4]),
-            (QuickSave, &[F5]),
-            (QuickLoad, &[F9]),
-            (DebugStressTraffic, &[F6]),
-            (DebugLoadScenario, &[F7]),
-            (DebugLoadTown, &[F8]),
+            (ToolZebra, &[KeyC]),
+            (ToolSpeedLimit, &[KeyV]),
+            (ToolBollards, &[KeyB]),
+            (ToolSignals, &[KeyL]),
             (ToggleFullscreen, &[F11]),
-            (DebugRushHour, &[F10, KeyP]),
-            (DebugNewEmptyMap, &[F12, KeyN]),
-            (DebugLoadBusLanesScenario, &[Digit0]),
             (PlayConfirm, &[Enter, NumpadEnter]),
             (PlayUndo, &[Backspace]),
             (PlaySpeed4, &[Digit4]),
@@ -192,7 +124,7 @@ impl KeyBindings {
     }
 }
 
-/// What systems read instead of raw keys: `actions.just_pressed(Action::QuickSave)`.
+/// What systems read instead of raw keys: `actions.just_pressed(Action::PlayConfirm)`.
 #[derive(SystemParam)]
 pub struct ActionInput<'w> {
     keys: Res<'w, ButtonInput<KeyCode>>,
@@ -226,8 +158,6 @@ impl ActionInput<'_> {
 pub struct Pointer {
     /// Cursor position in the sim's world pixels.
     pub world: Vec2,
-    /// `world` snapped to the nearest grid intersection (`Grid.snap_to_point`).
-    pub snapped: Vec2,
     pub left: ButtonState3,
     pub right: ButtonState3,
     pub middle: ButtonState3,
@@ -247,7 +177,6 @@ impl Default for Pointer {
     fn default() -> Self {
         Self {
             world: Vec2::ZERO,
-            snapped: Vec2::ZERO,
             left: default(),
             right: default(),
             middle: default(),
@@ -257,10 +186,9 @@ impl Default for Pointer {
 }
 
 impl Pointer {
-    /// Puts the pointer at a world position (`snapped` follows).
+    /// Puts the pointer at a world position.
     pub fn set_world(&mut self, world: Vec2) {
         self.world = world;
-        self.snapped = grid::snap_to_point(world);
         self.in_window = true;
     }
 

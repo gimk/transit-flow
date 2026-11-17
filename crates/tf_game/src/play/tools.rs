@@ -58,9 +58,9 @@ impl PlayTool {
     /// The key that selects the tool (pressed again: no tool).
     pub fn action(self) -> Action {
         match self {
-            PlayTool::Zebra => Action::ToolCommercial,
-            PlayTool::SpeedLimit => Action::RoadCurveMode,
-            PlayTool::Bollards => Action::ToolBulldoze,
+            PlayTool::Zebra => Action::ToolZebra,
+            PlayTool::SpeedLimit => Action::ToolSpeedLimit,
+            PlayTool::Bollards => Action::ToolBollards,
             PlayTool::Signals => Action::ToolSignals,
         }
     }

@@ -114,17 +114,12 @@ fn play_arguments_parse() {
 }
 
 #[test]
-fn play_mode_opens_the_level_and_the_old_game_sleeps() {
+fn play_mode_opens_the_level() {
     let _lock = save_lock();
     let mut harness = Harness::play(LEVEL);
     assert_eq!(phase(&harness), PlayPhase::Design);
     assert_eq!(street(&harness).level_id, LEVEL);
     assert!(state(&harness).design.commands.is_empty());
-    // The old tools and keys do nothing.
-    harness.key(KeyCode::KeyR);
-    assert_eq!(harness.active_tool(), None);
-    harness.key(KeyCode::F7);
-    assert_eq!(harness.segments(), 0, "no scenario loaded in play mode");
     // The play tools work.
     harness.key(KeyCode::KeyC);
     assert_eq!(state(&harness).tool, Some(PlayTool::Zebra));

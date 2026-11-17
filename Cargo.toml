@@ -26,13 +26,11 @@ bevy = { version = "=0.20.1", default-features = false, features = [
     "bevy_render",       # renderer, Screenshot
     "bevy_core_pipeline", # Camera2d
     "bevy_sprite_render", # Mesh2d, MeshMaterial2d, ColorMaterial
-    "bevy_gizmos",       # Gizmos, GizmoPlugin
-    "bevy_gizmos_render", # draws the gizmos
     "bevy_state",        # States (play mode phases)
-    "bevy_ui",           # Node (status line)
+    "bevy_ui",           # Node (play panels)
     "bevy_ui_render",    # draws the UI
     "bevy_text",         # Text, TextFont
-    "default_font",      # the status line has no font file
+    "default_font",      # the play panels have no font file
     "png",               # screenshot save_to_disk writes PNG
 ] }
 # Must stay the glam version Bevy uses, so sim and game share one Vec2 type.

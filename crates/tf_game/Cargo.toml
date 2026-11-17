@@ -15,7 +15,6 @@ bevy = { workspace = true }
 glam = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-indexmap = { workspace = true }
 
 [features]
 # Faster incremental builds while developing: `cargo run -p tf_game --features dev`.

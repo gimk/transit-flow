@@ -10,24 +10,23 @@
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 
-use super::moving::{Batch, empty_batch_mesh};
+use super::batch::{Batch, Rgba, empty_batch_mesh, lerp_angle};
 use super::{ViewMaterial, z};
 use crate::camera::sim_to_bevy;
 use crate::level::{PX_PER_M, level_to_world};
-use crate::snapshot::{Color as SimColor, lerp_angle};
 use crate::street_runner::{StreetRunner, StreetSnapshot};
 
 // Darker and more saturated than the light map (`palette`), so a car reads on the blue-grey
 // carriageway; delivery is charcoal because white would vanish on it.
-pub const CAREFUL_COLOR: SimColor = [0.10, 0.36, 0.84, 1.0];
-pub const RESIDENT_COLOR: SimColor = [0.12, 0.55, 0.34, 1.0];
-pub const COMMUTER_COLOR: SimColor = [0.36, 0.40, 0.48, 1.0];
-pub const TAXI_COLOR: SimColor = [0.94, 0.70, 0.02, 1.0];
-pub const DELIVERY_COLOR: SimColor = [0.17, 0.18, 0.23, 1.0];
-pub const CARELESS_COLOR: SimColor = [0.86, 0.10, 0.10, 1.0];
-pub const CRASHED_COLOR: SimColor = [1.0, 0.0, 1.0, 1.0];
+pub const CAREFUL_COLOR: Rgba = [0.10, 0.36, 0.84, 1.0];
+pub const RESIDENT_COLOR: Rgba = [0.12, 0.55, 0.34, 1.0];
+pub const COMMUTER_COLOR: Rgba = [0.36, 0.40, 0.48, 1.0];
+pub const TAXI_COLOR: Rgba = [0.94, 0.70, 0.02, 1.0];
+pub const DELIVERY_COLOR: Rgba = [0.17, 0.18, 0.23, 1.0];
+pub const CARELESS_COLOR: Rgba = [0.86, 0.10, 0.10, 1.0];
+pub const CRASHED_COLOR: Rgba = [1.0, 0.0, 1.0, 1.0];
 /// The front mark (the windscreen): light, so it shows on every body colour.
-pub const FRONT_COLOR: SimColor = [0.94, 0.95, 0.97, 1.0];
+pub const FRONT_COLOR: Rgba = [0.94, 0.95, 0.97, 1.0];
 /// A waiting agent's colour is multiplied by this.
 pub const WAITING_SHADE: f32 = 0.6;
 /// The front mark's length (along the heading) and its inset from the nose, metres.
@@ -35,7 +34,7 @@ const MARK_LENGTH_M: f32 = 0.5;
 const MARK_INSET_M: f32 = 0.3;
 
 /// The colour of an archetype's name (`Agent::archetype`); grey for an unknown one.
-pub fn archetype_color(archetype: &str) -> SimColor {
+pub fn archetype_color(archetype: &str) -> Rgba {
     match archetype {
         "careful" => CAREFUL_COLOR,
         "resident" => RESIDENT_COLOR,
