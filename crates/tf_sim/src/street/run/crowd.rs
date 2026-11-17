@@ -37,6 +37,7 @@ use super::drive::Seen;
 use super::events::{CauseKind, StreetEvent, rounded, rounded_point};
 use super::grid::Grid;
 use super::kerb::KerbChoice;
+use super::walk::road_factor;
 use super::walk::{WalkSpace, Wall};
 use super::walker::{Walker, WalkerSeen};
 use super::{CONFLICT_COOLDOWN_S, GIVE_UP_S};
@@ -340,7 +341,13 @@ impl StreetRun {
             going || walker.cleared_kerb == Some(walker.area_index),
         );
         let portals = self.walker_portals(walker);
-        let (target, _) = Self::walk_target_in(path, &portals, walker.area_index, walker.pos);
+        let (target, _) = Self::walk_target_in(
+            path,
+            &portals,
+            walker.area_index,
+            walker.pos,
+            road_factor(walker.traits.risk),
+        );
         let (target, detour) = self.detour(walker, target);
         let to_target = (target - walker.pos).normalize_or_zero();
         let heading = if walker.vel.length_squared() > 0.01 {

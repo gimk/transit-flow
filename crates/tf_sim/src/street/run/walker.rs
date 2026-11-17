@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use super::agent::Population;
 use super::crowd::ARRIVE_DISTANCE;
 use super::events::{CauseKind, StreetEvent};
-use super::walk::{AreaKind, WalkPath, path_length, string_pull};
+use super::walk::{AreaKind, WalkPath, path_length, road_factor, string_pull, weighted_pull};
 use super::{StreetRun, mix};
 use crate::geom::polygon::segment_intersection;
 use crate::geom::segment::closest_point_to_segment;
@@ -448,7 +448,7 @@ impl StreetRun {
             None
         } else {
             let detour_m = match (&rule, &free) {
-                (Some(r), Some(f)) => (r.length - f.length).max(0.0),
+                (Some(r), Some(f)) => (r.cost - f.cost).max(0.0),
                 _ => 0.0,
             };
             let legal = free
@@ -519,8 +519,13 @@ impl StreetRun {
     }
 
     /// Where a walker at `pos` on `path` heads first, and the length of its whole way.
-    pub(super) fn walk_target(path: &WalkPath, area_index: usize, pos: Vec2) -> (Vec2, f32) {
-        Self::walk_target_in(path, &path.portals, area_index, pos)
+    pub(super) fn walk_target(
+        path: &WalkPath,
+        area_index: usize,
+        pos: Vec2,
+        factor: f32,
+    ) -> (Vec2, f32) {
+        Self::walk_target_in(path, &path.portals, area_index, pos, factor)
     }
 
     /// `walk_target` through `portals` (the path's, or the ones a corner cutter uses).
@@ -529,6 +534,7 @@ impl StreetRun {
         portals: &[(Vec2, Vec2)],
         area_index: usize,
         pos: Vec2,
+        factor: f32,
     ) -> (Vec2, f32) {
         let last = path.areas.len() - 1;
         let end = if area_index >= last {
@@ -537,7 +543,18 @@ impl StreetRun {
             let (l, r) = portals[last - 1];
             closest_point_to_segment((l + r) * 0.5, path.goal.0, path.goal.1)
         };
-        let points = string_pull(pos, &portals[area_index.min(last)..], end);
+        let from = area_index.min(last);
+        // A way with costly areas (the free way) is steered through weighted points, so it
+        // crosses the carriageway close to the perpendicular; any other through corners.
+        let points = if path.on_road.iter().any(|r| *r) {
+            let weights: Vec<f32> = path.on_road[from..]
+                .iter()
+                .map(|r| if *r { factor } else { 1.0 })
+                .collect();
+            weighted_pull(pos, &portals[from..], &weights, end)
+        } else {
+            string_pull(pos, &portals[from..], end)
+        };
         let mut target = points[1.min(points.len() - 1)];
         if target.distance(pos) < 0.01 && points.len() > 2 {
             target = points[2];
@@ -698,7 +715,7 @@ impl StreetRun {
         let mut ids = Vec::with_capacity(size);
         let mut spawned = Vec::with_capacity(size);
         for ((d, pos), kerb_draws) in drawn.into_iter().zip(positions).zip(draws) {
-            let (target, length) = Self::walk_target(path, 0, pos);
+            let (target, length) = Self::walk_target(path, 0, pos, road_factor(d.traits.risk));
             let vel = (target - pos).normalize_or_zero() * speed as f32;
             ids.push(d.id);
             spawned.push(Walker {

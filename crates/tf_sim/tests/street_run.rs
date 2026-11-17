@@ -248,10 +248,10 @@ fn the_same_inputs_give_the_same_log_hash() {
 // gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
 // c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0xd621_8ba0_bead_9579),
-    (2, Population::Mixed, 1.0, 0xebc6_083b_bad8_65fc),
-    (1, Population::Careless, 4.0, 0xd906_1ae7_9812_7f03),
-    (2, Population::Careless, 4.0, 0x6693_07f3_5908_e85a),
+    (1, Population::Mixed, 1.0, 0x7bcf_23c0_03b1_36af),
+    (2, Population::Mixed, 1.0, 0x908a_13db_d6a4_171c),
+    (1, Population::Careless, 4.0, 0xc5c3_da23_8692_44b5),
+    (2, Population::Careless, 4.0, 0x6f2d_6052_f47a_75d4),
 ];
 
 #[test]
