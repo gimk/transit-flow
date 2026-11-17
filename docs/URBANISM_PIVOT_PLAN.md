@@ -315,10 +315,11 @@ The personality of 5.3 is in the code since Phase 2 (seven traits per agent, dra
 | 4 | **Imitation** | A pedestrian crosses on red much more often when another person goes first. A driver follows the vehicle in front through an amber light. Compliance gets a factor from what the neighbours do. One careless person can then lead a group into danger. | 8 |
 | 5 | **Linked traits** | The seven traits are drawn independently, so a driver can be very fast and also very careful with gaps. One hidden "aggressiveness" value per agent pulls the speed, the risk, the compliance and the courtesy in the same direction. | 8 |
 | 6 | **Hurry** | Section 5.3 has it (set by the time slice and the archetype), but the code does not yet. | 8 |
+| 7 | **Hearing** (asked by the user on 2026-11-17) | Agents perceive only by sight today. People also hear traffic: a walker hears a car that a parked van hides, or a car that comes from behind; a driver hears a horn. Each vehicle makes a sound that grows with its speed and depends on its kind (a diesel van is loud; an electric car below about 20 km/h, a bicycle and a scooter are almost silent, a known danger for pedestrians); the street has a background noise that grows with the traffic and hides the quiet ones; some walkers do not hear (headphones, a phone call, hearing loss). The cause chain can then say "did not see the car behind the van and did not hear it: electric, 15 km/h". Later, the noise level of the street can also count in the serenity part of the score (section 6), so that calm streets get a bonus. | 6 |
 
 Smaller ideas, not planned: familiarity with the place (a tourist hesitates; a resident does not look because nobody ever comes from there), and vehicle differences (the braking distance of a van against a car).
 
-Additions 2 and 3 are with the cyclists because the blind-spot conflict of Phase 6 needs them. Additions 4 to 6 are with the calibration because they need real figures. All of them change the replay hashes.
+Additions 2, 3 and 7 are with the cyclists because the blind-spot conflict of Phase 6 needs them, and silent bicycles are the main case for hearing. Addition 4 is partly in Phase 4 since the second playtest: walkers who see others cross on red go more often (section 5.3). Additions 4 to 6 are with the calibration because they need real figures. All of them change the replay hashes.
 
 ---
 
