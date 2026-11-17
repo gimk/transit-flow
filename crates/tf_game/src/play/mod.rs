@@ -21,9 +21,13 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, channel};
 use tf_sim::Simulation;
+
 use tf_sim::street::run::{EndReason, RunOptions, StreetRun, Summary};
-use tf_sim::street::{Design, DesignCommand, LevelFile, Street};
+use tf_sim::street::score::{StageReport, stage_options, stage_report, stars_for_design};
+use tf_sim::street::{Design, DesignCommand, EditError, LevelFile, Street};
 
 use crate::camera::WheelLock;
 use crate::input::{Action, ActionInput, Pointer};
@@ -61,16 +65,33 @@ pub fn not_playing(mode: Option<Res<PlayMode>>) -> bool {
 pub enum PlayPhase {
     #[default]
     Design,
+    /// The stages below the chosen one are played headless on this design first.
+    Check,
     Run,
     Report,
 }
 
-/// What the report panel shows once a run is over.
+/// What the report panel shows once a run is over (or a lower stage failed its check).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReportData {
-    pub summary: Summary,
-    /// More lines under the summary: the score and the star verdict go here (next brief).
+    /// The counts of the run; `None` when the report is of a stage played headless.
+    pub summary: Option<Summary>,
+    /// Verdict, score, per-mode stats, reasons and incidents of the stage.
+    pub stage: StageReport,
+    /// More lines under the report (a run stopped early, a lower stage that failed).
     pub extra: Vec<String>,
+}
+
+/// What `stars_for_design` answers: the stars won and the report of each stage played.
+pub type CheckAnswer = Result<(usize, Vec<StageReport>), EditError>;
+
+/// The headless run of the stages below the one asked for, on a worker thread: the answer
+/// of `stars_for_design` comes through the channel.
+#[derive(Debug)]
+pub struct StageCheck {
+    /// The stage the player asked for (the check plays the ones below it).
+    pub stage: usize,
+    rx: Mutex<Receiver<CheckAnswer>>,
 }
 
 #[derive(Resource, Debug)]
@@ -83,6 +104,15 @@ pub struct PlayState {
     /// The last thing to tell the player: an edit refused, a file problem, a result.
     pub message: Option<String>,
     pub report: Option<ReportData>,
+    /// The stage selected, from 1 (pivot plan §6: each star is a load stage).
+    pub stage: usize,
+    /// The stars this design has won: the stages passed, from the first, in a row. Any
+    /// edit sets it to 0, because a star belongs to a design.
+    pub stars: usize,
+    /// The most stars any design of this level has won: it unlocks the stages.
+    pub best_stars: usize,
+    /// The check of the lower stages, while it runs (`PlayPhase::Check`).
+    pub check: Option<StageCheck>,
 }
 
 impl PlayState {
@@ -96,6 +126,55 @@ impl PlayState {
             tool: None,
             message: None,
             report: None,
+            stage: 1,
+            stars: 0,
+            best_stars: 0,
+            check: None,
+        }
+    }
+
+    /// How many stages the level has (at least 1: a level without stages plays as one).
+    pub fn stage_count(&self) -> usize {
+        self.level.stages.len().max(1)
+    }
+
+    /// A stage can be chosen when the one below it was passed once, by any design.
+    pub fn is_unlocked(&self, stage: usize) -> bool {
+        (1..=self.stage_count()).contains(&stage) && stage <= self.best_stars + 1
+    }
+
+    /// Chooses `stage` if it is unlocked; else says why not.
+    pub fn select_stage(&mut self, stage: usize) {
+        if stage == self.stage || !(1..=self.stage_count()).contains(&stage) {
+            return;
+        }
+        if self.is_unlocked(stage) {
+            self.stage = stage;
+            self.message = None;
+        } else {
+            self.message = Some(format!(
+                "Stage {stage} is locked: pass stage {} first.",
+                stage - 1
+            ));
+        }
+    }
+
+    /// The design changed: its stars are gone (and the stage list is the same).
+    fn design_changed(&mut self) {
+        self.stars = 0;
+    }
+
+    /// Records that this design passed `stage`, and saves the stars.
+    fn stage_passed(&mut self, stage: usize) {
+        self.stars = self.stars.max(stage);
+        self.best_stars = self.best_stars.max(self.stars);
+        self.save_stars();
+    }
+
+    pub fn save_stars(&mut self) {
+        let record = file::StarsFile::new(&self.design, self.stars, self.best_stars);
+        if let Err(error) = file::save_stars(&self.level.id, &record) {
+            self.message = Some(format!("Stars not saved: {error}"));
         }
     }
 
@@ -112,6 +191,7 @@ impl PlayState {
                 self.message = Some(PlayTool::done_text(&command));
                 self.design.commands.push(command);
                 self.redo.clear();
+                self.design_changed();
                 true
             }
             Err(error) => {
@@ -128,6 +208,7 @@ impl PlayState {
             Ok(street) => {
                 self.message = Some("Undone.".into());
                 self.redo.push(command);
+                self.design_changed();
                 Some(street)
             }
             Err(error) => {
@@ -149,6 +230,7 @@ impl PlayState {
             Ok(_) => {
                 self.message = Some(format!("Redone. {}", PlayTool::done_text(&command)));
                 self.design.commands.push(command);
+                self.design_changed();
                 true
             }
             Err(error) => {
@@ -159,8 +241,8 @@ impl PlayState {
     }
 }
 
-/// Opens the level: reads the design file (a bad one is told and ignored), builds the
-/// street, and puts the old game to sleep.
+/// Opens the level: reads the design file and the stars (a bad file is told and ignored),
+/// builds the street, and puts the old game to sleep.
 fn start_play(
     mode: Res<PlayMode>,
     mut commands: Commands,
@@ -181,28 +263,34 @@ fn start_play(
         state.build_street()
     });
     loaded.street = Some(street.expect("an empty design builds on a shipped level"));
+    // The stars of the saved design count only if it is the design that won them.
+    match file::load_stars(&mode.level_id) {
+        Ok(Some(record)) => {
+            state.best_stars = record.best.min(state.stage_count());
+            if record.key == file::design_key(&state.design) {
+                state.stars = record.stars.min(state.stage_count());
+            }
+            state.stage = (state.stars + 1).min(state.stage_count());
+        }
+        Ok(None) => {}
+        Err(error) => state.message = Some(format!("Stars file not used: {error}")),
+    }
     // The old city builder: an empty map, paused.
     handle.replace(Simulation::new());
     handle.set_speed(0);
     commands.insert_resource(state);
 }
 
-/// Starts the run of the current design: saves the file, builds the run, hands it to the
-/// runner. A level that does not build stays in `Design` with the reason shown.
-pub fn begin_run(
+/// Starts the run of the selected stage on the current design.
+fn start_stage_run(
     state: &mut PlayState,
     mode: &PlayMode,
     runner: &mut StreetRunner,
     next: &mut NextState<PlayPhase>,
 ) {
-    if let Err(error) = file::save_design(&state.design) {
-        state.message = Some(format!("Design not saved: {error}"));
-    }
-    match StreetRun::new(
-        &state.level,
-        &state.design,
-        RunOptions::for_level(&state.level),
-    ) {
+    let options = stage_options(&state.level, state.stage)
+        .unwrap_or_else(|| RunOptions::for_level(&state.level));
+    match StreetRun::new(&state.level, &state.design, options) {
         Ok(run) => {
             runner.start(run, mode.threaded);
             runner.set_speed(DEFAULT_SPEED_INDEX);
@@ -214,17 +302,137 @@ pub fn begin_run(
     }
 }
 
-/// Ends the run (it is over, or the player stopped it): the summary goes to the report.
+/// Uses the answer of the check of the lower stages: if they all pass, the selected stage
+/// runs; if one fails, its report is shown (the design breaks there).
+fn apply_check(
+    state: &mut PlayState,
+    mode: &PlayMode,
+    runner: &mut StreetRunner,
+    next: &mut NextState<PlayPhase>,
+    answer: CheckAnswer,
+) {
+    let wanted = state.stage;
+    let (stars, mut reports) = match answer {
+        Ok(answer) => answer,
+        Err(error) => {
+            state.message = Some(format!("The stages cannot be checked: {error}"));
+            next.set(PlayPhase::Design);
+            return;
+        }
+    };
+    state.stars = stars;
+    state.best_stars = state.best_stars.max(stars);
+    state.save_stars();
+    if stars + 1 >= wanted {
+        start_stage_run(state, mode, runner, next);
+        return;
+    }
+    // A lower stage failed: its report is the answer, and that stage is the one to work on.
+    let failed = reports.pop().expect("a failed stage has a report");
+    state.stage = failed.stage;
+    state.report = Some(ReportData {
+        summary: None,
+        stage: failed,
+        extra: vec![format!(
+            "You asked for stage {wanted}, but this design does not pass stage {}.",
+            state.stage
+        )],
+    });
+    next.set(PlayPhase::Report);
+}
+
+/// Starts the run of the selected stage of the current design: saves the files first. If
+/// the stages below it are not known to pass for THIS design, they are played headless
+/// first (on a worker thread when `mode.threaded`; the phase is `Check` meanwhile).
+pub fn begin_run(
+    state: &mut PlayState,
+    mode: &PlayMode,
+    runner: &mut StreetRunner,
+    next: &mut NextState<PlayPhase>,
+) {
+    if let Err(error) = file::save_design(&state.design) {
+        state.message = Some(format!("Design not saved: {error}"));
+    }
+    state.save_stars();
+    if state.stage <= 1 || state.stars + 1 >= state.stage {
+        start_stage_run(state, mode, runner, next);
+        return;
+    }
+    let below = state.stage - 1;
+    if mode.threaded {
+        let (level, design) = (state.level.clone(), state.design.clone());
+        let (tx, rx) = channel();
+        std::thread::Builder::new()
+            .name("stage-check".into())
+            .spawn(move || {
+                // The player may have left: a closed channel is fine.
+                let _ = tx.send(stars_for_design(&level, &design, below));
+            })
+            .expect("spawn the stage check");
+        state.check = Some(StageCheck {
+            stage: state.stage,
+            rx: Mutex::new(rx),
+        });
+        next.set(PlayPhase::Check);
+    } else {
+        let answer = stars_for_design(&state.level, &state.design, below);
+        apply_check(state, mode, runner, next, answer);
+    }
+}
+
+/// Check phase: waits for the worker's answer.
+fn check_input(
+    mode: Res<PlayMode>,
+    mut state: ResMut<PlayState>,
+    mut runner: ResMut<StreetRunner>,
+    mut next: ResMut<NextState<PlayPhase>>,
+) {
+    let Some(check) = &state.check else {
+        next.set(PlayPhase::Design);
+        return;
+    };
+    let received = check.rx.lock().expect("only this system locks").try_recv();
+    match received {
+        Ok(answer) => {
+            state.check = None;
+            apply_check(&mut state, &mode, &mut runner, &mut next, answer);
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            state.check = None;
+            state.message = Some("The stage check stopped without an answer.".into());
+            next.set(PlayPhase::Design);
+        }
+    }
+}
+
+/// Ends the run (it is over, or the player stopped it): the report is made, and a passed
+/// stage counts as a star of this design.
 fn end_run(state: &mut PlayState, runner: &mut StreetRunner, next: &mut NextState<PlayPhase>) {
-    let summary = runner
-        .get_mut()
-        .map(|run| run.summary())
-        .expect("a run is going when it ends");
+    let stage = state.stage;
+    let (summary, mut report, finished) = {
+        let run = runner.get_mut().expect("a run is going when it ends");
+        (
+            run.summary(),
+            stage_report(run, &state.level, stage),
+            run.finished(),
+        )
+    };
+    let mut extra = Vec::new();
+    if !finished {
+        // A run stopped early proves nothing.
+        report.passed = false;
+        extra.push("The run was stopped early: it does not count.".to_string());
+    }
     // A stopped run stays where it is.
     runner.set_speed(0);
+    if report.passed {
+        state.stage_passed(stage);
+    }
     state.report = Some(ReportData {
-        summary,
-        extra: Vec::new(),
+        summary: Some(summary),
+        stage: report,
+        extra,
     });
     next.set(PlayPhase::Report);
 }
@@ -273,6 +481,15 @@ fn design_input(
 ) {
     if actions.just_pressed(Action::ToolCancel) {
         state.tool = None;
+    }
+    // [ and ] or PageDown and PageUp: the stage (only an unlocked one).
+    if keys.any_just_pressed([KeyCode::BracketRight, KeyCode::PageUp]) {
+        let next_stage = state.stage + 1;
+        state.select_stage(next_stage);
+    }
+    if keys.any_just_pressed([KeyCode::BracketLeft, KeyCode::PageDown]) && state.stage > 1 {
+        let previous = state.stage - 1;
+        state.select_stage(previous);
     }
     for tool in PlayTool::ALL {
         if actions.just_pressed(tool.action()) {
@@ -423,6 +640,15 @@ fn report_input(
 ) {
     if actions.just_pressed(Action::PlayConfirm) {
         runner.stop();
+        // After a pass the next stage is selected; after a fail the same one stays.
+        if state
+            .report
+            .as_ref()
+            .is_some_and(|report| report.stage.passed)
+        {
+            let next_stage = (state.stage + 1).min(state.stage_count());
+            state.select_stage(next_stage);
+        }
         state.report = None;
         state.message = None;
         next.set(PlayPhase::Design);
@@ -466,6 +692,7 @@ impl Plugin for PlayPlugin {
                 ui::update_pointer_over_ui,
                 update_wheel_lock,
                 design_input.run_if(in_state(PlayPhase::Design)),
+                check_input.run_if(in_state(PlayPhase::Check)),
                 run_input.run_if(in_state(PlayPhase::Run)),
                 report_input.run_if(in_state(PlayPhase::Report)),
             )

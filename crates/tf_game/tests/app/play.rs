@@ -253,8 +253,15 @@ fn enter_starts_the_run_saves_the_design_and_the_end_opens_the_report() {
     harness.frames(3);
     assert_eq!(phase(&harness), PlayPhase::Report);
     let report = state(&harness).report.as_ref().expect("a report");
-    assert!(report.summary.ended.is_some());
-    assert!(report.summary.spawned > 0);
+    assert!(
+        report
+            .summary
+            .as_ref()
+            .expect("a run summary")
+            .ended
+            .is_some()
+    );
+    assert!(report.summary.as_ref().expect("a run summary").spawned > 0);
     // Enter: back to the design, the same design, the run gone.
     harness.key(KeyCode::Enter);
     harness.frames(2);
@@ -275,7 +282,12 @@ fn enter_during_the_run_stops_it_early() {
     harness.frames(2);
     assert_eq!(phase(&harness), PlayPhase::Report);
     let report = state(&harness).report.as_ref().expect("a report");
-    assert_eq!(report.summary.ended, None, "stopped, not finished");
+    assert_eq!(
+        report.summary.as_ref().expect("a summary").ended,
+        None,
+        "stopped"
+    );
+    assert!(!report.stage.passed, "a stopped run never passes");
 }
 
 #[test]
@@ -497,4 +509,164 @@ fn a_signalled_junction_shows_its_lights_in_the_run() {
     let lights = runner(&mut harness).view_to().lights.clone();
     assert!(lights.len() >= 3, "an approach per arm: {lights:?}");
     assert!(lights.iter().all(|l| l.node == node));
+}
+
+fn state_mut(harness: &mut Harness) -> Mut<'_, PlayState> {
+    harness.app.world_mut().resource_mut::<PlayState>()
+}
+
+/// Plays the empty design through to the end of the run and opens the report.
+fn finish_run(harness: &mut Harness) {
+    runner(harness).get_mut().expect("a run").run_to_end();
+    harness.frames(3);
+    assert_eq!(phase(harness), PlayPhase::Report);
+}
+
+#[test]
+fn a_passed_stage_wins_a_star_unlocks_the_next_and_is_saved_with_the_design() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    assert_eq!((state(&harness).stage, state(&harness).stars), (1, 0));
+    // Stage 2 is locked until stage 1 is passed.
+    harness.key(KeyCode::BracketRight);
+    assert_eq!(state(&harness).stage, 1);
+    assert!(
+        state(&harness)
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("locked"))
+    );
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    assert_eq!(phase(&harness), PlayPhase::Run);
+    finish_run(&mut harness);
+    let report = state(&harness).report.clone().expect("a report");
+    assert_eq!(report.stage.stage, 1);
+    assert!(
+        report.stage.passed,
+        "the empty design passes stage 1: {:?}",
+        report.stage
+    );
+    assert_eq!((state(&harness).stars, state(&harness).best_stars), (1, 1));
+    // Enter: back to the design on the next stage.
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    assert_eq!(phase(&harness), PlayPhase::Design);
+    assert_eq!(state(&harness).stage, 2);
+    // The stars were saved next to the design, and a new session finds them.
+    let saved = file::load_stars(LEVEL).expect("readable").expect("a file");
+    assert_eq!((saved.stars, saved.best), (1, 1));
+    let session = Harness::play(LEVEL);
+    assert_eq!((state(&session).stars, state(&session).best_stars), (1, 1));
+    assert_eq!(state(&session).stage, 2);
+    drop(session);
+    // A different design keeps the unlock but not the stars.
+    let mut other = Design::new(LEVEL);
+    other.commands.push(DesignCommand::SetSpeedLimit {
+        segment: 1,
+        kmh: 20.0,
+    });
+    std::fs::write(file::design_path(LEVEL), other.to_json()).expect("written");
+    let session = Harness::play(LEVEL);
+    assert_eq!((state(&session).stars, state(&session).best_stars), (0, 1));
+}
+
+#[test]
+fn an_edit_takes_the_stars_back() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    state_mut(&mut harness).stars = 2;
+    state_mut(&mut harness).best_stars = 2;
+    let (_, spot) = free_spot(street(&harness));
+    harness.key(KeyCode::KeyC);
+    click_street(&mut harness, spot);
+    assert_eq!(state(&harness).stars, 0, "stars belong to a design");
+    assert_eq!(state(&harness).best_stars, 2, "the unlock stays");
+    // The stage list is still open: stage 3 can be chosen.
+    harness.key(KeyCode::Escape);
+    harness.key(KeyCode::PageUp);
+    harness.key(KeyCode::PageUp);
+    assert_eq!(state(&harness).stage, 3);
+    harness.key(KeyCode::BracketLeft);
+    assert_eq!(state(&harness).stage, 2);
+}
+
+#[test]
+fn a_higher_stage_first_plays_the_lower_ones_on_this_design() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    state_mut(&mut harness).best_stars = 1;
+    state_mut(&mut harness).stage = 2;
+    assert_eq!(state(&harness).stars, 0, "stage 1 is not known to pass");
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    // Stage 1 passed headless (the empty design), so stage 2 runs.
+    assert_eq!(phase(&harness), PlayPhase::Run);
+    assert_eq!(state(&harness).stars, 1);
+    assert!(runner(&mut harness).is_running());
+    // The run is stage 2's: more traffic than stage 1's.
+    let scale = state(&harness).level.stages[1].demand_scale;
+    assert!(scale > state(&harness).level.stages[0].demand_scale);
+}
+
+#[test]
+fn a_lower_stage_that_fails_shows_its_report_and_holds_the_stage() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    // Nobody can pass stage 1 now.
+    state_mut(&mut harness).level.stages[0].pass_score = 1000.0;
+    state_mut(&mut harness).best_stars = 1;
+    state_mut(&mut harness).stage = 2;
+    harness.key(KeyCode::Enter);
+    harness.frames(3);
+    assert_eq!(phase(&harness), PlayPhase::Report);
+    assert!(!runner(&mut harness).is_running(), "no run was started");
+    let report = state(&harness).report.clone().expect("a report");
+    assert_eq!(report.stage.stage, 1);
+    assert!(!report.stage.passed);
+    assert!(report.summary.is_none(), "it was played headless");
+    assert_eq!(state(&harness).stage, 1, "the stage the design breaks at");
+    assert_eq!(state(&harness).stars, 0);
+    // Enter: back to the design, on the same (failed) stage.
+    harness.key(KeyCode::Enter);
+    harness.frames(2);
+    assert_eq!(phase(&harness), PlayPhase::Design);
+    assert_eq!(state(&harness).stage, 1);
+}
+
+#[test]
+fn the_check_runs_on_a_worker_thread_and_the_report_follows() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<tf_game::play::PlayMode>()
+        .threaded = true;
+    state_mut(&mut harness).level.stages[0].pass_score = 1000.0;
+    state_mut(&mut harness).best_stars = 1;
+    state_mut(&mut harness).stage = 2;
+    harness.key(KeyCode::Enter);
+    let started = std::time::Instant::now();
+    let mut saw_check = false;
+    while phase(&harness) != PlayPhase::Report {
+        saw_check |= phase(&harness) == PlayPhase::Check;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(300),
+            "never answered"
+        );
+        harness.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(saw_check, "the Check phase was shown while it ran");
+    assert_eq!(
+        state(&harness)
+            .report
+            .as_ref()
+            .expect("a report")
+            .stage
+            .stage,
+        1
+    );
+    assert!(state(&harness).check.is_none());
 }
