@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). **Next: Phase 4, the vertical slice and the "is this fun?" checkpoint.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). **Next: Phase 4, the vertical slice and the "is this credible?" checkpoint.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -8,13 +8,19 @@
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
 
+### 2026-11-17: direction changed (realism first, stars are load stages)
+
+**Decided by the user.** (1) The project is a simulation first and a game second: a believable result is more important than fun; the fun is tuned later. (2) A level is one specific crossing, from a simple street with one zebra to a complex roundabout and more. (3) The stars of a level are stages: each star adds more cars, pedestrians and cyclists, so the same design gets more and more load until it breaks. The plan is updated in sections 1, 3.4, 6, 8 (Phases 4 and 9), 10, 12 and 13.
+
+**Also decided:** a star needs one design that passes every stage up to it (open point 10); an endless mode is only a later idea (section 11); the phase order stays as it is, so that the user can play with the simulation soon (Phase 4 next, calibration stays in Phase 8).
+
 ### 2026-11-17: Phase 3 done on the Mac
 
 **State.** Branch `pivot-phase-3` (made from `pivot-phase-2`; not merged into `main`, not pushed). `scripts/check.sh` passes. The work was done in four stages (A walking, B crossings, C cars against pedestrians, D the view), each one reviewed by a second agent, and the review fixes are in their own commits. The record is under Phase 3 in section 8.
 
 **Look at it:** `(caffeinate -u -t 120 &); sleep 1`, then `cargo play -- --level carrefour-ecole --run --frames 3300 --zoom 4 --screenshot <scratch>/run.png` (add `--population careless` for people who break rules). At the default framing a walker is 2 pixels wide: zoom in.
 
-**Then:** Phase 4. Before it starts, the user decides: the proposal of section 5.7 (addition 1, speed from the look of the street), and whether level 1 keeps its four default zebras (they are there so that Phase 3 could run; a tutorial that teaches the zebra tool may want to start without them).
+**Then:** Phase 4. Its two decisions are made (2026-11-17): addition 1 of section 5.7 (speed from the look of the street) is in Phase 4, and level 1 keeps its four default zebras.
 
 ### 2026-11-16: Phase 2 checked on the Mac
 
@@ -41,14 +47,18 @@ A clean `scripts/check.sh` takes about 20 min there, and `target/` is about 18 G
 
 ## 1. The new game
 
-**Pitch.** You are an urban designer (*concepteur d'espace public*) in Paris. Each level is one real, complex intersection. The buildings and the kerb-to-kerb space are fixed. You decide how the space is shared between cars, cyclists and pedestrians. Then you start the simulation and you can only watch. The people decide if your design is good.
+**Pitch.** You are an urban designer (*concepteur d'espace public*) in Paris. Each level is one specific crossing: from a simple street with one zebra to a complex roundabout and more. The buildings and the kerb-to-kerb space are fixed. You decide how the space is shared between cars, cyclists and pedestrians. Then you start the simulation and you can only watch. The people decide if your design is good, and each star puts more of them on your design, until it breaks.
+
+**Direction (user, 2026-11-17): a simulation first, a game second.** For now the project is a realistic simulation of a street more than a game. When realism and fun do not agree, realism wins: behaviour, speeds, flows and injuries must be believable to a person who knows the street. The fun (pace, score, rewards) is tuned later, on top of a credible simulation, and must not make the simulation less true.
 
 **The loop of one level:**
 
-1. **Brief.** The level shows the place, the flows (how many cars, cyclists, pedestrians, from where to where, at which time of day), the constraints (for example: the bus line must pass, deliveries must be possible) and the star thresholds.
+1. **Brief.** The level shows the place, the flows (how many cars, cyclists, pedestrians, from where to where, at which time of day), the constraints (for example: the bus line must pass, deliveries must be possible) and the stages of its stars.
 2. **Design.** The player changes the use of the space and places equipment (section 4). The simulation is stopped. Ghost flows show the demand.
-3. **Run.** The simulation plays one compressed day in four time slices. The player can pan, zoom, change the speed and pause. The player cannot edit.
-4. **Report.** Score, list and map of incidents, replay of each incident with its cause. Then back to step 2 with the same design. The best run gives the stars.
+3. **Run.** The simulation plays the current star stage: one compressed day in four time slices, with the traffic of that stage. The player can pan, zoom, change the speed and pause. The player cannot edit.
+4. **Report.** Result of the stage, list and map of incidents, replay of each incident with its cause. If the design holds, the star is won and the next stage (more traffic) opens on the same design. If it breaks, back to step 2.
+
+**Stars are load stages (user, 2026-11-17).** Each star of a level is a difficulty stage. Star 1 has the base traffic. Each next star adds more cars, pedestrians and cyclists (and can change the mix), so the system that the player designed carries more and more load until it breaks. The number of stars tells how much load the design holds (section 6).
 
 **Decisions made by the user (2026-11-15):**
 
@@ -57,7 +67,9 @@ A clean `scripts/check.sh` takes about 20 min there, and `target/` is about 18 G
 | The old city builder | Replaced. It stays in git history behind a tag. |
 | Loop | Free iteration: design, run, report, design again. |
 | Player power on roads | Reallocation of space: the asphalt is fixed, its use is not (lane to bicycle lane or bus lane, one-way, turn bans, speed limit, wider sidewalk). No street closure in the first version. |
-| Levels | Hand-made, simplified copies of real Paris places. |
+| Levels | Hand-made, simplified copies of real Paris places. One level is one specific crossing, from a simple street with a zebra to a complex roundabout (2026-11-17). |
+| Realism or fun | Realism first; fun is tuned later on top of it (2026-11-17). |
+| Stars | Load stages: each star adds traffic on the same design until it breaks (2026-11-17). |
 
 **Score rules given by the user:** annoyed people, conflicts and light injuries decrease the score. A death is a game over. Free space, rest areas and green areas give bonus points with time.
 
@@ -67,6 +79,7 @@ A clean `scripts/check.sh` takes about 20 min there, and `target/` is about 18 G
 2. **Design controls risk.** The player cannot control people, only what the space lets them do. A good design makes a fatal error almost impossible (low speed at conflict points, separation, short crossings). A bad design lets one careless person kill.
 3. **Same design, same seed, same run.** A run is deterministic. The player can replay it, and a change of result comes only from a change of design.
 4. **Real proportions.** Metres, seconds, real speeds. The old game compressed time and distance; this one cannot, because injury depends on real speed.
+5. **Realism before fun.** A behaviour is added or tuned because real people do it, with a source when one exists, not because it makes the run more exciting. Game rules (score, stars) read the simulation; they never change how agents behave.
 
 ---
 
@@ -163,7 +176,8 @@ One RON file per level in `crates/tf_sim/data/levels/`, embedded with `include_s
 - nodes, segments (centerline + default profile + locks), junctions (polygon, default movements, default control);
 - fixed furniture (metro exits, existing trees, a bus stop);
 - **gates** (where agents enter and leave) and the **demand**: per time slice, per mode, an origin-destination table with counts, plus the mix of archetypes;
-- constraints, the allowed tools, the star thresholds, the seed.
+- constraints, the allowed tools, the seed;
+- the **star stages**: for each star, the load on top of the base demand (a scale per mode, and optionally a different archetype mix, for example more careless people) and the pass conditions of that stage (section 6). The headless `run_level --demand-scale` is the first form of this.
 
 The **design** of the player is a separate, small file: the list of edit commands on top of the level. Loading a design replays its commands. This also gives undo and redo.
 
@@ -272,7 +286,7 @@ The personality of 5.3 is in the code since Phase 2 (seven traits per agent, dra
 
 | # | Addition | What it changes | Phase |
 |---|---|---|---|
-| 1 | **Speed from the look of the street** | The wanted speed is today a share of the speed limit. Real drivers go slower in a narrow lane, between parked cars, near trees and obstacles, on a raised crossing, and faster on a wide, empty street, whatever the sign says. The wanted speed gets a factor from the lane width, the side friction (what is next to the lane) and the sight distance. This gives the player a second tool for speed: geometry, not only the sign. | 4 |
+| 1 | **Speed from the look of the street** (accepted by the user on 2026-11-17) | The wanted speed is today a share of the speed limit. Real drivers go slower in a narrow lane, between parked cars, near trees and obstacles, on a raised crossing, and faster on a wide, empty street, whatever the sign says. The wanted speed gets a factor from the lane width, the side friction (what is next to the lane) and the sight distance. This gives the player a second tool for speed: geometry, not only the sign. | 4 |
 | 2 | **Attention with a direction** | Attention is today one probability that a look is made. In real crashes the driver looks, but at the wrong place: a driver who turns left looks at the oncoming cars and does not see the pedestrian on the exit crossing. A driver gets a gaze direction that its task sets, and sees an unexpected kind of road user (a cyclist, a child) less well than a car. The cause chain can then say "looked left for a gap, did not look at the zebra". | 6 |
 | 3 | **Reaction time that depends on surprise** | The reaction time is today one fixed value per agent. A driver reacts in about 0.7 s to an expected event and in about 1.5 s to a surprise (a person who comes out from behind a van). The reaction time gets a factor for unexpected events. | 6 |
 | 4 | **Imitation** | A pedestrian crosses on red much more often when another person goes first. A driver follows the vehicle in front through an amber light. Compliance gets a factor from what the neighbours do. One careless person can then lead a group into danger. | 8 |
@@ -293,7 +307,11 @@ The numbers below are start values for tuning.
 - **Serenity.** Mean annoyance per mode. The worst mode counts double, so the player cannot get a good score by sacrificing one group.
 - **Life (bonus).** Points per second of the run for: green area, free pedestrian space per person at the busy moments, rest places that people use, shade. The bonus cannot be more than a set part of the total, so that a park with a deadly road next to it does not win.
 - **Constraints.** A broken level constraint (the bus cannot pass) fails the run with a clear message, before or during the run.
-- **Stars.** 1 star: no death and no serious injury. 2 and 3 stars: score thresholds of the level.
+- **Stars (load stages, user decision 2026-11-17).** Each star is a stage of the level with more traffic than the one before (section 3.4). A stage is passed when the run has no death, no serious injury, no broken constraint, and its score is at or above the threshold of that stage. Passing a stage gives its star and opens the next stage on the same design. A failed stage ends the progress of that design at the stars already won: the stages show the load at which the design breaks, and the report tells why (which conflict point, which mode, which slice).
+  - A star belongs to a design (user, 2026-11-17): to have 3 stars, one design must pass stages 1, 2 and 3. When the player changes the design, the lower stages are run again headless before the current stage, so the stars always describe the design that is on the map.
+  - The number of stages per level is level data (3 by default).
+
+The score is a measure of the simulation, not a reward system that changes it: with realism first (section 1), the weights are set to agree with what a road-safety expert would say about the design, and tuned for fun only later.
 
 **Fairness.** A run is deterministic, so a death is always reproducible and explained. From Phase 9, an **impact study** runs the design many times headless with different seeds (the headless sim must be fast, section 9) and gives a risk estimate ("1 run in 20 has a serious injury at the north crossing"). The stars can then ask for a risk level, not for one lucky run.
 
@@ -426,13 +444,15 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
   - At the default framing a walker is 2 pixels wide. A minimum drawn size is a question for the art direction.
   - Bicycle flows are still not simulated (Phase 6). The run is still not inside `Simulation`.
 
-### Phase 4 — Vertical slice: design, run, report (M) ⭐ "is this fun?" checkpoint
+### Phase 4 — Vertical slice: design, run, report (M) ⭐ "is this credible?" checkpoint
 - `Phase` state, run clock rule (7.4), minimal HUD, minimal report (score parts, incident list, markers on the map).
 - First tools: signal plan from templates, zebra, speed limit, bollards. First score (section 6).
-- Proposed (section 5.7, addition 1): the wanted speed depends on the look of the street, so that the speed limit and the bollards have a believable effect.
-- The test level becomes level 1, playable from start to stars.
+- Star stages (section 6): the level file holds the stages, a run plays the current stage, the report says passed or broken and why, and the next stage opens on the same design.
+- Decided (user, 2026-11-17; section 5.7, addition 1): the wanted speed depends on the look of the street, so that the speed limit and the bollards have a believable effect. It changes the replay hashes; the commit says so.
+- Level 1 keeps its four default zebras (decided 2026-11-17): a real school crossing in Paris has them, so they are the believable starting state. The player can still move or remove them with the zebra tool; the "simple street with one zebra" level (section 10, level 0) is the place to teach that tool.
+- The test level becomes level 1, playable through all its star stages.
 
-**Done when:** the user plays level 1 several times, and a better design gives a better score for reasons that the report explains. **Stop and decide** here if the direction is right before the rest.
+**Done when:** the user plays level 1 several times and finds the behaviour believable; a better design holds more stages for reasons that the report explains; the load at which a design breaks is plausible. **Stop and decide** here if the direction is right before the rest. Fun is not the test of this checkpoint (section 1, "Direction").
 
 ### Phase 5 — Remove the old game (S)
 - Delete the dropped modules of section 2.2, their tests and their goldens, in commits that say so. Delete `migration/` when nothing reads it.
@@ -465,8 +485,8 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 **Done when:** the same design gives a different, plausible picture in each slice, and the reference values are inside their bands in a statistical test.
 
 ### Phase 9 — Paris levels and progression (L)
-- Level authoring workflow (section 10) and 5 to 7 levels with rising difficulty.
-- Unlocks, stars, progress save, tutorial steps, the impact study (section 6).
+- Level authoring workflow (section 10) and 5 to 7 levels with rising difficulty: from a simple street with one zebra to a complex roundabout.
+- Star stages for each level (load per stage, set so that a good design for that place holds them and a weak one breaks), unlocks, progress save, tutorial steps, the impact study (section 6).
 
 **Done when:** a new player can go from level 1 to the last level without help.
 
@@ -492,17 +512,18 @@ Section 11.
 
 ## 10. Paris levels
 
-Candidates, from simple to hard. The final list and order are decided in Phase 9; each level teaches one subject.
+Candidates, from simple to hard. Each level is one specific crossing; the progression goes from a simple street with one zebra to a complex roundabout and more (user, 2026-11-17). Inside a level, the star stages add load (section 6). The final list and order are decided in Phase 9; each level teaches one subject.
 
 | # | Place | Subject |
 |---|---|---|
+| 0 | A simple street with one zebra (fictional) | First contact: one crossing, cars and pedestrians, speed against yielding |
 | 1 | "Carrefour école" (fictional, small streets, 11e style) | Tutorial: zebra, 30 km/h, bollards, children |
 | 2 | Rue de Rivoli × Boulevard de Sébastopol | Two major bicycle axes cross; cyclists against pedestrians |
 | 3 | Carrefour de l'Odéon | Irregular shape, metro exits, terraces, crowds |
 | 4 | Carrefour Barbès – Rochechouart | Very dense pedestrians, market, elevated metro pillars as obstacles |
 | 5 | Place de Clichy | 5 arms, buses, deliveries, night |
 | 6 | Place de la Bastille | Very large space to reallocate; a plaza is possible |
-| 7 | Place de l'Étoile | Final level: 12 avenues, priority to the right, no signals by default |
+| 7 | Place de l'Étoile | Final level: a large roundabout, 12 avenues, priority to the right, no signals by default |
 
 **Authoring.** Geometry is drawn by hand as a simplified plan, with public maps as the visual reference. If map data (for example OpenStreetMap) is imported and not only looked at, its licence and attribution rules apply: decide this before the first real level. Flows are plausible, not measured, unless open count data is used. A small level tool (a debug mode of the game that edits a level file) is planned in Phase 9 if hand-written RON becomes too slow.
 
@@ -516,6 +537,7 @@ Candidates, from simple to hard. The final list and order are decided in Phase 9
 - Events: market day, demonstration, strike day with heavy car traffic.
 - A sandbox mode with free flows; a level editor for players; sharing of designs by seed.
 - Emergency vehicles that must cross the place.
+- An "endless mode" after the last star: the load grows until the design breaks, and the report gives the load reached. Nice to have only, because no real street gets unbounded traffic (user, 2026-11-17).
 
 ---
 
@@ -532,6 +554,8 @@ Candidates, from simple to hard. The final list and order are decided in Phase 9
 | 7 | Source and licence of map references | Phase 9 | Hand-drawn simplifications |
 | 8 | Art direction | Phase 10 | Flat shapes |
 | 9 | Game language (French terms, French and English UI) | Phase 10 | English UI with French place names |
+| 10 | When the design changes, are the stars already won kept, or must the new design pass the lower stages again | Phase 4 | **Decided (2026-11-17):** one design must pass every stage up to its star; the lower stages run again headless after a change |
+| 11 | After the last star, an open stage that adds load until the design breaks and reports the load reached | — | **Decided (2026-11-17):** not planned; an "endless mode" is a nice-to-have in section 11, because it is not realistic |
 
 **Phase 0 (2026-11-16):** no open point blocks Phase 1. Every point uses its default until the user decides otherwise.
 
@@ -543,7 +567,8 @@ Candidates, from simple to hard. The final list and order are decided in Phase 9
 |---|---|
 | **The simulation is not credible** (people act like robots or like fools) | Calibration phase with real figures; micro-scenarios per behaviour; visible agent state so that odd behaviour can be diagnosed. |
 | **A random death feels unfair** | Determinism, cause chain, replay; severity depends on speed, which the design controls; the impact study shows risk before the run. |
-| **Watching is boring** | Short slices, speed control, incident feed, visible personalities. Checkpoint at Phase 4 before the large phases. |
+| **Watching is boring** | Accepted for now: realism comes first (section 1). Short slices, speed control, incident feed and visible personalities help; the fun is tuned after the simulation is credible. |
+| **Load stages break for the wrong reason** (a design fails at star 3 because the sim jams, not because the street would fail) | Gridlock and give-ups are checked against real capacity figures (Phase 8); the report must name a believable cause for each broken stage. |
 | **One best design per level** | Constraints and the "worst mode counts double" rule force trade-offs; Phase 7 asks for two different solutions per level. |
 | **The crowd model is unstable or slow** | Tick rate decided by measurement in Phase 2; spatial grid; agent count per level is limited by design. |
 | **Scope**: three movement models, an editor, a full UI | Vertical slice first with cars and pedestrians only; old code deleted early to cut maintenance; each phase can ship a playable state. |
