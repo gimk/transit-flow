@@ -195,7 +195,7 @@ pub struct StreetRun {
     approaches: IndexMap<i32, Vec<i32>>,
     plans: IndexMap<i32, SignalPlan>,
     /// Street speed of every road lane, computed once (the street is fixed in a run).
-    street_speeds: IndexMap<StreetLaneId, f64>,
+    street_speeds: crate::street::speed::StreetSpeeds,
     routes: Vec<RoutePath>,
     /// Per route (same index): the road areas of the walk space it drives through, with
     /// its route distances in and out and its line through them (`kerb::road_areas_of`).

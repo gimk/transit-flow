@@ -6,8 +6,12 @@
 //! and trees). The sign has a strong effect on compliant drivers only (`drive::desired_speed`
 //! mixes the two by compliance).
 //!
-//! The result is one speed per road lane, in m/s, from the geometry alone (never from the
-//! sign). The street does not change during a run, so it is computed once.
+//! The result is a speed profile per road lane, in m/s, from the geometry alone (never from
+//! the sign): one value per 5 m cell, each read over a 10 m window of what is beside the
+//! lane, then smoothed so that the speed changes at a comfortable rate. A row of bollards
+//! slows drivers where it stands (and just before it), not the whole lane. Only things
+//! within 1 m of the lane edge count: a bollard row behind a parking strip does not. The
+//! street does not change during a run, so it is computed once.
 //!
 //! All figures are start values of our own, not fitted to data: Phase 8 calibration. The
 //! formula uses only `+ - * /`, `min`, `max` and `clamp`, so every
@@ -144,34 +148,102 @@ fn distance_to(shape: &Shape, point: Vec2) -> f64 {
     }
 }
 
-/// The weighted number of obstacles lining a lane: those whose nearest point to the lane's
-/// line is within `OBSTACLE_REACH` of its edge.
-fn weighted_obstacles(street: &Street, lane: &StreetLane, points: &[Vec2]) -> f64 {
-    let half = f64::from(lane.width) * 0.5;
-    street
-        .obstacles
-        .values()
-        .filter(|obstacle| {
-            let gap = points
-                .iter()
-                .map(|p| distance_to(&obstacle.shape, *p))
-                .fold(f64::INFINITY, f64::min)
-                - half;
-            gap <= OBSTACLE_REACH
-        })
-        .map(|obstacle| {
-            if obstacle.kind.blocks_sight() {
-                SIGHT_BLOCKER_WEIGHT
-            } else {
-                1.0
-            }
-        })
-        .sum()
+/// Length of one cell of a speed profile, metres.
+pub const CELL: f64 = 5.0;
+/// The side friction of a cell is read over this much lane around it, metres (own start
+/// value): a driver reacts to what is beside the lane now and just ahead, not to one post.
+pub const WINDOW: f64 = 10.0;
+/// The most a driver speeds up between cells, m/s² (own start value, comfortable).
+pub const SMOOTH_ACCEL: f64 = 1.0;
+/// The most a driver slows down between cells, m/s² (own start value, comfortable).
+pub const SMOOTH_DECEL: f64 = 1.5;
+
+/// The street speed along every road lane: one value per `CELL` metres, plus the
+/// length-weighted mean of the lane.
+#[derive(Clone, Debug, Default)]
+pub struct StreetSpeeds {
+    cells: IndexMap<StreetLaneId, Vec<f64>>,
+    means: IndexMap<StreetLaneId, f64>,
 }
 
-/// The street speed of every road lane of `street` (movements are not in the map).
-pub fn street_speeds(street: &Street) -> IndexMap<StreetLaneId, f64> {
-    let mut speeds = IndexMap::new();
+impl StreetSpeeds {
+    /// The street speed `s` metres along road lane `id` (`None` for a movement).
+    pub fn at(&self, id: StreetLaneId, s: f64) -> Option<f64> {
+        let cells = self.cells.get(&id)?;
+        let k = (s.max(0.0) / CELL) as usize;
+        Some(cells[k.min(cells.len() - 1)])
+    }
+
+    /// The mean street speed of the whole lane.
+    pub fn mean(&self, id: StreetLaneId) -> Option<f64> {
+        self.means.get(&id).copied()
+    }
+
+    /// The cell values of a road lane, from its start.
+    pub fn cells(&self, id: StreetLaneId) -> Option<&[f64]> {
+        self.cells.get(&id).map(Vec::as_slice)
+    }
+}
+
+impl std::ops::Index<&StreetLaneId> for StreetSpeeds {
+    type Output = f64;
+    /// The mean speed of the lane.
+    fn index(&self, id: &StreetLaneId) -> &f64 {
+        &self.means[id]
+    }
+}
+
+/// For each obstacle that comes within `OBSTACLE_REACH` of the lane edge: its weight and
+/// the distances along the lane (of `points`, which sit at `arcs`) where it is that close.
+/// Only things within 1 m of the lane count: a bollard row behind a parking strip is too
+/// far from the lane and does not slow its drivers.
+fn obstacle_spans(
+    street: &Street,
+    lane: &StreetLane,
+    points: &[Vec2],
+    arcs: &[f64],
+) -> Vec<(f64, Vec<f64>)> {
+    let half = f64::from(lane.width) * 0.5;
+    let mut out = Vec::new();
+    for obstacle in street.obstacles.values() {
+        let near: Vec<f64> = points
+            .iter()
+            .zip(arcs)
+            .filter(|(p, _)| distance_to(&obstacle.shape, **p) - half <= OBSTACLE_REACH)
+            .map(|(_, arc)| *arc)
+            .collect();
+        if near.is_empty() {
+            continue;
+        }
+        let weight = if obstacle.kind.blocks_sight() {
+            SIGHT_BLOCKER_WEIGHT
+        } else {
+            1.0
+        };
+        out.push((weight, near));
+    }
+    out
+}
+
+/// Only lower cells, so that the speed falls by at most `SMOOTH_DECEL` and rises by at most
+/// `SMOOTH_ACCEL` from one cell to the next: drivers slow down before a slow stretch and
+/// pick up speed again after it.
+fn smooth(cells: &mut [f64]) {
+    for k in (0..cells.len().saturating_sub(1)).rev() {
+        let cap = (cells[k + 1] * cells[k + 1] + 2.0 * SMOOTH_DECEL * CELL).sqrt();
+        cells[k] = cells[k].min(cap);
+    }
+    for k in 1..cells.len() {
+        let cap = (cells[k - 1] * cells[k - 1] + 2.0 * SMOOTH_ACCEL * CELL).sqrt();
+        cells[k] = cells[k].min(cap);
+    }
+}
+
+/// The street speed profile of every road lane of `street` (movements are not in it).
+/// Each cell reads the width, the strips beside the lane and the obstacles near the edge
+/// over `WINDOW` metres around it. Computed once per street, not per tick.
+pub fn street_speeds(street: &Street) -> StreetSpeeds {
+    let mut speeds = StreetSpeeds::default();
     for lane in street.lanes.values() {
         let (Some(segment), Some(strip)) = (lane.segment_id, lane.strip) else {
             continue;
@@ -179,8 +251,39 @@ pub fn street_speeds(street: &Street) -> IndexMap<StreetLaneId, f64> {
         let profile = &street.segments[&segment].profile;
         let side = strip_friction(profile, strip);
         let points = resample(&lane.polyline(), SAMPLE_STEP);
-        let lined = obstacle_friction(weighted_obstacles(street, lane, &points), lane.length);
-        speeds.insert(lane.id, lane_speed(f64::from(lane.width), side, lined));
+        let mut arcs = Vec::with_capacity(points.len());
+        let mut at = 0.0_f64;
+        for (i, p) in points.iter().enumerate() {
+            if i > 0 {
+                at += f64::from(p.distance(points[i - 1]));
+            }
+            arcs.push(at);
+        }
+        let spans = obstacle_spans(street, lane, &points, &arcs);
+        let length = lane.length.max(0.1);
+        let count = ((length / CELL).ceil() as usize).max(1);
+        let mut cells = Vec::with_capacity(count);
+        for k in 0..count {
+            let centre = (k as f64 + 0.5) * CELL;
+            let lo = (centre - WINDOW * 0.5).max(0.0);
+            let hi = (centre + WINDOW * 0.5).min(length);
+            let weighted: f64 = spans
+                .iter()
+                .filter(|(_, near)| near.iter().any(|a| (lo..=hi).contains(a)))
+                .map(|(w, _)| *w)
+                .sum();
+            let lined = obstacle_friction(weighted, hi - lo);
+            cells.push(lane_speed(f64::from(lane.width), side, lined));
+        }
+        smooth(&mut cells);
+        let mean = cells
+            .iter()
+            .enumerate()
+            .map(|(k, v)| v * CELL.min(length - k as f64 * CELL))
+            .sum::<f64>()
+            / length;
+        speeds.cells.insert(lane.id, cells);
+        speeds.means.insert(lane.id, mean);
     }
     speeds
 }
@@ -291,6 +394,18 @@ mod tests {
         assert!((25.0..=35.0).contains(&v), "bollard lane {v}");
         let lined = kmh(lane_speed(2.75, strip_friction(&open, 1), FRICTION_LINED));
         assert!((25.0..=35.0).contains(&lined), "lined lane {lined}");
+    }
+
+    #[test]
+    fn smoothing_limits_the_change_between_cells() {
+        let mut cells = vec![15.0, 15.0, 15.0, 6.0, 6.0, 15.0, 15.0, 15.0, 15.0];
+        smooth(&mut cells);
+        assert_eq!(cells[3], 6.0);
+        for pair in cells.windows(2) {
+            assert!(pair[1] * pair[1] - pair[0] * pair[0] <= 2.0 * SMOOTH_ACCEL * CELL + 1e-9);
+            assert!(pair[0] * pair[0] - pair[1] * pair[1] <= 2.0 * SMOOTH_DECEL * CELL + 1e-9);
+        }
+        assert!(cells[2] < 15.0 && cells[5] < 15.0);
     }
 
     #[test]

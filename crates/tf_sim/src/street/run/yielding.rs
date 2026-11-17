@@ -32,7 +32,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::agent::Agent;
-use super::drive::{COMFORT_BRAKE, DT, HARD_BRAKE, SIDE_MARGIN, Snapshot, needed_brake, safe_speed};
+use super::drive::{
+    COMFORT_BRAKE, DT, HARD_BRAKE, SIDE_MARGIN, Snapshot, needed_brake, safe_speed,
+};
 use super::events::CauseKind;
 use super::kerb::RouteArea;
 use super::sight::{Hider, SightBlockers};
