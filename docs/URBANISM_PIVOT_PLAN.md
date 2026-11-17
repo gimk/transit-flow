@@ -20,7 +20,9 @@ The newest entry is first. Each entry tells what was done, where, and what to do
 
 **After the first playtest (same day).** The near-miss excess had one cause: the braking applied (and logged) was the deceleration that reaches the target speed in one tick, cut at 8 m/s². Now each driver brakes with the deceleration needed over the real distance, each vehicle draws its own maximum (cars 7.5-9.5, vans 6.5-8.0 m/s², NCHRP 400 and ABS tests; `ROAD_GRIP` for weather later), braking builds up in 0.3 s, and one `stop_line()` (the painted zebra edge, found exactly) is used by drivers and by the careful walker's trust check. Over 30 runs: hard-brake near misses 158 → 60, mean stage scores 84 / 62 / 60 → 94 / 79 / 78; no injury before or after. The empty design now passes all three stages on most seeds; the user accepts it (section 6). Also: light Google-Maps palette, speed limits painted on the carriageway, tool previews, the agent inspector.
 
-**Then:** the user plays level 1 several times (Phase 4 "done when"). Open: clicking an incident line does not move the camera yet; direction arrows are still drawn on zebras.
+**After the second playtest (same day).** Rule-breaking walkers felt like a switch per person and crossed where nobody would. Now each rule is decided at each crossing from the traffic in view (section 5.3, "Pedestrian decisions"): everybody looks, attention (not risk) causes the bad gaps, red-light crossing depends on the cars in view and on others, zebra or not is chosen near the street, walkers cut the corner beside a zebra. Replay hashes changed on purpose. Over 30 runs (empty design): walker contacts 2 → 0, crossings off a zebra 15 → 3, corner cuts 7-16 % of crossings, mean stage scores 94 / 81 / 76 → 95 / 82 / 81. Tests: on red, 44 % of walkers go with no car and 15 % with cars; a zebra 40 m away is ignored by 26 % on an empty street and 3 % with cars. Also: the speed preview replaces the painted limit, a click on an incident line centres the map, arrows keep clear of zebras.
+
+**Then:** the user plays level 1 several times (Phase 4 "done when").
 
 ### 2026-11-17: direction changed (realism first, stars are load stages)
 
@@ -258,6 +260,13 @@ Each agent gets a profile at spawn from its archetype and its own random stream.
 
 **Dynamic state:** *hurry* (set by the time slice and the archetype) and *frustration* (grows while the agent waits or is blocked, decreases slowly). Frustration decreases compliance and the accepted gap. This is the link between "annoyed" and "dangerous", and it is the reason why a design with very long red lights is not safe.
 
+**Pedestrian decisions (Phase 4 playtest, user 2026-11-17).** Breaking a rule is not a switch per person: a person decides each rule at each crossing, from what they see then. All random values are still drawn at spawn; only the chance they are compared with depends on the situation.
+- *Everybody looks.* The accepted gap is never below the crossing time; risk and frustration only make the margin smaller. A small chance that grows as attention falls makes a walker judge from a view 1.5 s old at that kerb (phone, talk, children): this, not risk, is the main cause of a walker stepping in front of a car.
+- *Red light.* The chance to go depends on the person's red habit, on whether a vehicle comes and how soon (with no car in view most Parisians go), on the time waited, and on the people nearby who already cross (people follow others; groups wait more: Rosenbloom 2009, Transportation Research Part F 12(5)).
+- *Zebra or not* is decided near the street, from the detour, the zebra habit and the traffic in view: on an empty street more people cross directly, with cars coming more walk to the zebra. With no crossing within 50 m, crossing anywhere is legal (R412-37).
+- *Corner cutting.* A walker may step onto the road up to 2.5 m beside a zebra and cross on a diagonal; it still counts as crossing at the zebra, and drivers yield to it.
+- *One habit per rule* (red, zebra, corner): compliance plus a small shift per archetype, so one person can follow one rule and bend another. All values are start values for Phase 8.
+
 **Archetypes (first list, tuned later):**
 
 - Cars: resident, commuter, taxi / VTC, delivery van (stops where it can), bus (scripted path, careful), scooter.
@@ -467,6 +476,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Level 1 keeps its four default zebras (decided 2026-11-17): a real school crossing in Paris has them, so they are the believable starting state. The player can still move or remove them with the zebra tool; the "simple street with one zebra" level (section 10, level 0) is the place to teach that tool.
 - The test level becomes level 1, playable through all its star stages.
 - After the first playtest (user, 2026-11-17): the light palette of the target look (7.3), the speed limit drawn on its segment, a preview of each tool under the pointer, an inspector that shows the traits and state of the car or pedestrian under the pointer, and braking that is more real (a maximum deceleration per vehicle and a short brake build-up, instead of one 8 m/s² for all), with a check of why careful drivers have so many hard-brake near misses.
+- After the second playtest (user, 2026-11-17): pedestrians decide each rule at each crossing from what they see (section 5.3), and they cut corners beside zebras.
 
 **Done when:** the user plays level 1 several times and finds the behaviour believable; a better design holds more stages for reasons that the report explains; the load at which a design breaks is plausible. **Stop and decide** here if the direction is right before the rest. Fun is not the test of this checkpoint (section 1, "Direction").
 
