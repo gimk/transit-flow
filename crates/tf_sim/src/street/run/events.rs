@@ -144,6 +144,17 @@ pub enum StreetEvent {
         agent: AgentId,
         waited_s: f64,
     },
+    /// Still on the street, or still waiting to enter, when the run ended: the person did
+    /// not get through. The score counts it like a give-up (a jam must cost points, not
+    /// hide its slowest people). `agent` is `None` for one who never entered (a wish of the
+    /// backlog); `delay_s` is the delay so far (time since it should have entered or
+    /// since it entered, less the free trip time).
+    Unfinished {
+        agent: Option<AgentId>,
+        mode: Mode,
+        delay_s: f64,
+        entered: bool,
+    },
     Conflict {
         kind: ConflictKind,
         grade: Grade,

@@ -250,8 +250,8 @@ fn the_same_inputs_give_the_same_log_hash() {
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
     (1, Population::Mixed, 1.0, 0x7bcf_23c0_03b1_36af),
     (2, Population::Mixed, 1.0, 0xf83b_4be3_e0ec_9a3b),
-    (1, Population::Careless, 4.0, 0x924f_38c7_e333_1888),
-    (2, Population::Careless, 4.0, 0x5e81_1bb1_0c98_e782),
+    (1, Population::Careless, 4.0, 0xc67d_95ae_8ac2_2058),
+    (2, Population::Careless, 4.0, 0xe163_6157_bb65_fa60),
 ];
 
 #[test]

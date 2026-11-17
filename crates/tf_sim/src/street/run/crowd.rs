@@ -618,6 +618,18 @@ impl StreetRun {
                 }
                 walker.road_act = act;
             }
+            // What it did wrong stays blamable for `WALKER_CAUSE_S`, and for as long as it is
+            // still on a carriageway (a walker stuck among queued cars 100 s after it stepped
+            // off is still there because it crossed out of the crossing).
+            let on_road = self.walk_space.areas
+                [self.walk_paths[walker.path].areas[walker.area_index]]
+                .kind
+                .is_road();
+            if on_road {
+                for (t, _) in &mut walker.recent {
+                    *t = tick;
+                }
+            }
             walker
                 .recent
                 .retain(|(t, _)| (tick - t) as f64 * DT <= WALKER_CAUSE_S);

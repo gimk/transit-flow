@@ -61,7 +61,8 @@ impl StreetRun {
                 };
                 let p = f64::from(flow.per_hour) * self.demand_scale / 3600.0 * DT / per_wish;
                 if chance(&mut self.flow_state[s][f].rng, p) {
-                    self.flow_state[s][f].backlog += 1;
+                    let tick = self.tick;
+                    self.flow_state[s][f].backlog.push(tick);
                 }
             }
         }
@@ -69,7 +70,7 @@ impl StreetRun {
         let upto = self.current_slice.map_or(self.slices.len(), |s| s + 1);
         for s in 0..upto {
             for f in 0..self.slices[s].flows.len() {
-                if self.flow_state[s][f].backlog == 0 {
+                if self.flow_state[s][f].backlog.is_empty() {
                     continue;
                 }
                 let flow = self.slices[s].flows[f].clone();
@@ -83,8 +84,10 @@ impl StreetRun {
                     self.try_spawn(&flow)
                 };
                 match attempt {
-                    Attempt::Spawned => self.flow_state[s][f].backlog -= 1,
-                    Attempt::NoRoute => self.flow_state[s][f].backlog = 0,
+                    Attempt::Spawned => {
+                        self.flow_state[s][f].backlog.remove(0);
+                    }
+                    Attempt::NoRoute => self.flow_state[s][f].backlog.clear(),
                     Attempt::Blocked => {}
                 }
             }
