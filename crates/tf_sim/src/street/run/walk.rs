@@ -29,9 +29,9 @@
 use glam::Vec2;
 
 use crate::geom::Polygon;
+use crate::geom::lanes as lane_builder;
 use crate::geom::segment::closest_point_to_segment;
-use crate::roads::lane_builder;
-use crate::routing::astar::AStar;
+use crate::street::astar::AStar;
 use crate::street::level::{Gate, JunctionControl, Shape};
 use crate::street::model::Street;
 use crate::street::space::StripUse;

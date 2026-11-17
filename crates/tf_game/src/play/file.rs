@@ -1,12 +1,30 @@
 //! The design file (pivot plan §3.4): the player's `Design` as JSON, one file per level in
 //! `<data dir>/designs/<level id>.json`. It is written when a run starts, and read when
-//! play mode opens a level. The data dir is the one of the quicksave (`game::data_dir`).
+//! play mode opens a level. The data dir is `data_dir`.
 
 use std::path::PathBuf;
 
 use tf_sim::street::Design;
 
-use crate::game::data_dir;
+/// Where designs and stars go: the platform's per-user data folder,
+/// `$TRANSIT_FLOW_DATA_DIR` if set (tests).
+pub fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("TRANSIT_FLOW_DATA_DIR") {
+        return dir.into();
+    }
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let base = if cfg!(target_os = "macos") {
+        home().map(|home| home.join("Library/Application Support"))
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home().map(|home| home.join(".local/share")))
+    };
+    base.unwrap_or_else(|| PathBuf::from("."))
+        .join("transit-flow")
+}
 
 pub fn design_path(level_id: &str) -> PathBuf {
     data_dir().join("designs").join(format!("{level_id}.json"))

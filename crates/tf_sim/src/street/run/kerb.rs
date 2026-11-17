@@ -49,8 +49,8 @@ use super::walk::{AreaKind, CUT_M, WalkPath, WalkSpace};
 use super::walker::{DECISION_RANGE_M, KerbDraw, RoadAct, Walker, jaywalk_chance};
 use super::{MoveInfo, StreetRun};
 use crate::geom::segment::closest_point_to_segment;
-use crate::roads::lane::Turn;
 use crate::street::ids::{AgentId, StreetLaneId};
+use crate::street::lanes::Turn;
 use crate::street::model::Street;
 
 /// A walker this close to a kerb (beyond its body) is at it, metres (start value).

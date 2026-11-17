@@ -15,5 +15,3 @@ serde_json = { workspace = true }
 indexmap = { workspace = true }
 ron = { workspace = true }
 
-[dev-dependencies]
-approx = { workspace = true }

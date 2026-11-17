@@ -1,5 +1,5 @@
-//! Key bindings, the stepped zoom, panning, focus requests and the pointer (M8.2). The
-//! GUT suite had no camera tests; these cover `map_camera.gd`'s behaviour.
+//! Key bindings, the stepped zoom, panning, focus requests and the pointer. These cover the
+//! camera's behaviour.
 
 use std::time::Duration;
 
@@ -9,10 +9,9 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::touch::TouchPhase;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use tf_game::camera::{MapCamera, ZOOM_LEVELS, bevy_to_sim, nearest_level, sim_to_bevy};
+use tf_game::camera::{MAP_SIZE, MapCamera, ZOOM_LEVELS, bevy_to_sim, nearest_level, sim_to_bevy};
 use tf_game::events::{CameraFocusRequested, EventsPlugin};
 use tf_game::input::{Action, GameInputPlugin, KeyBindings, Pointer};
-use tf_sim::grid;
 
 fn app() -> App {
     let mut app = App::new();
@@ -52,32 +51,17 @@ fn key(app: &mut App, code: KeyCode, state: ButtonState) {
 }
 
 #[test]
-fn bindings_are_physical_keys_from_project_godot() {
+fn bindings_are_physical_keys() {
     let b = KeyBindings::default();
     assert_eq!(
         b.keys(Action::CameraPanLeft),
         &[KeyCode::KeyA, KeyCode::ArrowLeft]
     );
-    assert_eq!(b.keys(Action::ToolResidential), &[KeyCode::KeyH]);
+    assert_eq!(b.keys(Action::ToolZebra), &[KeyCode::KeyC]);
     assert_eq!(b.keys(Action::ToolCancel), &[KeyCode::Escape]);
     assert_eq!(b.keys(Action::ToggleFullscreen), &[KeyCode::F11]);
-    assert_eq!(b.actions_for(KeyCode::F7), vec![Action::DebugLoadScenario]);
-    // The debug keys with fallbacks for macOS (F10 / F12 can be taken by the system).
-    assert_eq!(
-        b.keys(Action::DebugRushHour),
-        &[KeyCode::F10, KeyCode::KeyP]
-    );
-    assert_eq!(
-        b.keys(Action::DebugNewEmptyMap),
-        &[KeyCode::F12, KeyCode::KeyN]
-    );
-    // Every action has a key (except the debug panel toggle: the Bevy build has no panel),
-    // and no key triggers two actions.
+    // Every action has a key, and no key triggers two actions.
     for action in Action::ALL {
-        if action == Action::ToggleDebugMenu {
-            assert!(b.keys(action).is_empty());
-            continue;
-        }
         assert!(!b.keys(action).is_empty(), "{action:?} has no key");
         for k in b.keys(action) {
             assert_eq!(b.actions_for(*k), vec![action], "{k:?} is shared");
@@ -88,9 +72,9 @@ fn bindings_are_physical_keys_from_project_godot() {
 #[test]
 fn rebinding_changes_what_triggers_an_action() {
     let mut b = KeyBindings::default();
-    b.rebind(Action::ToolRoad, vec![KeyCode::KeyZ]);
-    assert!(b.actions_for(KeyCode::KeyR).is_empty());
-    assert_eq!(b.actions_for(KeyCode::KeyZ), vec![Action::ToolRoad]);
+    b.rebind(Action::ToolZebra, vec![KeyCode::KeyZ]);
+    assert!(b.actions_for(KeyCode::KeyC).is_empty());
+    assert_eq!(b.actions_for(KeyCode::KeyZ), vec![Action::ToolZebra]);
 }
 
 #[test]
@@ -137,7 +121,7 @@ fn pinch_moves_one_level_per_step() {
 fn the_camera_stays_on_the_map() {
     let mut cam = MapCamera::default();
     cam.move_by(Vec2::splat(1e7));
-    assert_eq!(cam.center, grid::map_rect().end());
+    assert_eq!(cam.center, Vec2::splat(MAP_SIZE));
     cam.focus_on(Vec2::splat(-50.0));
     assert_eq!(cam.center, Vec2::ZERO);
 }
@@ -254,7 +238,7 @@ fn the_bevy_transform_and_projection_follow_the_camera() {
 }
 
 #[test]
-fn pointer_world_and_snapped_from_a_known_camera() {
+fn pointer_world_from_a_known_camera() {
     let mut cam = MapCamera::default();
     cam.center = Vec2::new(1000.0, 500.0);
     cam.zoom = 2.0;
@@ -265,7 +249,6 @@ fn pointer_world_and_snapped_from_a_known_camera() {
     assert_eq!(world, Vec2::new(1050.0, 500.0));
     let mut pointer = Pointer::default();
     pointer.set_world(world);
-    assert_eq!(pointer.snapped, Vec2::new(1024.0, 512.0));
     assert!(pointer.in_window);
 }
 
@@ -287,7 +270,7 @@ fn pointer_buttons_follow_the_mouse() {
         .set_world(Vec2::new(70.0, 10.0));
     app.update();
     assert_eq!(
-        app.world().resource::<Pointer>().snapped,
-        Vec2::new(64.0, 0.0)
+        app.world().resource::<Pointer>().world,
+        Vec2::new(70.0, 10.0)
     );
 }

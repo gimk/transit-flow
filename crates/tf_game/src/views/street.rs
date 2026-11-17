@@ -5,7 +5,7 @@
 //! Rebuilt whole when `LoadedLevel` changes; a level is small.
 
 use bevy::prelude::*;
-use tf_sim::roads::lane_builder;
+use tf_sim::geom::lanes as polylines;
 use tf_sim::street::Street;
 use tf_sim::street::level::{AreaKind, ObstacleKind, Shape};
 use tf_sim::street::model::Crossing;
@@ -213,12 +213,12 @@ pub fn crossing_bars(street: &Street, crossing: &Crossing) -> Vec<Vec<Vec2>> {
     for k in 0..count {
         let from = left + margin + k as f32 * period;
         let to = from + ZEBRA_BAR_WIDTH_M;
-        let from_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(from));
-        let to_edge = lane_builder::offset_polyline(&segment.centerline, f64::from(to));
+        let from_edge = polylines::offset_polyline(&segment.centerline, f64::from(from));
+        let to_edge = polylines::offset_polyline(&segment.centerline, f64::from(to));
         let mut polygon: Vec<Vec2> =
-            lane_builder::sub_polyline(&from_edge, f64::from(start), f64::from(end));
+            polylines::sub_polyline(&from_edge, f64::from(start), f64::from(end));
         let mut other: Vec<Vec2> =
-            lane_builder::sub_polyline(&to_edge, f64::from(start), f64::from(end));
+            polylines::sub_polyline(&to_edge, f64::from(start), f64::from(end));
         other.reverse();
         polygon.extend(other);
         if polygon.len() >= 3 {

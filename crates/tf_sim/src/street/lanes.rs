@@ -1,16 +1,28 @@
 //! Lanes on strips (pivot plan §3.1, §3.2): one lane per travel strip, offset from the
 //! centerline by the widths of the strips before it, and the junction movements between
-//! them. The geometry helpers of `roads::lane_builder` are reused as they are (offset
-//! polylines, connector curves, conflict zones); the old road network is not involved.
+//! them. The polyline helpers of `geom::lanes` do the geometry (offset polylines, connector
+//! curves, conflict zones).
 
 use glam::Vec2;
 use indexmap::IndexMap;
 
 use super::ids::StreetLaneId;
 use super::space::{Access, Direction, Profile, StripUse};
+use crate::geom::lanes as polylines;
 use crate::geom::{Curve2D, GdVec2};
-use crate::roads::lane::Turn;
-use crate::roads::lane_builder;
+
+/// The movement a connector performs through a junction; `None` for a lane along a strip.
+/// The values are the old game's, kept for the saved designs and the replay hashes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum Turn {
+    #[default]
+    None = 0,
+    Straight = 1,
+    Right = 2,
+    Left = 3,
+    UTurn = 4,
+}
 
 /// Curves are baked every this many metres (Godot's default of 5 is for pixels and would
 /// cut the corners of a 5 m turn).
@@ -58,7 +70,7 @@ impl StreetLane {
     }
 
     pub fn polyline(&self) -> Vec<Vec2> {
-        lane_builder::get_polyline(&self.curve)
+        polylines::get_polyline(&self.curve)
     }
 }
 
@@ -88,7 +100,7 @@ pub fn strip_lanes(
         }
         let (left, right) = profile.strip_span(index);
         let offset = (left + right) * 0.5;
-        let mut points = lane_builder::offset_polyline(centerline, f64::from(offset));
+        let mut points = polylines::offset_polyline(centerline, f64::from(offset));
         let forward = strip.direction == Direction::Forward;
         let (from_trim, to_trim) = if forward {
             (start_trim, end_trim)
@@ -96,9 +108,9 @@ pub fn strip_lanes(
             points.reverse();
             (end_trim, start_trim)
         };
-        let length = lane_builder::polyline_length(&points);
+        let length = polylines::polyline_length(&points);
         let points =
-            lane_builder::sub_polyline(&points, f64::from(from_trim), length - f64::from(to_trim));
+            polylines::sub_polyline(&points, f64::from(from_trim), length - f64::from(to_trim));
         specs.push(StripLaneSpec {
             strip: index,
             forward,
@@ -120,10 +132,10 @@ pub fn strip_polygon(
     end_trim: f32,
 ) -> Vec<Vec2> {
     let (left, right) = profile.strip_span(index);
-    let length = lane_builder::polyline_length(centerline);
+    let length = polylines::polyline_length(centerline);
     let cut = |offset: f32| {
-        let side = lane_builder::offset_polyline(centerline, f64::from(offset));
-        lane_builder::sub_polyline(&side, f64::from(start_trim), length - f64::from(end_trim))
+        let side = polylines::offset_polyline(centerline, f64::from(offset));
+        polylines::sub_polyline(&side, f64::from(start_trim), length - f64::from(end_trim))
     };
     let mut points = cut(left);
     let mut other = cut(right);
@@ -138,7 +150,7 @@ pub fn curve_from_points(points: &[Vec2]) -> Curve2D {
 }
 
 pub fn connector_curve(from: &Curve2D, to: &Curve2D) -> Curve2D {
-    let curve = lane_builder::build_connector_curve(from, to);
+    let curve = polylines::build_connector_curve(from, to);
     Curve2D::with_bake_interval(curve.points().to_vec(), BAKE_INTERVAL)
 }
 
@@ -223,11 +235,11 @@ pub fn conflict_zones(
     merge: bool,
 ) -> Option<(Vec2, Vec2)> {
     let threshold = f64::from(a_width + b_width) * 0.5;
-    if !merge && lane_builder::polyline_distance(a, b) >= threshold {
+    if !merge && polylines::polyline_distance(a, b) >= threshold {
         return None;
     }
-    let mut zone_a = lane_builder::conflict_zone(a, b, threshold, CONFLICT_STEP);
-    let mut zone_b = lane_builder::conflict_zone(b, a, threshold, CONFLICT_STEP);
+    let mut zone_a = polylines::conflict_zone(a, b, threshold, CONFLICT_STEP);
+    let mut zone_b = polylines::conflict_zone(b, a, threshold, CONFLICT_STEP);
     if merge {
         zone_a = Some(with_end_zone(zone_a, a_length));
         zone_b = Some(with_end_zone(zone_b, b_length));

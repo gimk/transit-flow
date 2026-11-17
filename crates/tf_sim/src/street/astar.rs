@@ -1,11 +1,12 @@
-//! Godot 4.7's `AStar2D` search (`AStar2D::_solve`), shared by the lane graph (routing)
-//! and the walk graph (pedestrians), which both extend `AStar2D` in GDScript. Ties between
-//! equally cheap routes are broken as Godot breaks them: neighbours are tried in the
-//! order they were connected, the open list is Godot's binary heap (`SortArray`
-//! `push_heap` / `adjust_heap` / `pop_heap`), points are ordered by `f` then by the larger
-//! `g`, and scores are `real_t` (`f32`). Points are dense indices (the order they were
-//! added in); callers map their own ids onto them. The step cost and the estimate come
-//! from the caller (`_compute_cost` / `_estimate_cost`), as `f32`.
+//! A* search over dense point indices, used by the walkers' area graph (`street::run::walk`)
+//! to find the cheapest chain of areas. It is Godot 4.7's `AStar2D` search
+//! (`AStar2D::_solve`), kept as it was so that routes, and with them the replay hashes,
+//! do not change: ties between equally cheap routes are broken as Godot breaks them:
+//! neighbours are tried in the order they were connected, the open list is Godot's binary
+//! heap (`SortArray` `push_heap` / `adjust_heap` / `pop_heap`), points are ordered by `f`
+//! then by the larger `g`, and scores are `real_t` (`f32`). Points are dense indices (the
+//! order they were added in); callers map their own ids onto them. The step cost and the
+//! estimate come from the caller, as `f32`.
 
 use glam::Vec2;
 

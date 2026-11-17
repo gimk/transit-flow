@@ -2,9 +2,7 @@
 //! opens a level of the street game in the window. The player designs (`Design`), starts the
 //! run, watches it, reads the report, and designs again.
 //!
-//! - `PlayMode` (a resource, present only in play mode) switches the old city builder off:
-//!   its keys, tools and status line carry the run condition `not_playing`. Its sim stays
-//!   paused and empty.
+//! - `PlayMode` (a resource) holds the level being played and whether the run is threaded.
 //! - `PlayPhase` (a Bevy state): `Design` (edit the street, tools of `tools`), `Run` (the
 //!   `StreetRunner` steps the run; no edits), `Report` (the run is over; the summary and,
 //!   later, the score). `Enter` goes on in every phase.
@@ -23,7 +21,6 @@ use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
-use tf_sim::Simulation;
 
 use tf_sim::street::run::{EndReason, RunOptions, StreetRun, Summary};
 use tf_sim::street::score::{StageReport, stage_options, stage_report, stars_for_design};
@@ -32,7 +29,6 @@ use tf_sim::street::{Design, DesignCommand, EditError, LevelFile, Street};
 use crate::camera::WheelLock;
 use crate::input::{Action, ActionInput, Pointer};
 use crate::level::{LoadedLevel, PX_PER_M};
-use crate::runner::SimHandle;
 use crate::street_runner::{DEFAULT_SPEED_INDEX, StreetRunner};
 
 pub mod file;
@@ -50,17 +46,12 @@ pub use tools::PlayTool;
 #[derive(Resource, Default, Debug)]
 pub struct PointerOverUi(pub bool);
 
-/// The level being played; the resource exists only in play mode.
+/// The level being played.
 #[derive(Resource, Clone, Debug)]
 pub struct PlayMode {
     pub level_id: String,
     /// Step the run on a worker thread (off in tests and screenshots).
     pub threaded: bool,
-}
-
-/// The run condition of the old game's systems: they sleep in play mode.
-pub fn not_playing(mode: Option<Res<PlayMode>>) -> bool {
-    mode.is_none()
 }
 
 #[derive(States, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -248,13 +239,8 @@ impl PlayState {
 }
 
 /// Opens the level: reads the design file and the stars (a bad file is told and ignored),
-/// builds the street, and puts the old game to sleep.
-fn start_play(
-    mode: Res<PlayMode>,
-    mut commands: Commands,
-    mut loaded: ResMut<LoadedLevel>,
-    mut handle: ResMut<SimHandle>,
-) {
+/// and builds the street.
+fn start_play(mode: Res<PlayMode>, mut commands: Commands, mut loaded: ResMut<LoadedLevel>) {
     let level = LevelFile::load(&mode.level_id).expect("play mode is given a known level");
     let mut state = PlayState::new(level);
     match file::load_design(&mode.level_id) {
@@ -281,9 +267,6 @@ fn start_play(
         Ok(None) => {}
         Err(error) => state.message = Some(format!("Stars file not used: {error}")),
     }
-    // The old city builder: an empty map, paused.
-    handle.replace(Simulation::new());
-    handle.set_speed(0);
     commands.insert_resource(state);
 }
 
@@ -670,20 +653,6 @@ pub fn end_text(ended: Option<EndReason>) -> &'static str {
     }
 }
 
-/// The old map's ground and its border.
-type OldMapParts = Or<(
-    With<crate::views::ground::Ground>,
-    With<crate::views::ground::MapBorder>,
-)>;
-
-/// The old city builder's empty map (its dark ground and border) must not show behind the
-/// level: they are static and never needed in play mode, so they are removed once spawned.
-fn hide_old_map(parts: Query<Entity, OldMapParts>, mut commands: Commands) {
-    for entity in &parts {
-        commands.entity(entity).despawn();
-    }
-}
-
 pub struct PlayPlugin {
     pub level: String,
     pub threaded: bool,
@@ -701,7 +670,6 @@ impl Plugin for PlayPlugin {
         .init_resource::<PointerOverUi>()
         .init_resource::<preview::DragStart>()
         .init_resource::<preview::Preview>()
-        // The street game is a light map (the old dark background is for the city builder).
         .insert_resource(ClearColor(crate::views::palette::OUTSIDE))
         .init_state::<PlayPhase>()
         .add_plugins((
@@ -711,7 +679,6 @@ impl Plugin for PlayPlugin {
             inspect::InspectPlugin,
         ))
         .add_systems(Startup, start_play)
-        .add_systems(PostStartup, hide_old_map)
         .add_systems(
             Update,
             (

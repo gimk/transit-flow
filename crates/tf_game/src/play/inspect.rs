@@ -21,10 +21,10 @@ use super::{PlayPhase, PointerOverUi};
 use crate::draw::ShapeBuilder;
 use crate::input::Pointer;
 use crate::level::{LoadedLevel, PX_PER_M};
-use crate::snapshot::lerp_angle;
 use crate::street_runner::{
     AgentInfo, AgentPose, CarInfo, StreetRunner, StreetSnapshot, WalkerInfo, WalkerPose,
 };
+use crate::views::batch::lerp_angle;
 use crate::views::street::to_bevy;
 use crate::views::{ViewMaterial, palette, z};
 
