@@ -8,7 +8,6 @@ pub mod lanes;
 pub mod polygon;
 pub mod rect;
 pub mod segment;
-pub mod sort;
 
 pub use curve::{Curve2D, CurvePoint};
 pub use gd::GdVec2;
