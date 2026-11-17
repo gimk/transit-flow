@@ -338,7 +338,7 @@ A `Phase` state: `Menu`, `Brief`, `Design`, `Run`, `Report`. Tools work only in 
 New tools on the `BuildTool` framework: strip editor (click a strip, cycle its use; drag a boundary), direction, speed zone, signal plan, signs, crossing, obstacle (point or line), area (dragged polygon), eraser. All edits are commands on the design, so undo / redo and the save come for free. A validation pass shows broken constraints in the design phase.
 
 ### 7.3 Views
-Flat shapes stay (the art direction is a later decision). New: strips and separators, junction markings, signal heads per approach with pedestrian and bicycle lamps, people with a body and a heading, cyclists, agent state (a waiting pedestrian, a frustrated driver, an agent that breaks a rule), incident markers that stay on the map, ghost flows in the design phase, a heat map of conflicts in the report.
+Flat shapes stay (the art direction is a later decision). **Target look (user, 2026-11-17):** the Google Maps street style: light palette (blue-grey carriageways, white zebra bars, light kerb-side sidewalks, beige blocks, green planting), rounded kerb corners, islands and detailed crossings. The palette comes in Phase 4; rounded kerbs and islands need street geometry and come with kerb extensions (Phase 7) and the art pass (Phase 10). Every rule the player sets must be visible on the street: a speed limit shows as a marking on its segment. New: strips and separators, junction markings, signal heads per approach with pedestrian and bicycle lamps, people with a body and a heading, cyclists, agent state (a waiting pedestrian, a frustrated driver, an agent that breaks a rule), incident markers that stay on the map, ghost flows in the design phase, a heat map of conflicts in the report.
 
 ### 7.4 Run clock
 The threaded runner stays. The result must not depend on the frame rate: the sim is already tick-based, so the rule is that **nothing from the frame (real delta, batch size) enters the sim**, and a test proves that a run through the threaded runner and a headless run give the same event log.
@@ -463,6 +463,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Decided (user, 2026-11-17; section 5.7, addition 1): the wanted speed depends on the look of the street, so that the speed limit and the bollards have a believable effect. It changes the replay hashes; the commit says so.
 - Level 1 keeps its four default zebras (decided 2026-11-17): a real school crossing in Paris has them, so they are the believable starting state. The player can still move or remove them with the zebra tool; the "simple street with one zebra" level (section 10, level 0) is the place to teach that tool.
 - The test level becomes level 1, playable through all its star stages.
+- After the first playtest (user, 2026-11-17): the light palette of the target look (7.3), the speed limit drawn on its segment, a preview of each tool under the pointer, an inspector that shows the traits and state of the car or pedestrian under the pointer, and braking that is more real (a maximum deceleration per vehicle and a short brake build-up, instead of one 8 m/s² for all), with a check of why careful drivers have so many hard-brake near misses.
 
 **Done when:** the user plays level 1 several times and finds the behaviour believable; a better design holds more stages for reasons that the report explains; the load at which a design breaks is plausible. **Stop and decide** here if the direction is right before the rest. Fun is not the test of this checkpoint (section 1, "Direction").
 
@@ -478,6 +479,7 @@ Each phase ends with a state that can be played or measured, and with `scripts/c
 - Cyclist archetypes and rule-breaking (red lights, sidewalk, wrong way).
 - Classic conflicts: right-turning vehicle against a cyclist going straight (blind spot), door of a parked car, pedestrian against cyclist at a crossing, van stopped on the bicycle lane.
 - Proposed (section 5.7, additions 2 and 3): attention with a gaze direction, and a reaction time that depends on surprise.
+- **Evasive steering** (user, 2026-11-17): a driver can swerve as well as brake to avoid someone, using the lateral position in the lane that this phase adds. A swerve brings its own risks, so it needs contacts with fixed things too (parked cars, kerbs, bollards, the other lane, people on the sidewalk). Near-crash studies show that most drivers only brake and that swerving is rarer and less reliable: it must stay a minority reaction, chosen by time to collision, free space and the driver's traits.
 
 **Done when:** on a test street, a protected track gives measurably fewer serious conflicts than a painted lane, and a painted lane fewer than none; a right-turn conflict can be removed by a design change (bicycle box, separate phase, kerb).
 
