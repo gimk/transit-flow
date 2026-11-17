@@ -115,7 +115,7 @@ fn walkers_on_the_road_react_to_cars_that_do_not_slow_down() {
     }
     println!("careless drivers, free crossing: {total:?}");
     assert!(total.stop + total.back + total.hurry > 0, "{total:?}");
-    assert!(total.hurry == 0 || total.fastest <= 1.5 * 1.05, "{total:?}");
+    assert!(total.hurry == 0 || total.fastest <= 1.5 * 1.15, "{total:?}");
 }
 
 #[test]

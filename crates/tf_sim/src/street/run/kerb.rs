@@ -43,6 +43,7 @@ use glam::Vec2;
 use indexmap::IndexMap;
 
 use super::drive::{BRAKE_RISE_S, COMFORT_BRAKE, DT, travel_time};
+use super::meet::BAND_HALF_WIDTH;
 use super::route::RoutePath;
 use super::walk::{AreaKind, CUT_M, WalkPath, WalkSpace};
 use super::walker::{DECISION_RANGE_M, KerbDraw, RoadAct, Walker, jaywalk_chance};
@@ -157,6 +158,9 @@ const ROAD_LOOK_BACK_M: f32 = 3.0;
 /// A walker not yet in the lane stops if it is at least this far from it, else it steps
 /// back, metres (start value).
 pub const ROAD_STOP_CLEARANCE_M: f32 = 1.5;
+/// A walker that stops on the road stands this far outside the band of every vehicle route
+/// (half a car width beyond its body), metres (start value).
+pub const BAND_STANDOFF_M: f32 = 0.5;
 /// A fast walk, as a share of the desired speed (start value; a short run is about 2).
 pub const HURRY_FACTOR: f64 = 1.5;
 /// Spare time wanted when it hurries or steps back to clear a vehicle, seconds (start
@@ -834,6 +838,25 @@ impl StreetRun {
             .find(|&i| path.kerbs[i])
     }
 
+    /// Is the walker further than `BAND_STANDOFF_M` (beyond its body) from the line of every
+    /// vehicle route through the road area it is on?
+    fn clear_of_bands(&self, walker: &Walker, area: usize) -> bool {
+        self.clear_of_bands_at(walker.pos, walker.radius, area)
+    }
+
+    fn clear_of_bands_at(&self, pos: Vec2, radius: f32, area: usize) -> bool {
+        self.route_areas.iter().all(|areas| {
+            areas
+                .iter()
+                .find(|a| a.area == area)
+                .is_none_or(|route_area| {
+                    super::yielding::project(&route_area.line, pos).is_none_or(|(_, beside)| {
+                        beside >= BAND_HALF_WIDTH + radius + BAND_STANDOFF_M
+                    })
+                })
+        })
+    }
+
     /// Where a walker that steps back goes: just inside the road from the kerb it came
     /// from (it never leaves the area it is in).
     pub(super) fn road_back_target(&self, walker: &Walker) -> Vec2 {
@@ -910,6 +933,13 @@ impl StreetRun {
             let (l, r) = path.portals[i];
             closest_point_to_segment(walker.pos, l, r).distance(walker.pos) - radius - 0.15
         });
+        // Stepping back is no help where the spot behind is itself in a band (the strip
+        // between the kerb and the first lane is narrower than a body).
+        let back_room = if self.clear_of_bands_at(self.road_back_target(walker), radius, area) {
+            back_room
+        } else {
+            0.0
+        };
         let on_zebra = matches!(self.walk_space.areas[area].kind, AreaKind::Crossing { .. });
         let mut worst: Option<&Meeting> = None;
         let mut holds = false;
@@ -936,7 +966,9 @@ impl StreetRun {
         };
         let enter = m.enter_m - ROAD_LOOK_BACK_M;
         let leave = m.leave_m - ROAD_LOOK_BACK_M + radius;
-        if enter > radius + 0.5 {
+        // It stops only clear of every vehicle band of the road (the stop must not be a near
+        // miss itself); beside one, it gets out of it like a walker in the lane.
+        if enter > radius + 0.5 && self.clear_of_bands(walker, area) {
             // Not in its lane yet.
             return Some(if enter < ROAD_STOP_CLEARANCE_M && back_room > 0.2 {
                 RoadAct::Back
@@ -946,7 +978,7 @@ impl StreetRun {
         }
         let hurry_s = f64::from(leave.max(0.0)) / (speed * HURRY_FACTOR);
         let out_back = radius - enter;
-        let back_s = if back_room >= out_back {
+        let back_s = if back_room > 0.2 && back_room >= out_back {
             f64::from(out_back.max(0.0)) / speed
         } else {
             f64::INFINITY
