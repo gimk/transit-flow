@@ -2,8 +2,8 @@
 //! the desire line), waiting at the kerb for a gap, and pedestrian lights. Drivers do
 //! not react to walkers yet (stage C), so these tests look only at what walkers decide.
 
-use tf_sim::roads::lane::Turn;
 use tf_sim::street::Design;
+use tf_sim::street::lanes::Turn;
 use tf_sim::street::level::{JunctionControl, LevelFile};
 use tf_sim::street::run::walk::AreaKind;
 use tf_sim::street::run::{Population, RunOptions, StreetEvent, StreetRun};

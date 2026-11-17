@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 
 use super::design::{Design, DesignCommand, Side, SignalTemplate};
 use super::ids::StreetLaneId;
-use super::lanes::{self, LaneGroup, StreetLane};
+use super::lanes::{self, LaneGroup, StreetLane, Turn};
 use super::level::{
     AreaKind, Bounds, Constraint, CrossingDef, CrossingKind, JunctionControl, LevelFile,
     ObstacleKind, Shape, Sign, TurnBan,
@@ -19,9 +19,8 @@ use super::signals::{
     pair_opposite_arms,
 };
 use super::space::{Access, Direction, Profile, StripUse};
+use crate::geom::lanes as polylines;
 use crate::geom::{Circle, Polygon};
-use crate::roads::lane::Turn;
-use crate::roads::lane_builder;
 
 /// A strip is never made narrower than this by moving a boundary.
 pub const MIN_STRIP_WIDTH: f32 = 0.5;
@@ -496,7 +495,7 @@ impl Street {
             .segments
             .get(&def.segment)
             .ok_or(EditError::UnknownSegment(def.segment))?;
-        let length = lane_builder::polyline_length(&segment.centerline) as f32;
+        let length = polylines::polyline_length(&segment.centerline) as f32;
         let (low, high) = (def.at - def.width * 0.5, def.at + def.width * 0.5);
         if !def.at.is_finite()
             || !def.width.is_finite()
@@ -548,7 +547,7 @@ impl Street {
             .segments
             .get(&segment_id)
             .ok_or(EditError::UnknownSegment(segment_id))?;
-        let length = lane_builder::polyline_length(&segment.centerline) as f32;
+        let length = polylines::polyline_length(&segment.centerline) as f32;
         if !from.is_finite()
             || !to.is_finite()
             || from >= to
@@ -585,14 +584,14 @@ impl Street {
                 "the bollards overlap another row".into(),
             ));
         }
-        let line = lane_builder::offset_polyline(&segment.centerline, f64::from(offset));
+        let line = polylines::offset_polyline(&segment.centerline, f64::from(offset));
         let gaps = ((to - from) / BOLLARD_SPACING).floor().max(1.0);
         let count = gaps as usize + 1;
         let step = (to - from) / gaps;
         let mut obstacle_ids = Vec::with_capacity(count);
         for k in 0..count {
             let d = from + step * k as f32;
-            let center = lane_builder::sub_polyline(&line, f64::from(d), f64::from(d) + 0.01)
+            let center = polylines::sub_polyline(&line, f64::from(d), f64::from(d) + 0.01)
                 .first()
                 .copied()
                 .expect("a segment centerline has length");
@@ -800,7 +799,7 @@ impl Street {
                     strip: Some(spec.strip),
                     from_node,
                     to_node,
-                    length: lane_builder::polyline_length(&spec.points),
+                    length: polylines::polyline_length(&spec.points),
                     curve,
                     width: spec.width,
                     access: spec.access,
@@ -879,8 +878,8 @@ impl Street {
                     };
                     let (in_lane, first_target) = (&self.lanes[&in_id], &self.lanes[&targets[0]]);
                     let turn = lanes::classify_turn(
-                        lane_builder::end_direction(&in_lane.curve),
-                        lane_builder::start_direction(&first_target.curve),
+                        polylines::end_direction(&in_lane.curve),
+                        polylines::start_direction(&first_target.curve),
                     );
                     let Some(target) = lanes::target_index(
                         turn,

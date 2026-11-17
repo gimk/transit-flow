@@ -8,7 +8,7 @@ use tf_game::capture::{Cli, Target, parse_args};
 use tf_game::level::{LoadedLevel, PX_PER_M};
 use tf_game::play::{PlayPhase, PlayState, PlayTool, file, pick};
 use tf_game::street_runner::StreetRunner;
-use tf_sim::roads::lane_builder::polyline_length;
+use tf_sim::geom::lanes::polyline_length;
 use tf_sim::street::{Design, DesignCommand, Street};
 
 const LEVEL: &str = "carrefour-ecole";

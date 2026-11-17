@@ -16,7 +16,7 @@
 
 use bevy::color::Alpha;
 use bevy::prelude::*;
-use tf_sim::roads::lane_builder;
+use tf_sim::geom::lanes as polylines;
 use tf_sim::street::design::{Side, SignalTemplate};
 use tf_sim::street::level::JunctionControl;
 use tf_sim::street::model::{BOLLARD_SPACING, Crossing};
@@ -125,15 +125,13 @@ pub fn bollard_dots(street: &Street, segment: i32, side: Side, from: f32, to: f3
         Side::Left => left,
         Side::Right => right,
     };
-    let line = lane_builder::offset_polyline(&seg.centerline, f64::from(kerb));
+    let line = polylines::offset_polyline(&seg.centerline, f64::from(kerb));
     let gaps = ((to - from) / BOLLARD_SPACING).floor().max(1.0);
     let step = (to - from) / gaps;
     (0..=gaps as usize)
         .filter_map(|k| {
             let d = f64::from(from + step * k as f32);
-            lane_builder::sub_polyline(&line, d, d + 0.01)
-                .first()
-                .copied()
+            polylines::sub_polyline(&line, d, d + 0.01).first().copied()
         })
         .collect()
 }
@@ -406,7 +404,7 @@ mod tests {
     /// A point on the carriageway of some segment, with no crossing on it.
     fn road_point(street: &Street) -> Vec2 {
         for segment in street.segments.values() {
-            let length = lane_builder::polyline_length(&segment.centerline) as f32;
+            let length = polylines::polyline_length(&segment.centerline) as f32;
             let mut along = segment.start_trim + 4.0;
             while along < length - segment.end_trim - 4.0 {
                 let p = pick::point_at(&segment.centerline, along, 0.0);

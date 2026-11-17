@@ -1,9 +1,8 @@
-//! The street design game (`docs/URBANISM_PIVOT_PLAN.md`): new code, written next to the
-//! old city builder, which stays frozen until the pivot's Phase 5. It may depend only on the
-//! modules the plan keeps or adapts (so far `geom`, and `roads::lane_builder` and
-//! `roads::lane::Turn` used as they are), never on the dropped ones. Metres and seconds, real speeds;
-//! y down like the rest of the sim.
+//! The street design game (`docs/URBANISM_PIVOT_PLAN.md`): a level is one real intersection;
+//! the player designs how its width is shared, then a run of agents plays on it. Metres and
+//! seconds, real speeds; y down. A run is a pure function of level, design and seed.
 //!
+//! - `astar`: the A* search the walkers use over their area graph.
 //! - `space`: strips and profiles (the cross-section of a street).
 //! - `level`: the level file (RON, embedded) and its loader.
 //! - `design`: the player's edits as a command list (JSON).
@@ -14,6 +13,7 @@
 //! - `run`: one run of a level: the agents, their decisions, conflicts and contacts.
 //! - `score`: score, verdict and report of a star stage, read from the event log.
 
+pub mod astar;
 pub mod design;
 pub mod ids;
 pub mod lanes;

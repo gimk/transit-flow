@@ -1,6 +1,7 @@
 //! Lane graph, routes and the router (`sim/routing/`).
 
-pub mod astar;
+/// Moved to `street::astar`; kept under this name until the old routing is deleted.
+pub use crate::street::astar;
 pub mod lane_graph;
 pub mod route;
 pub mod router;

@@ -50,9 +50,9 @@ use walk::{WalkPath, WalkSpace};
 pub use walker::{WalkSpawn, Walker, is_walker};
 
 use crate::rng::SimRng;
-use crate::roads::lane::Turn;
 use crate::street::design::Design;
 use crate::street::ids::{AgentId, StreetLaneId};
+use crate::street::lanes::Turn;
 use crate::street::level::{Gate, JunctionControl, LevelFile, Mode, Sign, Slice};
 use crate::street::model::{EditError, Street};
 use crate::street::signals::{
