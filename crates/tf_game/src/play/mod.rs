@@ -18,12 +18,14 @@
 //! Where the next brief plugs in: new tools in `tools::PlayTool`; the score and the stars
 //! in `ReportData::extra` (lines shown under the summary).
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use tf_sim::Simulation;
 use tf_sim::street::run::{EndReason, RunOptions, StreetRun, Summary};
 use tf_sim::street::{Design, DesignCommand, LevelFile, Street};
 
+use crate::camera::WheelLock;
 use crate::input::{Action, ActionInput, Pointer};
 use crate::level::{LoadedLevel, PX_PER_M};
 use crate::runner::SimHandle;
@@ -32,10 +34,15 @@ use crate::street_runner::{DEFAULT_SPEED_INDEX, StreetRunner};
 pub mod file;
 pub mod markers;
 pub mod pick;
+pub mod signals;
 pub mod tools;
 pub mod ui;
 
 pub use tools::PlayTool;
+
+/// The cursor is over one of the play panels, so a click is for the panel and not the map.
+#[derive(Resource, Default, Debug)]
+pub struct PointerOverUi(pub bool);
 
 /// The level being played; the resource exists only in play mode.
 #[derive(Resource, Clone, Debug)]
@@ -222,6 +229,33 @@ fn end_run(state: &mut PlayState, runner: &mut StreetRunner, next: &mut NextStat
     next.set(PlayPhase::Report);
 }
 
+/// Makes an edit with `make` on the street: kept in the design only if the street accepts it
+/// (then the level is marked changed, so the street view redraws; a refused try is not a
+/// change). `nothing` is told to the player when `make` finds nothing to do.
+fn edit_with(
+    state: &mut PlayState,
+    loaded: &mut ResMut<LoadedLevel>,
+    nothing: &str,
+    make: impl FnOnce(&Street) -> Option<DesignCommand>,
+) {
+    let kept = loaded
+        .bypass_change_detection()
+        .street
+        .as_mut()
+        .is_some_and(|street| match make(street) {
+            Some(command) => state.edit(street, command),
+            None => {
+                if !nothing.is_empty() {
+                    state.message = Some(nothing.into());
+                }
+                false
+            }
+        });
+    if kept {
+        loaded.set_changed();
+    }
+}
+
 /// Design phase: tools, undo and redo, and the start of the run.
 #[allow(clippy::too_many_arguments)]
 fn design_input(
@@ -229,6 +263,9 @@ fn design_input(
     keys: Res<ButtonInput<KeyCode>>,
     pointer: Res<Pointer>,
     mode: Res<PlayMode>,
+    over_ui: Res<PointerOverUi>,
+    mut wheel: MessageReader<MouseWheel>,
+    mut drag_start: Local<Option<Vec2>>,
     mut state: ResMut<PlayState>,
     mut loaded: ResMut<LoadedLevel>,
     mut runner: ResMut<StreetRunner>,
@@ -271,29 +308,81 @@ fn design_input(
         }
     }
 
-    if pointer.left.just_pressed
-        && pointer.in_window
-        && let Some(tool) = state.tool
+    let at = pointer.world / PX_PER_M;
+    let usable = pointer.in_window && !over_ui.0;
+    if let Some(tool) = state.tool
+        && usable
     {
-        let at = pointer.world / PX_PER_M;
-        let kept = loaded
-            .bypass_change_detection()
-            .street
-            .as_mut()
-            .is_some_and(|street| match tool.click(street, at) {
-                Some(command) => state.edit(street, command),
-                None => {
-                    state.message = Some("Nothing to change there.".into());
-                    false
-                }
+        if tool.is_drag() {
+            if pointer.left.just_pressed {
+                *drag_start = Some(at);
+            }
+            if pointer.left.just_released
+                && let Some(start) = drag_start.take()
+            {
+                edit_with(&mut state, &mut loaded, tool.nothing_text(), |street| {
+                    tool.release(street, start, at)
+                });
+            }
+        } else if pointer.left.just_pressed {
+            edit_with(&mut state, &mut loaded, tool.nothing_text(), |street| {
+                tool.click(street, at)
             });
-        if kept {
-            loaded.set_changed();
         }
+    }
+    if !pointer.left.pressed {
+        *drag_start = None;
+    }
+
+    // The wheel and +/- change the green time of the junction under the pointer, when the
+    // signals tool is on (the camera does not zoom for that wheel: `WheelLock`).
+    let mut steps = 0;
+    for event in wheel.read() {
+        if event.unit == MouseScrollUnit::Line {
+            steps += event.y.signum() as i32 * i32::from(event.y != 0.0);
+        }
+    }
+    steps += i32::from(keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd));
+    steps -=
+        i32::from(keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract));
+    if state.tool == Some(PlayTool::Signals)
+        && usable
+        && steps != 0
+        && loaded
+            .street
+            .as_ref()
+            .is_some_and(|street| pick::signalled_junction_at(street, at).is_some())
+    {
+        edit_with(&mut state, &mut loaded, "", |street| {
+            pick::green_command(street, at, steps)
+        });
     }
 
     if actions.just_pressed(Action::PlayConfirm) {
         begin_run(&mut state, &mode, &mut runner, &mut next);
+    }
+}
+
+/// The camera must not zoom with the wheel that changes a green time: it is locked while
+/// the signals tool is on and the pointer is over a junction under signals. (One frame behind
+/// the pointer, which does not matter.)
+fn update_wheel_lock(
+    phase: Res<State<PlayPhase>>,
+    state: Res<PlayState>,
+    pointer: Res<Pointer>,
+    over_ui: Res<PointerOverUi>,
+    loaded: Res<LoadedLevel>,
+    mut lock: ResMut<WheelLock>,
+) {
+    let locked = *phase.get() == PlayPhase::Design
+        && state.tool == Some(PlayTool::Signals)
+        && pointer.in_window
+        && !over_ui.0
+        && loaded.street.as_ref().is_some_and(|street| {
+            pick::signalled_junction_at(street, pointer.world / PX_PER_M).is_some()
+        });
+    if lock.0 != locked {
+        lock.0 = locked;
     }
 }
 
@@ -363,16 +452,24 @@ impl Plugin for PlayPlugin {
             level_id: self.level.clone(),
             threaded: self.threaded,
         })
+        .init_resource::<PointerOverUi>()
         .init_state::<PlayPhase>()
-        .add_plugins((ui::PlayUiPlugin, markers::MarkersPlugin))
+        .add_plugins((
+            ui::PlayUiPlugin,
+            markers::MarkersPlugin,
+            signals::SignalMarksPlugin,
+        ))
         .add_systems(Startup, start_play)
         .add_systems(
             Update,
             (
+                ui::update_pointer_over_ui,
+                update_wheel_lock,
                 design_input.run_if(in_state(PlayPhase::Design)),
                 run_input.run_if(in_state(PlayPhase::Run)),
                 report_input.run_if(in_state(PlayPhase::Report)),
             )
+                .chain()
                 .run_if(resource_exists::<PlayState>),
         );
     }

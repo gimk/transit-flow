@@ -24,6 +24,7 @@ use tf_sim::street::level::Mode;
 use tf_sim::street::run::{
     CauseKind, Grade, LoggedEvent, Outcome, StreetEvent, StreetRun, TICK_RATE,
 };
+use tf_sim::street::signals::Light;
 
 use crate::runner::{LEAD_TICKS, MAX_TICKS_PER_BATCH};
 
@@ -91,6 +92,8 @@ pub struct StreetSnapshot {
     pub agents: Vec<AgentPose>,
     pub walkers: Vec<WalkerPose>,
     pub finished: bool,
+    /// The light every approach of a signalled junction shows now (empty without signals).
+    pub lights: Vec<ApproachLight>,
     /// What the run logged in this tick. `capture` leaves it empty; the batch fills it,
     /// so the runner can count events and mark incidents without ever reading the run's
     /// log from the main thread.
@@ -155,6 +158,7 @@ impl StreetSnapshot {
             walkers,
             finished: run.finished(),
             new_events: Vec::new(),
+            lights: approach_lights(run),
         }
     }
 
@@ -179,6 +183,47 @@ fn walk_direction(vel: Vec2, step: Vec2) -> Vec2 {
     } else {
         Vec2::ZERO
     }
+}
+
+/// What a signal shows an approach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignalColor {
+    Green,
+    Amber,
+    Red,
+}
+
+/// The light of one approach (a segment id) of a signalled junction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApproachLight {
+    pub node: i32,
+    pub segment: i32,
+    pub color: SignalColor,
+}
+
+/// The lights of every signalled junction at the run's time: a few entries, cheap to
+/// copy into each snapshot.
+fn approach_lights(run: &StreetRun) -> Vec<ApproachLight> {
+    let time_s = run.tick as f64 / f64::from(TICK_RATE);
+    let mut lights = Vec::new();
+    for (node, plan) in run.signal_plans() {
+        let Some(junction) = run.street.nodes.get(node) else {
+            continue;
+        };
+        for segment in &junction.segment_ids {
+            let color = match plan.light(*segment, time_s) {
+                Light::Green(_) => SignalColor::Green,
+                Light::Amber(_) => SignalColor::Amber,
+                Light::Red(_) => SignalColor::Red,
+            };
+            lights.push(ApproachLight {
+                node: *node,
+                segment: *segment,
+                color,
+            });
+        }
+    }
+    lights
 }
 
 /// What happened on the street that the player should see where it happened.

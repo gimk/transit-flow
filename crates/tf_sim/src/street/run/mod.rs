@@ -406,6 +406,12 @@ impl StreetRun {
         })
     }
 
+    /// The signal plan of each junction under signals (the level's, the design's, or the
+    /// default one), by node id. For views, which colour the lights from it.
+    pub fn signal_plans(&self) -> &IndexMap<i32, SignalPlan> {
+        &self.plans
+    }
+
     pub fn finished(&self) -> bool {
         self.ended.is_some()
     }

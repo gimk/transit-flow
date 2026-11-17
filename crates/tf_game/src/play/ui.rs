@@ -5,6 +5,8 @@
 //! `Text` entities only when they change.
 
 use bevy::prelude::*;
+use bevy::text::{Font, FontSource};
+use bevy::window::PrimaryWindow;
 use tf_sim::street::run::{TICK_RATE, WalkSummary};
 
 use super::{PlayPhase, PlayState, PlayTool, ReportData, end_text};
@@ -13,6 +15,17 @@ use crate::street_runner::{STREET_SPEED_MULTIPLIERS, StreetRunner};
 const FONT_SIZE: f32 = 14.0;
 const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
 const TEXT: Color = Color::srgb(0.93, 0.93, 0.93);
+
+/// On every play panel: a click over one is for the panel, not the map (`PointerOverUi`).
+#[derive(Component)]
+pub struct PlayPanel;
+
+/// The font of the play screen: Fira Mono with the accented letters (the default font has
+/// none). Licence next to the file, `assets/fonts/FiraMono-LICENSE` (SIL OFL).
+#[derive(Resource, Default)]
+pub struct PlayFont(pub Handle<Font>);
+
+const FONT_BYTES: &[u8] = include_bytes!("../../assets/fonts/FiraMono-Medium.ttf");
 
 /// The text of the info panel (top left).
 #[derive(Component)]
@@ -161,11 +174,12 @@ fn panel(top: Val, left: Val, width: Val) -> Node {
     }
 }
 
-fn text_bundle(marker: impl Component) -> impl Bundle {
+fn text_bundle(marker: impl Component, font: &Handle<Font>) -> impl Bundle {
     (
         marker,
         Text::new(""),
         TextFont {
+            font: FontSource::Handle(font.clone()),
             font_size: FontSize::Px(FONT_SIZE),
             ..default()
         },
@@ -173,13 +187,24 @@ fn text_bundle(marker: impl Component) -> impl Bundle {
     )
 }
 
-fn spawn_play_ui(mut commands: Commands) {
+fn load_font(mut commands: Commands, fonts: Option<ResMut<Assets<Font>>>) {
+    // Without the text plugin (tests) there is no font asset to add.
+    let handle = fonts.map_or_else(Handle::default, |mut fonts| {
+        fonts.add(Font::from_bytes(FONT_BYTES.to_vec()))
+    });
+    commands.insert_resource(PlayFont(handle));
+}
+
+fn spawn_play_ui(mut commands: Commands, font: Res<PlayFont>) {
+    let font = &font.0;
     commands.spawn((
+        PlayPanel,
         panel(Val::Px(8.0), Val::Px(8.0), Val::Px(420.0)),
         BackgroundColor(PANEL),
-        children![text_bundle(InfoText)],
+        children![text_bundle(InfoText, font)],
     ));
     commands.spawn((
+        PlayPanel,
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(0.0),
@@ -189,17 +214,37 @@ fn spawn_play_ui(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(PANEL),
-        children![text_bundle(HelpText)],
+        children![text_bundle(HelpText, font)],
     ));
     commands.spawn((
         ReportPanel,
+        PlayPanel,
         Node {
             display: Display::None,
             ..panel(Val::Percent(15.0), Val::Percent(28.0), Val::Percent(44.0))
         },
         BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.92)),
-        children![text_bundle(ReportText)],
+        children![text_bundle(ReportText, font)],
     ));
+}
+
+/// Whether the cursor is over a play panel (their screen rectangles).
+pub fn update_pointer_over_ui(
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    panels: Query<(&ComputedNode, &UiGlobalTransform), With<PlayPanel>>,
+    mut over: ResMut<super::PointerOverUi>,
+) {
+    let hit = window.is_some_and(|window| {
+        window.cursor_position().is_some_and(|cursor| {
+            let physical = cursor * window.scale_factor();
+            panels
+                .iter()
+                .any(|(node, transform)| node.contains_point(*transform, physical))
+        })
+    });
+    if over.0 != hit {
+        over.0 = hit;
+    }
 }
 
 fn set_text(text: &mut Text, value: String) {
@@ -254,7 +299,7 @@ pub struct PlayUiPlugin;
 
 impl Plugin for PlayUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_play_ui)
+        app.add_systems(Startup, (load_font, spawn_play_ui).chain())
             .add_systems(Update, update_play_ui.run_if(resource_exists::<PlayState>));
     }
 }

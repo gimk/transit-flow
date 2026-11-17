@@ -36,6 +36,8 @@ pub const ARROW_SIZE: f32 = 1.0;
 /// long as the crossing is wide, along the traffic direction.
 pub const ZEBRA_BAR_WIDTH_M: f32 = 0.5;
 pub const ZEBRA_GAP_M: f32 = 0.5;
+/// A bollard dot is drawn at least this big, metres (its real radius is 0.1 m).
+pub const MIN_BOLLARD_DRAW_M: f32 = 0.25;
 
 pub fn strip_color(use_: StripUse) -> Color {
     match use_ {
@@ -136,7 +138,12 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
         };
         match &obstacle.shape {
             Shape::Circle(circle) => {
-                things.circle(to_bevy(circle.center), circle.radius * PX_PER_M, 16, color);
+                // A bollard is 0.1 m of radius: drawn at least this big to be seen at all.
+                let radius = match obstacle.kind {
+                    ObstacleKind::Bollard => circle.radius.max(MIN_BOLLARD_DRAW_M),
+                    _ => circle.radius,
+                };
+                things.circle(to_bevy(circle.center), radius * PX_PER_M, 16, color);
             }
             Shape::Polygon(polygon) => {
                 things.polygon(&points(&polygon.points), color);

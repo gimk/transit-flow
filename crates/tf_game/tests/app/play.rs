@@ -328,3 +328,173 @@ fn a_bad_design_file_starts_empty_and_says_why() {
     assert!(state(&harness).design.commands.is_empty());
     assert!(state(&harness).message.is_some());
 }
+
+/// Offset of a kerb of a segment (street metres from its centerline), left or right.
+fn kerb_offset(street: &Street, segment: i32, left: bool) -> f32 {
+    let (l, r) = tf_game::views::street::carriageway(&street.segments[&segment].profile)
+        .expect("a carriageway");
+    if left { l } else { r }
+}
+
+/// A point of the segment at `along` metres, `offset` metres to the right of its centerline.
+fn segment_point(street: &Street, segment: i32, along: f32, offset: f32) -> Vec2 {
+    pick::point_at(&street.segments[&segment].centerline, along, offset)
+}
+
+#[test]
+fn a_drag_with_the_bollard_tool_places_a_row_and_a_click_removes_it() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let (segment, _) = free_spot(street(&harness));
+    let along = street(&harness).segments[&segment].start_trim + 5.0;
+    let obstacles = street(&harness).obstacles.len();
+    let kerb = kerb_offset(street(&harness), segment, false);
+    let a = segment_point(street(&harness), segment, along, kerb + 0.3);
+    let b = segment_point(street(&harness), segment, along + 6.2, kerb + 0.3);
+    harness.key(KeyCode::KeyB);
+    assert_eq!(state(&harness).tool, Some(PlayTool::Bollards));
+    harness.drag(a * PX_PER_M, b * PX_PER_M);
+    let rows: Vec<_> = street(&harness).bollard_rows.values().cloned().collect();
+    assert_eq!(rows.len(), 1, "{:?}", state(&harness).message);
+    assert_eq!(rows[0].segment, segment);
+    assert_eq!(rows[0].side, tf_sim::street::design::Side::Right);
+    assert_eq!((rows[0].from * 2.0).fract(), 0.0, "snapped to 0.5 m");
+    assert!((rows[0].to - rows[0].from - 6.0).abs() <= 1.0);
+    assert!(
+        street(&harness).obstacles.len() > obstacles,
+        "dots in obstacles"
+    );
+    // A click on the row takes it away; a click elsewhere on the kerb does nothing.
+    let on_row = segment_point(
+        street(&harness),
+        segment,
+        (rows[0].from + rows[0].to) * 0.5,
+        kerb,
+    );
+    harness.click(on_row * PX_PER_M, MouseButton::Left);
+    assert!(street(&harness).bollard_rows.is_empty());
+    assert_eq!(street(&harness).obstacles.len(), obstacles);
+    assert_eq!(state(&harness).design.commands.len(), 2);
+    // Undo brings the row back.
+    harness.key(KeyCode::Backspace);
+    assert_eq!(street(&harness).bollard_rows.len(), 1);
+}
+
+#[test]
+fn a_drag_across_two_segments_places_nothing() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    harness.key(KeyCode::KeyB);
+    // A short drag in the open: nothing under it.
+    harness.drag(Vec2::new(-4000.0, -4000.0), Vec2::new(-3900.0, -4000.0));
+    assert!(state(&harness).design.commands.is_empty());
+    assert!(state(&harness).message.is_some());
+}
+
+#[test]
+fn the_signals_tool_cycles_the_control_and_the_wheel_changes_the_green() {
+    use tf_sim::street::design::SignalTemplate;
+    use tf_sim::street::level::JunctionControl;
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let node = *street(&harness)
+        .junctions
+        .keys()
+        .next()
+        .expect("a junction");
+    let centre = street(&harness).nodes[&node].position;
+    let control = |h: &Harness| {
+        let j = &street(h).junctions[&node];
+        (j.control, pick::template_of(j))
+    };
+    let start = control(&harness);
+    assert_eq!(start.0, JunctionControl::PriorityToRight);
+    harness.key(KeyCode::KeyL);
+    harness.click(centre * PX_PER_M, MouseButton::Left);
+    assert_eq!(
+        control(&harness),
+        (
+            JunctionControl::Signals,
+            Some(SignalTemplate::TwoPhase { green_s: 20.0 })
+        )
+    );
+    harness.click(centre * PX_PER_M, MouseButton::Left);
+    assert_eq!(
+        control(&harness),
+        (
+            JunctionControl::Signals,
+            Some(SignalTemplate::TwoPhaseWithWalk {
+                green_s: 20.0,
+                walk_s: 10.0
+            })
+        )
+    );
+    // The wheel (and +/-) change the green by 5 s, held between 10 and 60.
+    harness
+        .app
+        .world_mut()
+        .write_message(bevy::input::mouse::MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: 1.0,
+            phase: bevy::input::touch::TouchPhase::Moved,
+            window: Entity::PLACEHOLDER,
+        });
+    harness.frames(2);
+    assert!(
+        harness
+            .app
+            .world()
+            .resource::<tf_game::camera::WheelLock>()
+            .0,
+        "the camera does not zoom over a signalled junction"
+    );
+    let green = |h: &Harness| match control(h).1 {
+        Some(SignalTemplate::TwoPhaseWithWalk { green_s, .. }) => green_s,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(green(&harness), 25.0);
+    harness.key(KeyCode::Equal);
+    assert_eq!(green(&harness), 30.0);
+    for _ in 0..12 {
+        harness.key(KeyCode::Minus);
+    }
+    assert_eq!(green(&harness), 10.0);
+    for _ in 0..12 {
+        harness.key(KeyCode::Equal);
+    }
+    assert_eq!(green(&harness), 60.0);
+    // One more click: back to priority to the right.
+    harness.click(centre * PX_PER_M, MouseButton::Left);
+    assert_eq!(control(&harness).0, JunctionControl::PriorityToRight);
+    // Away from a junction the wheel is the camera's.
+    harness.move_to(Vec2::new(-4000.0, -4000.0));
+    harness.frames(2);
+    assert!(
+        !harness
+            .app
+            .world()
+            .resource::<tf_game::camera::WheelLock>()
+            .0
+    );
+}
+
+#[test]
+fn a_signalled_junction_shows_its_lights_in_the_run() {
+    let _lock = save_lock();
+    let mut harness = Harness::play(LEVEL);
+    let node = *street(&harness)
+        .junctions
+        .keys()
+        .next()
+        .expect("a junction");
+    let centre = street(&harness).nodes[&node].position;
+    harness.key(KeyCode::KeyL);
+    harness.click(centre * PX_PER_M, MouseButton::Left);
+    harness.key(KeyCode::Enter);
+    harness.frames(3);
+    assert_eq!(phase(&harness), PlayPhase::Run);
+    let lights = runner(&mut harness).view_to().lights.clone();
+    assert!(lights.len() >= 3, "an approach per arm: {lights:?}");
+    assert!(lights.iter().all(|l| l.node == node));
+}

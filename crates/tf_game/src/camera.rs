@@ -147,7 +147,13 @@ fn pan_by_keys(time: Res<Time<Real>>, actions: ActionInput, mut cameras: Query<&
 
 /// `_unhandled_input`: wheel, middle-drag, pinch and pan gestures.
 #[allow(clippy::too_many_arguments)]
+/// While set, the wheel does not zoom (a tool uses it). Play mode sets it.
+#[derive(Resource, Default, Debug)]
+pub struct WheelLock(pub bool);
+
+#[allow(clippy::too_many_arguments)]
 fn pointer_gestures(
+    lock: Res<WheelLock>,
     mut wheel: MessageReader<MouseWheel>,
     mut motion: MessageReader<MouseMotion>,
     mut pinch: MessageReader<PinchGesture>,
@@ -164,6 +170,9 @@ fn pointer_gestures(
             match event.unit {
                 // A wheel notch is one zoom level (a pressed wheel button in Godot).
                 MouseScrollUnit::Line => {
+                    if lock.0 {
+                        continue;
+                    }
                     let steps = event.y.signum() as i32 * (event.y != 0.0) as i32;
                     camera.zoom_by_levels(steps, cursor);
                 }
@@ -227,7 +236,7 @@ pub struct MapCameraPlugin;
 
 impl Plugin for MapCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<WheelLock>().add_systems(
             Update,
             (
                 track_viewport,

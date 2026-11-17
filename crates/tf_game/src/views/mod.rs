@@ -70,6 +70,8 @@ pub mod z {
     /// Pedestrians and waiting riders (M9.2).
     pub const PEDESTRIANS: f32 = 45.0;
     /// The street run's agents (pivot Phase 2): over the street level, under the old map.
+    /// Signal marks at the approaches of signalled junctions (play mode): over the street.
+    pub const SIGNALS: f32 = 5.0;
     pub const AGENTS: f32 = 6.0;
     /// The street run's pedestrians (pivot Phase 3): just over the cars, under the old
     /// map's parked cars and overlays.

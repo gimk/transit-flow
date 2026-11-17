@@ -7,8 +7,10 @@
 //! distance to the right of the centerline (the unit of `Profile::strip_span`).
 
 use bevy::prelude::Vec2;
-use tf_sim::street::level::{CrossingDef, CrossingKind, DEFAULT_CROSSING_WIDTH};
-use tf_sim::street::model::SPEED_LIMITS_KMH;
+use tf_sim::street::design::{Side, SignalTemplate};
+use tf_sim::street::level::{CrossingDef, CrossingKind, DEFAULT_CROSSING_WIDTH, JunctionControl};
+use tf_sim::street::model::{Junction, SPEED_LIMITS_KMH};
+use tf_sim::street::signals::{DEFAULT_GREEN_S, MAX_GREEN_S, MIN_GREEN_S};
 use tf_sim::street::{DesignCommand, Street};
 
 use crate::views::street::carriageway;
@@ -130,6 +132,247 @@ pub fn speed_command(street: &Street, p: Vec2) -> Option<DesignCommand> {
         segment: hit.segment,
         kmh: next_speed_limit(kmh),
     })
+}
+
+/// The point `along` metres down `line` (clamped to its ends), `offset` metres to its right.
+pub fn point_at(line: &[Vec2], along: f32, offset: f32) -> Vec2 {
+    let mut walked = 0.0;
+    let mut last = (line[0], Vec2::X);
+    for pair in line.windows(2) {
+        let length = pair[0].distance(pair[1]);
+        if length < 1e-6 {
+            continue;
+        }
+        let direction = (pair[1] - pair[0]) / length;
+        last = (pair[1], direction);
+        if along <= walked + length {
+            let right = Vec2::new(-direction.y, direction.x);
+            return pair[0] + direction * (along - walked) + right * offset;
+        }
+        walked += length;
+    }
+    let (end, direction) = last;
+    end + Vec2::new(-direction.y, direction.x) * offset
+}
+
+/// Whether `p` is inside the polygon (even-odd rule).
+pub fn polygon_contains(points: &[Vec2], p: Vec2) -> bool {
+    let mut inside = false;
+    for (i, a) in points.iter().enumerate() {
+        let b = points[(i + 1) % points.len()];
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// The node of the junction whose area holds `p`.
+pub fn junction_at(street: &Street, p: Vec2) -> Option<i32> {
+    street
+        .junctions
+        .values()
+        .find(|junction| polygon_contains(&junction.polygon.points, p))
+        .map(|junction| junction.node)
+}
+
+/// A drag shorter than this is a click, metres.
+pub const MIN_DRAG_M: f32 = 1.0;
+/// How near a row's kerb line a click must be to pick the row, metres.
+pub const BOLLARD_HIT_M: f32 = 0.8;
+/// The shortest row of bollards the tool places, metres.
+pub const MIN_ROW_M: f32 = 1.0;
+
+/// The id of the bollard row under `p`, if any.
+pub fn bollard_row_at(street: &Street, p: Vec2) -> Option<i32> {
+    let hit = segment_at(street, p)?;
+    let (left, right) = carriageway(&street.segments[&hit.segment].profile)?;
+    street
+        .bollard_rows
+        .values()
+        .find(|row| {
+            let kerb = match row.side {
+                Side::Left => left,
+                Side::Right => right,
+            };
+            row.segment == hit.segment
+                && hit.along >= row.from - 0.5
+                && hit.along <= row.to + 0.5
+                && (hit.offset - kerb).abs() <= BOLLARD_HIT_M
+        })
+        .map(|row| row.id)
+}
+
+/// The bollards tool's drag from `a` to `b` along a sidewalk edge: a row on the side
+/// whose kerb is nearer the pointer, from and to snapped to 0.5 m and held inside the
+/// segment's free length. `None` if the drag is not on one segment or is too short.
+pub fn bollards_command(street: &Street, a: Vec2, b: Vec2) -> Option<DesignCommand> {
+    let (first, second) = (segment_at(street, a)?, segment_at(street, b)?);
+    if first.segment != second.segment {
+        return None;
+    }
+    let segment = &street.segments[&first.segment];
+    let (left, right) = carriageway(&segment.profile)?;
+    let middle = (first.offset + second.offset) * 0.5;
+    let side = if (middle - left).abs() <= (middle - right).abs() {
+        Side::Left
+    } else {
+        Side::Right
+    };
+    let length = tf_sim::roads::lane_builder::polyline_length(&segment.centerline) as f32;
+    let snap = |v: f32| (v / CROSSING_SNAP_M).round() * CROSSING_SNAP_M;
+    let lowest = (segment.start_trim / CROSSING_SNAP_M).ceil() * CROSSING_SNAP_M;
+    let highest = ((length - segment.end_trim) / CROSSING_SNAP_M).floor() * CROSSING_SNAP_M;
+    let from = snap(first.along.min(second.along)).max(lowest);
+    let to = snap(first.along.max(second.along)).min(highest);
+    (to - from >= MIN_ROW_M).then_some(DesignCommand::AddBollards {
+        segment: first.segment,
+        side,
+        from,
+        to,
+    })
+}
+
+/// The bollards tool when the button comes up: a short drag is a click (a row under it
+/// goes), a long one places a row.
+pub fn bollards_release(street: &Street, start: Vec2, end: Vec2) -> Option<DesignCommand> {
+    if start.distance(end) < MIN_DRAG_M {
+        bollard_row_at(street, start).map(|id| DesignCommand::RemoveBollards { id })
+    } else {
+        bollards_command(street, start, end)
+    }
+}
+
+/// The green time (and walk time) of a junction's plan, read back from the plan the
+/// design made: a last phase with nobody on green is the walk phase.
+pub fn template_of(junction: &Junction) -> Option<SignalTemplate> {
+    let plan = junction.signal_plan.as_ref()?;
+    let green_s = plan.phases.first()?.green_s;
+    match plan.phases.last() {
+        Some(last) if plan.phases.len() > 1 && last.green.is_empty() => {
+            Some(SignalTemplate::TwoPhaseWithWalk {
+                green_s,
+                walk_s: last.green_s,
+            })
+        }
+        _ => Some(SignalTemplate::TwoPhase { green_s }),
+    }
+}
+
+/// Walk time a junction gets when the tool first adds a walk phase, seconds.
+pub const DEFAULT_WALK_S: f32 = 10.0;
+/// One step of the wheel or +/- on the green time, seconds.
+pub const GREEN_STEP_S: f32 = 5.0;
+
+/// The signals tool's click: priority to the right, then two phases, then two phases with
+/// a walk phase, then back.
+pub fn signals_click_command(street: &Street, p: Vec2) -> Option<DesignCommand> {
+    let node = junction_at(street, p)?;
+    let junction = &street.junctions[&node];
+    let (control, template) = match (junction.control, template_of(junction)) {
+        (JunctionControl::PriorityToRight, _) => (
+            JunctionControl::Signals,
+            Some(SignalTemplate::TwoPhase {
+                green_s: DEFAULT_GREEN_S,
+            }),
+        ),
+        (JunctionControl::Signals, Some(SignalTemplate::TwoPhaseWithWalk { .. })) => {
+            (JunctionControl::PriorityToRight, None)
+        }
+        (JunctionControl::Signals, Some(SignalTemplate::TwoPhase { green_s })) => (
+            JunctionControl::Signals,
+            Some(SignalTemplate::TwoPhaseWithWalk {
+                green_s,
+                walk_s: DEFAULT_WALK_S,
+            }),
+        ),
+        // The level's own signals without a stored plan run the default plan.
+        (JunctionControl::Signals, None) => (
+            JunctionControl::Signals,
+            Some(SignalTemplate::TwoPhaseWithWalk {
+                green_s: DEFAULT_GREEN_S,
+                walk_s: DEFAULT_WALK_S,
+            }),
+        ),
+    };
+    Some(DesignCommand::SetJunctionControl {
+        node,
+        control,
+        template,
+    })
+}
+
+/// The node of the junction under `p` if it is under signals.
+pub fn signalled_junction_at(street: &Street, p: Vec2) -> Option<i32> {
+    let node = junction_at(street, p)?;
+    (street.junctions[&node].control == JunctionControl::Signals).then_some(node)
+}
+
+/// Wheel or +/- over a signalled junction: its green time moves `steps` times 5 s, held to
+/// 10..60 s. `None` if nothing changes.
+pub fn green_command(street: &Street, p: Vec2, steps: i32) -> Option<DesignCommand> {
+    let node = signalled_junction_at(street, p)?;
+    let template = template_of(&street.junctions[&node]).unwrap_or(SignalTemplate::TwoPhase {
+        green_s: DEFAULT_GREEN_S,
+    });
+    let step = |green: f32| (green + steps as f32 * GREEN_STEP_S).clamp(MIN_GREEN_S, MAX_GREEN_S);
+    let new = match template {
+        SignalTemplate::TwoPhase { green_s } => SignalTemplate::TwoPhase {
+            green_s: step(green_s),
+        },
+        SignalTemplate::TwoPhaseWithWalk { green_s, walk_s } => SignalTemplate::TwoPhaseWithWalk {
+            green_s: step(green_s),
+            walk_s,
+        },
+    };
+    (new != template).then_some(DesignCommand::SetJunctionControl {
+        node,
+        control: JunctionControl::Signals,
+        template: Some(new),
+    })
+}
+
+/// Where the signal mark of one approach of a signalled junction goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ApproachMark {
+    pub node: i32,
+    /// The approach (a segment id), as `ApproachLight::segment`.
+    pub segment: i32,
+    /// Street metres.
+    pub position: Vec2,
+}
+
+/// A mark per approach of every junction under signals: just before the junction edge, on
+/// the kerb of the side the approaching traffic keeps to.
+pub fn approach_marks(street: &Street) -> Vec<ApproachMark> {
+    let mut marks = Vec::new();
+    for junction in street.junctions.values() {
+        if junction.control != JunctionControl::Signals {
+            continue;
+        }
+        let Some(node) = street.nodes.get(&junction.node) else {
+            continue;
+        };
+        for id in &node.segment_ids {
+            let segment = &street.segments[id];
+            let Some((left, right)) = carriageway(&segment.profile) else {
+                continue;
+            };
+            let length = tf_sim::roads::lane_builder::polyline_length(&segment.centerline) as f32;
+            // Traffic that arrives at the `to` end keeps right; at the `from` end, left.
+            let (along, offset) = if segment.to == junction.node {
+                (length - segment.end_trim - 1.0, right + 0.5)
+            } else {
+                (segment.start_trim + 1.0, left - 0.5)
+            };
+            marks.push(ApproachMark {
+                node: junction.node,
+                segment: *id,
+                position: point_at(&segment.centerline, along, offset),
+            });
+        }
+    }
+    marks
 }
 
 #[cfg(test)]
