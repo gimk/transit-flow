@@ -1,6 +1,6 @@
 //! The street game's level (pivot plan Phase 1): `LoadedLevel` holds the `Street` built
 //! from a level file and a design, and the views draw it. Nothing runs on it yet: agents
-//! arrive in Phase 2. The old city builder's sim keeps running beside it, untouched.
+//! arrive in Phase 2.
 //!
 //! The street model is in metres; the map camera and the views work in world pixels, so
 //! the level is drawn at `PX_PER_M` pixels per metre (the camera's zoom steps were made
