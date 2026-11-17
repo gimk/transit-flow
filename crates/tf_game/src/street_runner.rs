@@ -1,6 +1,6 @@
 //! The threaded runner of a street run (pivot plan Phase 2, section 7.4). `StreetRunner`
 //! owns the running `StreetRun` and steps it at its fixed tick; the views draw from the
-//! snapshots around its render clock. It copies the design of `runner::SimHandle`: the run
+//! snapshots around its render clock. The run
 //! moves *by value* to one long-lived worker thread over channels (no locks in the sim),
 //! the worker steps a batch of at most `MAX_TICKS_PER_BATCH` ticks to stay `LEAD_TICKS`
 //! ahead of the screen and captures a `StreetSnapshot` after each tick.
@@ -26,7 +26,17 @@ use tf_sim::street::run::{
 };
 use tf_sim::street::signals::Light;
 
-use crate::runner::{LEAD_TICKS, MAX_TICKS_PER_BATCH};
+/// The run steps this far ahead of the screen (in ticks): the time a tick has to compute in
+/// the background before it is needed on screen.
+pub const LEAD_TICKS: u32 = 2;
+/// Most ticks the worker runs in one go.
+pub const MAX_TICKS_PER_BATCH: usize = 4;
+
+/// Whether a run steps on a worker thread: yes unless the machine has a single core. Tests
+/// and screenshot mode pass `false` and step inline.
+pub fn default_threaded() -> bool {
+    std::thread::available_parallelism().is_ok_and(|n| n.get() > 1)
+}
 
 /// Run speeds: index 0 is paused. The first four are the old runner's `SPEED_MULTIPLIERS`
 /// (so keys 1 to 3 mean the same); x8 is new, to watch a long slice of the day.

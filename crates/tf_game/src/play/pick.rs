@@ -64,7 +64,7 @@ fn project(line: &[Vec2], p: Vec2) -> Option<(f32, f32, f32)> {
 pub fn segment_at(street: &Street, p: Vec2) -> Option<SegmentHit> {
     street.segments.values().find_map(|segment| {
         let (along, offset, _) = project(&segment.centerline, p)?;
-        let length = tf_sim::roads::lane_builder::polyline_length(&segment.centerline) as f32;
+        let length = tf_sim::geom::lanes::polyline_length(&segment.centerline) as f32;
         let half = segment.profile.total_width() * 0.5;
         let inside = along >= segment.start_trim
             && along <= length - segment.end_trim
@@ -219,7 +219,7 @@ pub fn bollards_command(street: &Street, a: Vec2, b: Vec2) -> Option<DesignComma
     } else {
         Side::Right
     };
-    let length = tf_sim::roads::lane_builder::polyline_length(&segment.centerline) as f32;
+    let length = tf_sim::geom::lanes::polyline_length(&segment.centerline) as f32;
     let snap = |v: f32| (v / CROSSING_SNAP_M).round() * CROSSING_SNAP_M;
     let lowest = (segment.start_trim / CROSSING_SNAP_M).ceil() * CROSSING_SNAP_M;
     let highest = ((length - segment.end_trim) / CROSSING_SNAP_M).floor() * CROSSING_SNAP_M;
@@ -358,7 +358,7 @@ pub fn approach_marks(street: &Street) -> Vec<ApproachMark> {
             let Some((left, right)) = carriageway(&segment.profile) else {
                 continue;
             };
-            let length = tf_sim::roads::lane_builder::polyline_length(&segment.centerline) as f32;
+            let length = tf_sim::geom::lanes::polyline_length(&segment.centerline) as f32;
             // Traffic that arrives at the `to` end keeps right; at the `from` end, left.
             let (along, offset) = if segment.to == junction.node {
                 (length - segment.end_trim - 1.0, right + 0.5)
@@ -379,7 +379,7 @@ pub fn approach_marks(street: &Street) -> Vec<ApproachMark> {
 pub mod tests {
     use super::*;
     use crate::level::LoadedLevel;
-    use tf_sim::roads::lane_builder::polyline_length;
+    use tf_sim::geom::lanes::polyline_length;
 
     /// The point `along` metres down `line`, `offset` metres to its right.
     pub fn point_on(line: &[Vec2], along: f32, offset: f32) -> Vec2 {

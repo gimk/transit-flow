@@ -170,3 +170,101 @@ fn careless_drivers_on_a_wide_street_go_over_the_sign() {
     let mean = mean_speed(&level, &design, Population::Careless);
     assert!(mean > LIMIT, "mean speed {mean:.2} m/s against {LIMIT:.2}");
 }
+
+/// Bollards every 3 m along the three edges of segment 2 over `from..=to` only.
+fn with_bollards_between(mut level: LevelFile, from: f32, to: f32) -> LevelFile {
+    for edge_y in [71.4_f32, 74.5, 77.6] {
+        let mut x = from;
+        while x <= to {
+            level.obstacles.push(ObstacleDef {
+                kind: ObstacleKind::Bollard,
+                shape: Shape::Circle(Circle {
+                    center: Vec2::new(x, edge_y),
+                    radius: 0.15,
+                }),
+            });
+            x += 3.0;
+        }
+    }
+    level
+}
+
+fn cells_of(street: &Street, segment: i32) -> Vec<Vec<f64>> {
+    let speeds = street_speeds(street);
+    street
+        .segment_lanes(segment)
+        .filter(|lane| lane.access.intersects(tf_sim::street::space::Access::CAR))
+        .map(|lane| {
+            speeds
+                .cells(lane.id)
+                .expect("a road lane has cells")
+                .to_vec()
+        })
+        .collect()
+}
+
+#[test]
+fn bollards_over_20_m_slow_the_profile_there_and_nowhere_else() {
+    let plain = cells_of(&Street::from_level(&level()).unwrap(), 2);
+    let bollards = with_bollards_between(level(), 110.0, 130.0);
+    let after = cells_of(&Street::from_level(&bollards).unwrap(), 2);
+    for (before, after) in plain.iter().zip(&after) {
+        assert_eq!(before.len(), after.len());
+        let n = before.len();
+        let slowest = (0..n)
+            .min_by(|a, b| after[*a].total_cmp(&after[*b]))
+            .unwrap();
+        assert!(
+            after[slowest] < before[slowest] - 0.5,
+            "{before:?} {after:?}"
+        );
+        // Both ends of the lane keep the speed of the street without bollards.
+        assert_eq!(after[0], before[0], "{after:?}");
+        assert_eq!(after[n - 1], before[n - 1], "{after:?}");
+        // Mid-lane the bollards are in the profile, in the lane, not spread on all of it.
+        assert!(after.iter().filter(|v| **v < before[0] - 0.01).count() < n);
+    }
+}
+
+/// Mean speed of the vehicles of segment 2 between x `from` and `to`, over seeds, m/s.
+fn mean_speed_between(level: &LevelFile, from: f32, to: f32) -> f64 {
+    let (mut sum, mut count) = (0.0, 0_u64);
+    let design = fifty();
+    for seed in SEEDS {
+        let options = RunOptions {
+            seed,
+            population: Population::Mixed,
+            demand_scale: 0.4,
+        };
+        let mut run = StreetRun::new(level, &design, options).expect("the level builds");
+        while !run.finished() {
+            run.step();
+            for agent in run.agents.values() {
+                if (from..to).contains(&agent.pos.x) && (agent.pos.y - 75.0).abs() < 6.0 {
+                    sum += agent.speed;
+                    count += 1;
+                }
+            }
+        }
+    }
+    assert!(count > 50, "enough samples: {count}");
+    sum / count as f64
+}
+
+#[test]
+fn cars_slow_down_at_the_bollards_and_not_far_from_them() {
+    let plain = level();
+    let bollards = with_bollards_between(level(), 110.0, 130.0);
+    let (a, b) = (
+        mean_speed_between(&plain, 110.0, 130.0),
+        mean_speed_between(&bollards, 110.0, 130.0),
+    );
+    println!("at the bollards {a:.2} -> {b:.2}");
+    assert!(b < a - 0.5, "at the bollards {a:.2} -> {b:.2} m/s");
+    let (c, d) = (
+        mean_speed_between(&plain, 150.0, 160.0),
+        mean_speed_between(&bollards, 150.0, 160.0),
+    );
+    println!("far {c:.2} -> {d:.2}");
+    assert!((c - d).abs() < 0.5, "far from them {c:.2} -> {d:.2} m/s");
+}

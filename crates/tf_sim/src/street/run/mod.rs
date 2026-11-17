@@ -50,9 +50,9 @@ use walk::{WalkPath, WalkSpace};
 pub use walker::{WalkSpawn, Walker, is_walker};
 
 use crate::rng::SimRng;
-use crate::roads::lane::Turn;
 use crate::street::design::Design;
 use crate::street::ids::{AgentId, StreetLaneId};
+use crate::street::lanes::Turn;
 use crate::street::level::{Gate, JunctionControl, LevelFile, Mode, Sign, Slice};
 use crate::street::model::{EditError, Street};
 use crate::street::signals::{
@@ -195,7 +195,7 @@ pub struct StreetRun {
     approaches: IndexMap<i32, Vec<i32>>,
     plans: IndexMap<i32, SignalPlan>,
     /// Street speed of every road lane, computed once (the street is fixed in a run).
-    street_speeds: IndexMap<StreetLaneId, f64>,
+    street_speeds: crate::street::speed::StreetSpeeds,
     routes: Vec<RoutePath>,
     /// Per route (same index): the road areas of the walk space it drives through, with
     /// its route distances in and out and its line through them (`kerb::road_areas_of`).

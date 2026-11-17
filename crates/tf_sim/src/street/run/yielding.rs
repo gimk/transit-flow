@@ -32,7 +32,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::agent::Agent;
-use super::drive::{COMFORT_BRAKE, DT, SIDE_MARGIN, Snapshot, needed_brake, safe_speed};
+use super::drive::{
+    COMFORT_BRAKE, DT, HARD_BRAKE, SIDE_MARGIN, Snapshot, needed_brake, safe_speed,
+};
 use super::events::CauseKind;
 use super::kerb::RouteArea;
 use super::sight::{Hider, SightBlockers};
@@ -234,7 +236,18 @@ pub fn walker_view(
                 // Only if it can still stop before the zebra (a car already standing
                 // closer than the margin stays where it is): otherwise it is through
                 // before them, and the in-path rule brakes for whoever is in the way.
-                if area.enter - front > v * v / (2.0 * agent.max_brake) {
+                // Someone who is on the zebra is given way to up to the car's full braking.
+                // Someone who only walks up to the kerb is given way to only if the car can
+                // stop for them at `HARD_BRAKE` or softer: a car already at the zebra goes on
+                // (a driver does not stand on the brake for a person still some metres off,
+                // and a walker does not step out in front of a car that cannot stop, see
+                // `kerb::vehicles_meeting`); the in-path rule still brakes if they step in.
+                let brake = if on {
+                    agent.max_brake
+                } else {
+                    agent.max_brake.min(HARD_BRAKE)
+                };
+                if area.enter - front > v * v / (2.0 * brake) {
                     // With its own headway: it comes up slowly to people waiting.
                     let limit = safe_speed(room, 0.0, tau);
                     view.need = view

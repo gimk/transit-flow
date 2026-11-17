@@ -16,12 +16,12 @@ use super::route::RoutePath;
 use super::walker::WalkerSeen;
 use super::yielding::{self, PedWorld};
 use crate::rng::SimRng;
-use crate::roads::lane::Turn;
 use crate::street::ids::{AgentId, StreetLaneId};
+use crate::street::lanes::Turn;
 use crate::street::level::{Mode, Sign};
 use crate::street::model::Street;
 use crate::street::signals::{Light, SignalPlan};
-use crate::street::speed::STREET_TOLERANCE;
+use crate::street::speed::{CELL, STREET_TOLERANCE, StreetSpeeds};
 
 /// Seconds per tick (20 Hz).
 pub const DT: f64 = 0.05;
@@ -36,6 +36,12 @@ pub const ROAD_GRIP: f64 = 1.0;
 /// times of 0.2-0.4 s are reported in the braking literature, e.g. NCHRP 400, Fambro
 /// et al. 1997). Phase 8 calibration.
 pub const BRAKE_RISE_S: f64 = 0.3;
+/// The braking at which the pedal needs the whole `BRAKE_RISE_S` (about the middle of a
+/// car's maximum, see `draw_max_brake`); softer braking needs a proportionally shorter rise.
+const REFERENCE_BRAKE: f64 = 8.5;
+/// A drop in wanted speed of at most this (m/s) between two lanes is eased into at the
+/// comfortable braking, however little room is left (start value).
+const SMALL_STEP: f64 = 1.0;
 /// Salt of the stream that draws a vehicle's maximum braking: a stream of its own, so
 /// that the draws the agent makes later (distractions) keep their values.
 const BRAKE_STREAM: u64 = 0xB4A4_E5ED;
@@ -134,7 +140,7 @@ pub struct World<'a> {
     pub moves: &'a IndexMap<StreetLaneId, MoveInfo>,
     pub plans: &'a IndexMap<i32, SignalPlan>,
     /// What the look of each road lane asks for (`street::speed`), m/s.
-    pub street_speeds: &'a IndexMap<StreetLaneId, f64>,
+    pub street_speeds: &'a StreetSpeeds,
     pub time_s: f64,
     /// The walkers' world, for drivers who decide (`None` where only speeds are asked).
     pub peds: Option<&'a PedWorld<'a>>,
@@ -200,9 +206,20 @@ pub fn needed_brake(v: f64, target: f64, distance: f64) -> f64 {
     if v <= target {
         return 0.0;
     }
-    // The pedal takes `BRAKE_RISE_S` to build up: about half of it is lost braking, so the
-    // distance that is left is shorter by that much driving.
-    let left = distance - v * BRAKE_RISE_S * 0.5;
+    // The pedal takes `BRAKE_RISE_S` to build up to full braking: about half of it is lost
+    // braking, so the distance that is left is shorter by that much driving. That is only
+    // so for hard braking: a gentle brake is reached at once, its rise is short. Without
+    // this scaling, a car 0.2 m/s over the speed of a lane that starts in 1 m would "need"
+    // 10 m/s² and be logged as a hard brake (found on 20 km/h streets, where the junction
+    // movement is a little slower than the road before it).
+    let plain = (v * v - target * target) / (2.0 * distance.max(0.1));
+    // A stop keeps the full loss: missing it by a few decimetres is a body on a zebra.
+    let rise = if target > 0.0 {
+        (plain / REFERENCE_BRAKE).min(1.0)
+    } else {
+        1.0
+    };
+    let left = distance - v * BRAKE_RISE_S * 0.5 * rise;
     (v * v - target * target) / (2.0 * left.max(0.1))
 }
 
@@ -289,14 +306,28 @@ pub fn must_yield(me: &MoveInfo, other: &MoveInfo) -> bool {
 /// lower of the two, one who ignores the sign follows the street, and nobody goes over
 /// `STREET_TOLERANCE` times the street speed (real drivers read the
 /// street, not the sign). In a junction movement it is the limit and what the bend allows.
+///
+/// The street speed is the mean of the lane here; `desired_speed_at` takes the place along
+/// the lane (the street speed changes along it).
 pub fn desired_speed(agent: &Agent, id: StreetLaneId, world: &World) -> f64 {
+    let street = world.street_speeds.mean(id);
+    desired_speed_with(agent, id, street, world)
+}
+
+/// `desired_speed` at `s` metres along lane `id`.
+pub fn desired_speed_at(agent: &Agent, id: StreetLaneId, s: f64, world: &World) -> f64 {
+    let street = world.street_speeds.at(id, s);
+    desired_speed_with(agent, id, street, world)
+}
+
+fn desired_speed_with(agent: &Agent, id: StreetLaneId, street: Option<f64>, world: &World) -> f64 {
     let lane = &world.street.lanes[&id];
     if let Some(info) = world.moves.get(&id) {
         let speed = lane.speed_limit * agent.traits.speed_factor;
         return speed.min(info.turn_speed * agent.traits.speed_factor);
     }
     let limit = lane.speed_limit;
-    let street = world.street_speeds.get(&id).copied().unwrap_or(limit);
+    let street = street.unwrap_or(limit);
     let c = agent.traits.compliance;
     let wanted = agent.traits.speed_factor * (c * limit.min(street) + (1.0 - c) * street);
     wanted.min(STREET_TOLERANCE * street)
@@ -736,21 +767,56 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     }
 
     // The road itself: the limit here, and the slower lanes and bends ahead.
-    let mut target = desired_speed(agent, route.lanes[index], world);
+    let here = agent.d - route.offsets[index];
+    let mut target = desired_speed_at(agent, route.lanes[index], here, world);
     // The deceleration the things ahead ask for (see `needed_brake`), measured to the
     // thing itself: the margins a driver keeps are comfort, not distance it may not use.
     let mut need = 0.0_f64;
     let mut view_need = 0.0_f64;
     let lookahead =
         (v * v / (2.0 * COMFORT_BRAKE) + v * tau + 12.0 + agent.length).min(MAX_LOOKAHEAD);
-    for next in index + 1..route.lanes.len() {
-        let distance = route.offsets[next] - agent.d;
-        if distance > lookahead {
+    // The street speed changes along a lane, so the cells ahead are looked at too: the
+    // rest of this lane, then each next lane from its start.
+    for next in index..route.lanes.len() {
+        let lane = route.lanes[next];
+        let length = world.street.lanes[&lane].length;
+        let start = route.offsets[next] - agent.d;
+        let mut cell = if next == index {
+            (here / CELL) as usize + 1
+        } else {
+            0
+        };
+        loop {
+            let along = cell as f64 * CELL;
+            let distance = start + along;
+            if distance > lookahead {
+                break;
+            }
+            if along < length || cell == 0 {
+                let speed = desired_speed_at(agent, lane, along, world);
+                // The pedal takes time to build up (as in `needed_brake`, at the comfortable
+                // rate), so the curve starts a little earlier. A step of `SMALL_STEP` or
+                // less (a junction movement a bit slower than the road before it) is eased
+                // into at the comfortable rate, never braked for hard: the curve alone
+                // would bind only in the last metre.
+                let eased =
+                    (distance - v * BRAKE_RISE_S * 0.5 * COMFORT_BRAKE / REFERENCE_BRAKE).max(0.0);
+                target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * eased).sqrt());
+                let step_need = needed_brake(v, speed, distance);
+                need = need.max(if v - speed <= SMALL_STEP {
+                    step_need.min(COMFORT_BRAKE)
+                } else {
+                    step_need
+                });
+            }
+            if world.moves.contains_key(&lane) || along >= length {
+                break;
+            }
+            cell += 1;
+        }
+        if start > lookahead {
             break;
         }
-        let speed = desired_speed(agent, route.lanes[next], world);
-        target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * distance).sqrt());
-        need = need.max(needed_brake(v, speed, distance));
     }
 
     // The junction ahead: go, or stop at the line.
@@ -936,6 +1002,15 @@ mod tests {
             speed < 0.05 && gap < 1.0,
             "stopped close: {speed} m/s, {gap} m"
         );
+    }
+
+    #[test]
+    fn a_small_speed_step_in_the_last_metre_is_not_a_hard_brake() {
+        // 0.2 m/s over a lane that starts in 0.8 m: about 2 m/s², not 10.
+        assert!(needed_brake(6.8, 6.6, 0.8) < 3.0);
+        // A stop from speed is as hard as before: the pedal rise is lost in full.
+        let stop = needed_brake(14.0, 0.0, 14.0);
+        assert!(stop > 7.0, "{stop}");
     }
 
     #[test]

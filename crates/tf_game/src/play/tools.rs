@@ -3,10 +3,8 @@
 //! a variant here, with its label, its action (a key of `KeyBindings`) and its arms in
 //! `click` or `release`; nothing else changes.
 //!
-//! Keys are the old game's tool keys, reused because `KeyBindings` allows no key twice and
-//! the old tools are off in play mode: `C` (`ToolCommercial`) is the zebra, `V`
-//! (`RoadCurveMode`) the speed limit, `B` (`ToolBulldoze`) the bollards, `L`
-//! (`ToolSignals`) the signals.
+//! Keys: `C` (`ToolZebra`) is the zebra, `V` (`ToolSpeedLimit`) the speed limit, `B`
+//! (`ToolBollards`) the bollards, `L` (`ToolSignals`) the signals.
 
 use bevy::prelude::Vec2;
 use tf_sim::street::design::{Side, SignalTemplate};
@@ -58,9 +56,9 @@ impl PlayTool {
     /// The key that selects the tool (pressed again: no tool).
     pub fn action(self) -> Action {
         match self {
-            PlayTool::Zebra => Action::ToolCommercial,
-            PlayTool::SpeedLimit => Action::RoadCurveMode,
-            PlayTool::Bollards => Action::ToolBulldoze,
+            PlayTool::Zebra => Action::ToolZebra,
+            PlayTool::SpeedLimit => Action::ToolSpeedLimit,
+            PlayTool::Bollards => Action::ToolBollards,
             PlayTool::Signals => Action::ToolSignals,
         }
     }

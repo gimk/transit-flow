@@ -1,88 +1,21 @@
-//! `LaneBuilder` (`sim/roads/lane_builder.gd`): lane geometry: road lanes from a
-//! segment's centerline, and connector curves through junctions. Road lanes are offset
-//! *polylines*, not offset Bézier control points: an offset Bézier is not a Bézier,
-//! while sampling keeps straight and curved roads on one code path. Traffic drives on
-//! the right: lanes sit to the right of their direction of travel.
+//! Lane geometry on polylines, shared by the street model (`street::lanes`,
+//! `street::model`, the run) and by the game's pointer picking and previews: offsetting a
+//! centreline sideways, cutting a stretch out of a polyline, measuring it, the connector
+//! curve that turns through a junction, and the stretch where two lines conflict. Traffic
+//! drives on the right: a positive offset is to the right of the direction of travel. The
+//! bodies are the ones the city builder used, kept bit-exact, so the street replay hashes
+//! stay the same.
 //!
-//! Number types follow the GDScript: its `float`s are `f64`, `Vector2` maths is `f32`.
+//! Number types: distances and offsets are `f64`, points and directions are `f32` `Vec2`.
 
 use glam::Vec2;
 
-use super::road_type::RoadType;
-use crate::geom::segment::{closest_point_to_segment, closest_points_between_segments};
-use crate::geom::{Curve2D, CurvePoint, GdVec2};
+use super::segment::{closest_point_to_segment, closest_points_between_segments};
+use super::{Curve2D, CurvePoint, GdVec2};
 
 pub const DUPLICATE_POINT_EPSILON: f64 = 0.01;
 /// Caps how far a corner point may be pushed out, so sharp bends don't produce spikes.
 pub const MIN_MITRE_COSINE: f64 = 0.25;
-/// Trimming never shortens a lane below this, even on very short segments.
-pub const MIN_TRIMMED_LENGTH: f64 = 4.0;
-
-/// One lane of a road: "forward" lanes run from the centerline's first point to its
-/// last.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LaneSpec {
-    pub forward: bool,
-    pub index: i32,
-    pub curve: Curve2D,
-}
-
-/// One entry per lane. `start_trim` / `end_trim` cut lanes back from the segment's start
-/// / end node, leaving room for the junction's connector lanes.
-pub fn build_lane_specs(
-    centerline: &Curve2D,
-    road_type: &RoadType,
-    start_trim: f64,
-    end_trim: f64,
-) -> Vec<LaneSpec> {
-    let forward_points = get_polyline(centerline);
-    let mut backward_points = forward_points.clone();
-    backward_points.reverse();
-    let mut specs = Vec::new();
-    if road_type.one_way {
-        // All lanes forward, centered on the centerline; index 0 is the leftmost lane
-        // (where left turns start, like the center lane of a two-way road).
-        let half_width = road_type.total_width() * 0.5;
-        for index in 0..road_type.lanes_per_direction {
-            let offset = (f64::from(index) + 0.5) * road_type.lane_width - half_width;
-            let forward = trim_polyline(
-                &offset_polyline(&forward_points, offset),
-                start_trim,
-                end_trim,
-            );
-            specs.push(LaneSpec {
-                forward: true,
-                index,
-                curve: polyline_to_curve(&forward),
-            });
-        }
-        return specs;
-    }
-    for index in 0..road_type.lanes_per_direction {
-        let offset = (f64::from(index) + 0.5) * road_type.lane_width;
-        let forward = trim_polyline(
-            &offset_polyline(&forward_points, offset),
-            start_trim,
-            end_trim,
-        );
-        let backward = trim_polyline(
-            &offset_polyline(&backward_points, offset),
-            end_trim,
-            start_trim,
-        );
-        specs.push(LaneSpec {
-            forward: true,
-            index,
-            curve: polyline_to_curve(&forward),
-        });
-        specs.push(LaneSpec {
-            forward: false,
-            index,
-            curve: polyline_to_curve(&backward),
-        });
-    }
-    specs
-}
 
 /// Smooth curve from the end of `from_curve` to the start of `to_curve`, leaving and
 /// arriving tangent to both. Turns aim both handles at the point where the two lanes'
@@ -171,19 +104,6 @@ pub fn offset_polyline(points: &[Vec2], offset: f64) -> Vec<Vec2> {
     result
 }
 
-/// Removes `start_trim` px from the start and `end_trim` px from the end. If the
-/// polyline is too short for both, the trims shrink proportionally.
-pub fn trim_polyline(points: &[Vec2], mut start_trim: f64, mut end_trim: f64) -> Vec<Vec2> {
-    let length = polyline_length(points);
-    let available = (length - MIN_TRIMMED_LENGTH).max(0.0);
-    if start_trim + end_trim > available {
-        let scale = available / (start_trim + end_trim);
-        start_trim *= scale;
-        end_trim *= scale;
-    }
-    sub_polyline(points, start_trim, length - end_trim)
-}
-
 /// The part of the polyline between two distances measured along it.
 pub fn sub_polyline(points: &[Vec2], from_distance: f64, to_distance: f64) -> Vec<Vec2> {
     let mut result = Vec::new();
@@ -208,24 +128,6 @@ pub fn sub_polyline(points: &[Vec2], from_distance: f64, to_distance: f64) -> Ve
     result
 }
 
-/// Distance along the polyline to the point on it closest to `point`.
-pub fn distance_along_polyline(points: &[Vec2], point: Vec2) -> f64 {
-    let mut best_gap = f64::INFINITY;
-    let mut best_distance = 0.0;
-    let mut walked = 0.0;
-    for pair in points.windows(2) {
-        let closest = closest_point_to_segment(point, pair[0], pair[1]);
-        let gap = f64::from(closest.gd_distance_to(point));
-        if gap < best_gap {
-            best_gap = gap;
-            best_distance = walked + f64::from(pair[0].gd_distance_to(closest));
-        }
-        walked += f64::from(pair[0].gd_distance_to(pair[1]));
-    }
-    best_distance
-}
-
-/// The stretch of polyline `a` (x = from, y = to, as distances along it) that comes
 /// within `threshold` of polyline `b`, sampled every `step` px; `None` if none (Godot
 /// returns `Vector2(-1, -1)`).
 pub fn conflict_zone(a: &[Vec2], b: &[Vec2], threshold: f64, step: f64) -> Option<Vec2> {
@@ -267,6 +169,7 @@ pub fn polyline_distance(a: &[Vec2], b: &[Vec2]) -> f64 {
     best
 }
 
+/// Length of a polyline.
 pub fn polyline_length(points: &[Vec2]) -> f64 {
     points
         .windows(2)
@@ -274,10 +177,7 @@ pub fn polyline_length(points: &[Vec2]) -> f64 {
         .sum()
 }
 
-pub fn polyline_to_curve(points: &[Vec2]) -> Curve2D {
-    Curve2D::from_points(points)
-}
-
+/// Smallest distance from `point` to the polyline.
 pub fn distance_to_polyline(point: Vec2, polyline: &[Vec2]) -> f64 {
     let mut best = f64::INFINITY;
     for pair in polyline.windows(2) {
@@ -299,6 +199,7 @@ pub fn end_direction(curve: &Curve2D) -> Vec2 {
     (points[points.len() - 1] - points[points.len() - 2]).gd_normalized()
 }
 
+/// Whether any control point of the curve has a handle (it is a real curve, not a polyline).
 pub fn has_handles(curve: &Curve2D) -> bool {
     curve
         .points()

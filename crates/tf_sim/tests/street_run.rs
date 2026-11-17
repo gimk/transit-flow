@@ -241,32 +241,32 @@ fn the_same_inputs_give_the_same_log_hash() {
 /// constant, a new rule), and then the commit must say so (CLAUDE.md, "Golden and trace
 /// tests"); if it is not, the change is a bug. Never edit a hash to make a test pass
 /// without knowing why it moved.
-// Moved on purpose with the braking model (needed deceleration over the distance left,
-// per-vehicle maximum brake, brake build-up): old c59d2a872df0c53f, 0148f27719f690e1,
-// ac1abcfab98750b6, 6cd5807b2a438da1.
-// Moved on purpose with the pedestrian decisions (WP9: red lights, zebra or free way,
-// gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
-// c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
+// Moved on purpose with the soft-brake and walker-intent fixes (WP14) on top of the local
+// street speed (WP15); before WP14 (WP15 only): 78644365565bbb77, b7b403445c80ff10,
+// 6bbbe6eb028714d6, 5c53ad09f84cb7ca.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x7bcf_23c0_03b1_36af),
-    (2, Population::Mixed, 1.0, 0xf83b_4be3_e0ec_9a3b),
-    (1, Population::Careless, 4.0, 0xc67d_95ae_8ac2_2058),
-    (2, Population::Careless, 4.0, 0xe163_6157_bb65_fa60),
+    (1, Population::Mixed, 1.0, 0x5cfe_9cc1_4a6f_d06a),
+    (2, Population::Mixed, 1.0, 0xf299_f8c3_4180_579a),
+    (1, Population::Careless, 4.0, 0x69a8_6433_e41e_329b),
+    (2, Population::Careless, 4.0, 0xba8b_d3e8_1ff3_9825),
 ];
 
 #[test]
 fn replay_hashes_have_not_moved() {
     let level = level();
     let design = Design::new(&level.id);
+    // All four are checked before the test fails, so one failure shows every new hash.
+    let mut moved = Vec::new();
     for (seed, population, scale, hash) in REPLAY_HASHES {
         let run = run_to_end(&level, &design, seed, population, scale);
-        assert_eq!(
-            run.log_hash(),
-            hash,
-            "seed {seed}, {population:?}, x{scale}: the hash is now {:#018x}",
-            run.log_hash()
-        );
+        if run.log_hash() != hash {
+            moved.push(format!(
+                "seed {seed}, {population:?}, x{scale}: the hash is now {:#018x}",
+                run.log_hash()
+            ));
+        }
     }
+    assert!(moved.is_empty(), "{}", moved.join("\n"));
 }
 
 // --- (d) driving styles --------------------------------------------------------------

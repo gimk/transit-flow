@@ -1,4 +1,4 @@
-//! `MapCamera` (`view/map_camera.gd`): keyboard pan, middle-drag, wheel zoom toward the
+//! `MapCamera`: keyboard pan, middle-drag, wheel zoom toward the
 //! cursor, trackpad pan and pinch, focus requests. Runs on real time, so it works while
 //! the sim is paused.
 //!
@@ -10,7 +10,6 @@ use bevy::input::gestures::{PanGesture, PinchGesture};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use tf_sim::grid;
 
 use crate::events::CameraFocusRequested;
 use crate::input::ActionInput;
@@ -19,6 +18,10 @@ use crate::input::ActionInput;
 /// dot grid stayed 3-4 screen px apart); the dot display is dropped, but the steps are
 /// kept: they are a comfortable progression and the same one players know.
 pub const ZOOM_LEVELS: [f32; 9] = [0.25, 0.375, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
+/// The camera never looks outside the square from (0, 0) to (`MAP_SIZE`, `MAP_SIZE`) world
+/// pixels (start value: 128 cells of 64 px, the old map's size). A level is 150 m at
+/// `level::PX_PER_M` = 8 px/m, so 1200 px, far inside it.
+pub const MAP_SIZE: f32 = 8192.0;
 /// A pinch this much bigger (or smaller) moves one zoom level.
 pub const PINCH_STEP: f32 = 1.15;
 /// Screen pixels per second.
@@ -59,10 +62,7 @@ pub struct MapCamera {
 impl Default for MapCamera {
     fn default() -> Self {
         Self {
-            center: {
-                let r = grid::map_rect();
-                r.position + r.size / 2.0
-            },
+            center: Vec2::splat(MAP_SIZE / 2.0),
             zoom: 1.0,
             viewport: Vec2::new(1280.0, 720.0),
             pan_speed: PAN_SPEED,
@@ -92,8 +92,7 @@ impl MapCamera {
     }
 
     pub fn clamp_to_map(&mut self) {
-        let rect = grid::map_rect();
-        self.center = self.center.clamp(rect.position, rect.end());
+        self.center = self.center.clamp(Vec2::ZERO, Vec2::splat(MAP_SIZE));
     }
 
     /// Moves `steps` zoom levels in (out if negative), keeping the world point under
