@@ -10,20 +10,32 @@
 //! its pedestrians as long as they do not meet (Phase 3 stage A). Ids stay unique in the
 //! event log.
 //!
-//! **Where to cross (pivot plan Phase 3).** Each trip has a rule way (streets crossed
-//! only on crossings) and a free way (a carriageway crossed anywhere), see `walk`. When
-//! the free way crosses out of a crossing and saves a detour, a walker takes it with a
-//! probability that grows with the detour and falls with its compliance
-//! (`jaywalk_chance`). French law (Code de la route, R412-37) asks pedestrians to use a
-//! crossing that is less than 50 m away; when none is that close, crossing anywhere is
+//! **Where to cross (pivot plan Phase 3, WP9).** Each trip has a rule way (streets crossed
+//! only on crossings) and a free way (a carriageway crossed anywhere), see `walk`. A
+//! walker starts on the rule way and keeps both: when it comes within `DECISION_RANGE_M`
+//! of the place where the free way leaves the sidewalk, it decides once (`way_stage`),
+//! with the traffic it sees then (`kerb::traffic_ease`): the chance to take the free way
+//! grows with the detour and with the weakness of its zebra habit (`jaywalk_chance`) and
+//! falls when cars are coming. The decision is a draw made at spawn (`WayChoice::draw`)
+//! compared with that chance. The switch is only possible from the sidewalk area the free
+//! way leaves; a walker that never comes near it keeps the rule way. A group follows its
+//! first member's decision. French law (Code de la route, R412-37) asks pedestrians to use
+//! a crossing that is less than 50 m away; when none is that close, crossing anywhere is
 //! allowed and everybody takes the free way if it saves `FREE_WAY_MIN_SAVING_M`.
 //!
+//! **Habits.** Compliance is the general trait; each rule has its own habit (red lights,
+//! zebra use, corner cutting) = compliance plus a shift drawn from the archetype's range,
+//! so a person can follow one rule and bend another and the habits stay correlated with
+//! compliance. A fully compliant archetype has shifts of zero.
+//!
 //! **Draw order.** Every walker's stream gives, at spawn and always in this order: the
-//! archetype (1 draw), the traits (8), then for the first of a group only the group
-//! size, the entry and the place on the entry line (3), then the way draw (1; the
-//! group follows its first member's choice, the others draw it and do not use it), then
-//! one draw per kerb of the chosen way (the decision to go on red there). Nothing is
-//! drawn later, so the streams never depend on what happens in the run.
+//! archetype (1 draw), the traits (8), then for the first of a group only the group size, the entry and the
+//! place on the entry line (3), then the way draw (1; every walker keeps its own, a group
+//! uses its first member's), then one draw per kerb of the longest of its ways for going
+//! on red, the same number for looking properly, the same number for cutting the corner
+//! (`KerbDraw`), then the three habit shifts. The new draws come last so the old ones keep
+//! their place in the stream. Nothing is drawn
+//! later, so the streams never depend on what happens in the run.
 //!
 //! **Groups.** One spawn can bring a small group (pairs, threes) that walks at the pace of
 //! its slowest member and stays together (`crowd`). Each member has its own id and stream.
@@ -67,15 +79,45 @@ pub const FREE_WAY_MIN_SAVING_M: f32 = 5.0;
 /// detour / (detour + `DETOUR_HALF_M`): half of them at this detour, metres (start
 /// value).
 pub const DETOUR_HALF_M: f32 = 20.0;
-/// Scales `1 - compliance` into the chance to ignore a crossing (start value: a walker
-/// of compliance 0.5 ignores a far crossing almost always).
+/// Scales `1 - zebra habit` into the chance to ignore a crossing on an empty street (start
+/// value: a walker of habit 0.5 ignores a far crossing almost always). Cars in view lower
+/// it (`kerb::traffic_ease`), which is how fewer people cross away from a zebra in view.
 pub const JAYWALK_GAIN: f32 = 2.0;
+/// A walker decides between the zebra and the free way when it is this close to where
+/// the free way leaves the sidewalk, metres (start value).
+pub const DECISION_RANGE_M: f32 = 8.0;
 
-/// The chance that a walker of `compliance` crosses out of a crossing to save `detour_m`.
-pub fn jaywalk_chance(compliance: f64, detour_m: f32) -> f64 {
+/// The chance that a walker of `zebra_habit` crosses out of a crossing to save `detour_m`,
+/// on an empty street (start values, to be calibrated in Phase 8).
+pub fn jaywalk_chance(zebra_habit: f64, detour_m: f32) -> f64 {
     let detour = f64::from(detour_m.max(0.0));
     let share = detour / (detour + f64::from(DETOUR_HALF_M));
-    (f64::from(JAYWALK_GAIN) * (1.0 - compliance) * share).min(1.0)
+    (f64::from(JAYWALK_GAIN) * (1.0 - zebra_habit) * share).min(1.0)
+}
+
+/// What a walker keeps from the spawn until it decides between its two ways.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WayChoice {
+    /// The free way's index in the run's walk paths (the walker starts on the rule way).
+    pub free: usize,
+    /// In the free way's corridor: the foot area it leaves (its kerb portal has the
+    /// same index).
+    pub free_index: usize,
+    pub detour_m: f32,
+    pub legal: bool,
+    /// Uniform draw made at spawn; the walker goes free when it is below the chance.
+    pub draw: f32,
+}
+
+/// The draws a walker makes for one kerb of its way, at spawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KerbDraw {
+    /// Goes on red when below the chance of `kerb::red_go_chance`.
+    pub red: f32,
+    /// Does not look properly at this kerb when below `kerb::miss_chance`.
+    pub look: f32,
+    /// Cuts the corner at a zebra here when below `kerb::corner_chance`.
+    pub corner: f32,
 }
 
 /// The two ways of a trip from one entry to a gate.
@@ -110,6 +152,11 @@ pub struct WalkerArchetype {
     pub reaction_s: (f32, f32),
     pub risk: (f32, f32),
     pub courtesy: (f32, f32),
+    /// Shifts added to compliance for the habits at red lights, at zebras and in
+    /// cutting corners (the habit is clamped to 0..1).
+    pub red_shift: (f32, f32),
+    pub zebra_shift: (f32, f32),
+    pub corner_shift: (f32, f32),
 }
 
 // Start values, to be calibrated in Phase 8. Free speeds: a mean of 1.34 m/s for adults
@@ -126,6 +173,9 @@ pub const WALK_CAREFUL: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.5, 0.9),
     risk: (0.0, 0.0),
     courtesy: (1.0, 1.0),
+    red_shift: (0.0, 0.0),
+    zebra_shift: (0.0, 0.0),
+    corner_shift: (0.0, 0.0),
 };
 pub const WALK_COMMUTER: WalkerArchetype = WalkerArchetype {
     name: "commuter on foot",
@@ -137,6 +187,9 @@ pub const WALK_COMMUTER: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.5, 0.9),
     risk: (0.2, 0.6),
     courtesy: (0.3, 0.8),
+    red_shift: (-0.4, -0.1),
+    zebra_shift: (-0.1, 0.1),
+    corner_shift: (-0.4, -0.1),
 };
 pub const WALK_RESIDENT: WalkerArchetype = WalkerArchetype {
     name: "resident on foot",
@@ -148,6 +201,9 @@ pub const WALK_RESIDENT: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.6, 1.0),
     risk: (0.0, 0.4),
     courtesy: (0.5, 1.0),
+    red_shift: (-0.4, -0.1),
+    zebra_shift: (-0.05, 0.1),
+    corner_shift: (-0.3, 0.0),
 };
 pub const WALK_CHILD: WalkerArchetype = WalkerArchetype {
     name: "child",
@@ -159,6 +215,9 @@ pub const WALK_CHILD: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.8, 1.3),
     risk: (0.2, 0.8),
     courtesy: (0.3, 0.9),
+    red_shift: (-0.1, 0.1),
+    zebra_shift: (0.0, 0.1),
+    corner_shift: (-0.2, 0.1),
 };
 pub const WALK_ELDERLY: WalkerArchetype = WalkerArchetype {
     name: "older person",
@@ -170,6 +229,9 @@ pub const WALK_ELDERLY: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.9, 1.5),
     risk: (0.0, 0.2),
     courtesy: (0.7, 1.0),
+    red_shift: (-0.2, 0.0),
+    zebra_shift: (0.0, 0.05),
+    corner_shift: (-0.1, 0.0),
 };
 pub const WALK_HURRIED: WalkerArchetype = WalkerArchetype {
     name: "hurried walker",
@@ -181,6 +243,9 @@ pub const WALK_HURRIED: WalkerArchetype = WalkerArchetype {
     reaction_s: (0.6, 1.2),
     risk: (0.5, 1.0),
     courtesy: (0.0, 0.5),
+    red_shift: (-0.2, 0.1),
+    zebra_shift: (-0.2, 0.0),
+    corner_shift: (-0.4, -0.1),
 };
 
 impl Population {
@@ -211,22 +276,47 @@ pub struct WalkerTraits {
     pub reaction_s: f64,
     pub risk: f64,
     pub courtesy: f64,
+    /// Per rule: compliance shifted by the walker's own draw (0 = always breaks it).
+    pub red_habit: f64,
+    pub zebra_habit: f64,
+    pub corner_habit: f64,
 }
 
 impl WalkerTraits {
-    /// Eight draws, always in this order.
+    /// Eight draws, always in this order; the habits start at compliance and take their
+    /// shifts from `draw_habits`, made last at spawn so that the draws before it stay where
+    /// they were.
     pub fn draw(archetype: &WalkerArchetype, rng: &mut SimRng) -> Self {
         let mut pick = |range: (f32, f32)| f64::from(rng.randf_range(range.0, range.1));
+        let speed = pick(archetype.speed);
+        let radius = pick(archetype.radius);
+        let patience_s = pick(archetype.patience_s);
+        let compliance = pick(archetype.compliance);
+        let attention = pick(archetype.attention);
+        let reaction_s = pick(archetype.reaction_s);
+        let risk = pick(archetype.risk);
+        let courtesy = pick(archetype.courtesy);
         Self {
-            speed: pick(archetype.speed),
-            radius: pick(archetype.radius),
-            patience_s: pick(archetype.patience_s),
-            compliance: pick(archetype.compliance),
-            attention: pick(archetype.attention),
-            reaction_s: pick(archetype.reaction_s),
-            risk: pick(archetype.risk),
-            courtesy: pick(archetype.courtesy),
+            speed,
+            radius,
+            patience_s,
+            compliance,
+            attention,
+            reaction_s,
+            risk,
+            courtesy,
+            red_habit: compliance,
+            zebra_habit: compliance,
+            corner_habit: compliance,
         }
+    }
+
+    /// Three draws: each habit is compliance plus its shift.
+    pub fn draw_habits(&mut self, archetype: &WalkerArchetype, rng: &mut SimRng) {
+        let mut shift = |range: (f32, f32)| f64::from(rng.randf_range(range.0, range.1));
+        self.red_habit = (self.compliance + shift(archetype.red_shift)).clamp(0.0, 1.0);
+        self.zebra_habit = (self.compliance + shift(archetype.zebra_shift)).clamp(0.0, 1.0);
+        self.corner_habit = (self.compliance + shift(archetype.corner_shift)).clamp(0.0, 1.0);
     }
 }
 
@@ -273,10 +363,15 @@ pub struct Walker {
     pub off_crossing: bool,
     /// The detour the rule way made it walk, seconds (0 when it took the free way).
     pub detour_s: f64,
-    /// One draw per kerb of its way, in order (the decision to go on red).
-    pub kerb_draws: Vec<f32>,
+    /// The draws for each kerb of its way, in order (`KerbDraw`).
+    pub kerb_draws: Vec<KerbDraw>,
+    /// The free way it may still take; `None` once it has decided, or with only one way.
+    pub way: Option<WayChoice>,
     /// The corridor index whose kerb it has decided to step over.
     pub cleared_kerb: Option<usize>,
+    /// The kerb where it wanted to cut a zebra's corner and found a car standing on the
+    /// piece beside it: it crosses on the zebra there.
+    pub no_cut: Option<usize>,
     /// Waiting at a kerb since this tick.
     pub kerb_since: Option<u64>,
     /// It decided to wait at a kerb this tick (waiting counts as stuck, however much the
@@ -320,6 +415,7 @@ struct Drawn {
     rng: SimRng,
     archetype: WalkerArchetype,
     traits: WalkerTraits,
+    way_draw: f32,
 }
 
 impl StreetRun {
@@ -332,6 +428,7 @@ impl StreetRun {
             rng,
             archetype,
             traits,
+            way_draw: 0.0,
         }
     }
 
@@ -372,6 +469,19 @@ impl StreetRun {
         found
     }
 
+    /// The index, in the free way `path`'s corridor, of the foot area it leaves for a
+    /// carriageway (its kerb portal has the same index).
+    fn free_way_exit(&self, path: usize) -> Option<usize> {
+        let p = &self.walk_paths[path];
+        (0..p.kerbs.len()).find(|&i| {
+            p.kerbs[i]
+                && matches!(
+                    self.walk_space.areas[p.areas[i + 1]].kind,
+                    AreaKind::Carriageway { .. }
+                )
+        })
+    }
+
     /// Where `path` (from entry `from`) first steps onto a carriageway, is there no
     /// crossing of the same street (any segment with its name) within
     /// `LEGAL_CROSSING_DISTANCE`, measured between positions?
@@ -410,14 +520,24 @@ impl StreetRun {
 
     /// Where a walker at `pos` on `path` heads first, and the length of its whole way.
     pub(super) fn walk_target(path: &WalkPath, area_index: usize, pos: Vec2) -> (Vec2, f32) {
+        Self::walk_target_in(path, &path.portals, area_index, pos)
+    }
+
+    /// `walk_target` through `portals` (the path's, or the ones a corner cutter uses).
+    pub(super) fn walk_target_in(
+        path: &WalkPath,
+        portals: &[(Vec2, Vec2)],
+        area_index: usize,
+        pos: Vec2,
+    ) -> (Vec2, f32) {
         let last = path.areas.len() - 1;
         let end = if area_index >= last {
             closest_point_to_segment(pos, path.goal.0, path.goal.1)
         } else {
-            let (l, r) = path.portals[last - 1];
+            let (l, r) = portals[last - 1];
             closest_point_to_segment((l + r) * 0.5, path.goal.0, path.goal.1)
         };
-        let points = string_pull(pos, &path.portals[area_index.min(last)..], end);
+        let points = string_pull(pos, &portals[area_index.min(last)..], end);
         let mut target = points[1.min(points.len() - 1)];
         if target.distance(pos) < 0.01 && points.len() > 2 {
             target = points[2];
@@ -483,36 +603,56 @@ impl StreetRun {
         }
         let pick = ((entry_draw * open.len() as f32) as usize).min(open.len() - 1);
         let (entry_index, choice) = open[pick];
-        let way_draw = f64::from(lead.rng.randf());
-        let takes_free = match (choice.rule, choice.free) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            (Some(_), Some(_)) => {
-                if choice.legal {
-                    choice.detour_m >= FREE_WAY_MIN_SAVING_M
-                } else {
-                    way_draw < jaywalk_chance(lead.traits.compliance, choice.detour_m)
-                }
+        lead.way_draw = lead.rng.randf();
+        // The walker starts on the rule way; with both ways it may switch to the free one
+        // when it gets near the place where that leaves the sidewalk (`way_stage`).
+        let (path_index, way) = match (choice.rule, choice.free) {
+            (Some(rule), Some(free)) => {
+                let way = self.free_way_exit(free).and_then(|free_index| {
+                    (!choice.legal || choice.detour_m >= FREE_WAY_MIN_SAVING_M).then_some(
+                        WayChoice {
+                            free,
+                            free_index,
+                            detour_m: choice.detour_m,
+                            legal: choice.legal,
+                            draw: 0.0,
+                        },
+                    )
+                });
+                (rule, way)
             }
+            (Some(rule), None) => (rule, None),
+            (None, Some(free)) => (free, None),
+            (None, None) => return WalkSpawn::NoRoute,
         };
-        let path_index = if takes_free {
-            choice.free.expect("a free way")
-        } else {
-            choice.rule.expect("a rule way")
+        let kerbs = [Some(path_index), way.map(|w| w.free)]
+            .into_iter()
+            .flatten()
+            .map(|p| self.walk_paths[p].kerbs.iter().filter(|k| **k).count())
+            .max()
+            .unwrap_or(0);
+        let kerb_draws = |d: &mut Drawn| {
+            // The red draws come first, so a walker keeps the stream it had when kerbs
+            // took one draw each; then the look and corner draws, then the habits.
+            let red: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
+            let look: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
+            let corner: Vec<f32> = (0..kerbs).map(|_| d.rng.randf()).collect();
+            d.traits.draw_habits(&d.archetype, &mut d.rng);
+            (0..kerbs)
+                .map(|i| KerbDraw {
+                    red: red[i],
+                    look: look[i],
+                    corner: corner[i],
+                })
+                .collect::<Vec<KerbDraw>>()
         };
-        let kerbs = self.walk_paths[path_index]
-            .kerbs
-            .iter()
-            .filter(|k| **k)
-            .count();
-        let kerb_draws = |d: &mut Drawn| (0..kerbs).map(|_| d.rng.randf()).collect::<Vec<f32>>();
         let mut drawn = vec![lead];
         for k in 1..size {
             let mut member = self.draw_walker(AgentId(first.0 + k as i32));
-            member.rng.randf();
+            member.way_draw = member.rng.randf();
             drawn.push(member);
         }
-        let draws: Vec<Vec<f32>> = drawn.iter_mut().map(kerb_draws).collect();
+        let draws: Vec<Vec<KerbDraw>> = drawn.iter_mut().map(kerb_draws).collect();
         // A group that does not fit at the entry (it is too narrow, or an obstacle stands
         // there) comes in as its first walker alone; only a crowd at the entry makes the
         // spawn wait.
@@ -550,7 +690,7 @@ impl StreetRun {
             .fold(f64::INFINITY, f64::min);
         let members: Vec<AgentId> = drawn.iter().map(|d| d.id).collect();
         let path = &self.walk_paths[path_index];
-        let detour_s = if takes_free || choice.free.is_none() {
+        let detour_s = if choice.free.is_none() || choice.rule.is_none() {
             0.0
         } else {
             f64::from(choice.detour_m) / speed
@@ -587,7 +727,12 @@ impl StreetRun {
                 off_crossing: path.off_crossing,
                 detour_s,
                 kerb_draws,
+                way: way.map(|w| WayChoice {
+                    draw: d.way_draw,
+                    ..w
+                }),
                 cleared_kerb: None,
+                no_cut: None,
                 kerb_since: None,
                 waiting: false,
                 kerb_wait_ticks: 0,

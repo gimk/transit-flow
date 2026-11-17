@@ -244,11 +244,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 // Moved on purpose with the braking model (needed deceleration over the distance left,
 // per-vehicle maximum brake, brake build-up): old c59d2a872df0c53f, 0148f27719f690e1,
 // ac1abcfab98750b6, 6cd5807b2a438da1.
+// Moved on purpose with the pedestrian decisions (WP9: red lights, zebra or free way,
+// gap, looking, corner cutting, one habit per rule): old b03860f66190c142,
+// c998a0ed29cbb4b7, 29d40c18a8e440e3, 515b33745471b714.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0xb038_60f6_6190_c142),
-    (2, Population::Mixed, 1.0, 0xc998_a0ed_29cb_b4b7),
-    (1, Population::Careless, 4.0, 0x29d4_0c18_a8e4_40e3),
-    (2, Population::Careless, 4.0, 0x515b_3374_5471_b714),
+    (1, Population::Mixed, 1.0, 0xd621_8ba0_bead_9579),
+    (2, Population::Mixed, 1.0, 0xebc6_083b_bad8_65fc),
+    (1, Population::Careless, 4.0, 0xd906_1ae7_9812_7f03),
+    (2, Population::Careless, 4.0, 0x6693_07f3_5908_e85a),
 ];
 
 #[test]

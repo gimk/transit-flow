@@ -179,6 +179,53 @@ pub struct WalkPath {
     /// The destination line, shortened at both ends like the portals and moved
     /// `CORNER_CLEARANCE` into the area (a walker heads for the door, not the façade).
     pub goal: (Vec2, Vec2),
+    /// Where a zebra on the way may be cut at its corner (see `CutWay`).
+    pub cuts: Vec<CutWay>,
+}
+
+/// How far from a zebra's edge a walker may step onto the carriageway to cut its corner,
+/// metres (start value: about a car's door width plus a stride). A walker is never
+/// further off the zebra than this, so it always counts as crossing at the zebra.
+pub const CUT_M: f32 = 2.5;
+
+/// A zebra on a path whose corner a walker may cut: it steps over the kerb up to `CUT_M`
+/// beside the zebra, on the carriageway piece next to it (on the side of its goal), and
+/// crosses on a slight diagonal. The widened portals replace the zebra's two (kerb and
+/// far kerb) in the steering only.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CutWay {
+    /// The index of the kerb portal onto the zebra (the far one is `kerb + 1`).
+    pub kerb: usize,
+    /// The carriageway area next to the zebra that the walker may also use.
+    pub piece: usize,
+    pub near: (Vec2, Vec2),
+    pub far: (Vec2, Vec2),
+}
+
+/// A portal along the kerb line made wider by `CUT_M` toward the piece next to the
+/// zebra: `base` is the zebra's portal (raw), `extra` the piece's one on the same kerb.
+fn widened(base: &Portal, extra: &Portal, across: Vec2) -> (Vec2, Vec2) {
+    let ends = [base.a, base.b];
+    let others = [extra.a, extra.b];
+    let mut best = (f32::INFINITY, 0, 0);
+    for (i, e) in ends.iter().enumerate() {
+        for (j, o) in others.iter().enumerate() {
+            let d = e.distance(*o);
+            if d < best.0 {
+                best = (d, i, j);
+            }
+        }
+    }
+    let (shared, rest) = (ends[best.1], ends[1 - best.1]);
+    let far = others[1 - best.2];
+    let reach = shared.distance(far).min(CUT_M);
+    let tip = shared + (far - shared).normalize_or_zero() * reach;
+    let (a, b) = shorten(rest, tip, CORNER_CLEARANCE);
+    if across.perp_dot(b - a) < 0.0 {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 fn shorten(a: Vec2, b: Vec2, by: f32) -> (Vec2, Vec2) {
@@ -845,6 +892,7 @@ impl WalkSpace {
             a + end.inward * CORNER_CLEARANCE,
             b + end.inward * CORNER_CLEARANCE,
         );
+        let cuts = self.cut_ways(&areas, &crossed, (goal.0 + goal.1) * 0.5);
         Some((
             cost,
             WalkPath {
@@ -855,8 +903,70 @@ impl WalkSpace {
                 length,
                 to_entry: to,
                 goal,
+                cuts,
             },
         ))
+    }
+
+    /// The zebras of a corridor (`crossed[k]` leads from `areas[k]` to `areas[k + 1]`)
+    /// that may be cut at a corner: foot area, zebra, foot area, with a carriageway piece
+    /// beside the zebra that touches both kerbs. The piece on the goal's side is used.
+    fn cut_ways(&self, areas: &[usize], crossed: &[usize], goal: Vec2) -> Vec<CutWay> {
+        let portal_between = |p: usize, q: usize| {
+            self.portals
+                .iter()
+                .find(|x| x.areas == (p, q) || x.areas == (q, p))
+        };
+        let mut cuts = Vec::new();
+        for k in 0..crossed.len().saturating_sub(1) {
+            let (foot, zebra, land) = (areas[k], areas[k + 1], areas[k + 2]);
+            if !matches!(self.areas[zebra].kind, AreaKind::Crossing { .. })
+                || self.areas[foot].kind.is_road()
+                || self.areas[land].kind.is_road()
+            {
+                continue;
+            }
+            let mut best: Option<(f32, usize)> = None;
+            for piece in 0..self.areas.len() {
+                if !matches!(self.areas[piece].kind, AreaKind::Carriageway { .. }) {
+                    continue;
+                }
+                let (Some(beside), Some(_), Some(_)) = (
+                    portal_between(zebra, piece),
+                    portal_between(foot, piece),
+                    portal_between(land, piece),
+                ) else {
+                    continue;
+                };
+                let d = ((beside.a + beside.b) * 0.5).distance(goal);
+                if best.is_none_or(|(b, _)| d < b) {
+                    best = Some((d, piece));
+                }
+            }
+            let Some((_, piece)) = best else {
+                continue;
+            };
+            let across = |from: usize, to: usize| {
+                self.areas[to].polygon.centroid() - self.areas[from].polygon.centroid()
+            };
+            let near = widened(
+                &self.portals[crossed[k]],
+                portal_between(foot, piece).expect("checked"),
+                across(foot, zebra),
+            );
+            let far = widened(
+                &self.portals[crossed[k + 1]],
+                portal_between(land, piece).expect("checked"),
+                across(zebra, land),
+            );
+            cuts.push(CutWay {
+                kerb: k,
+                piece,
+                near,
+                far,
+            });
+        }
+        cuts
     }
 
     /// The road areas a walker on `path`, in area `index` of its corridor, may be in:
