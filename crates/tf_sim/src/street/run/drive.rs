@@ -11,12 +11,14 @@ use indexmap::IndexMap;
 use super::agent::{Agent, Approach};
 use super::events::CauseKind;
 use super::grid::Grid;
+use super::mix;
 use super::route::RoutePath;
 use super::walker::WalkerSeen;
 use super::yielding::{self, PedWorld};
+use crate::rng::SimRng;
 use crate::roads::lane::Turn;
 use crate::street::ids::{AgentId, StreetLaneId};
-use crate::street::level::Sign;
+use crate::street::level::{Mode, Sign};
 use crate::street::model::Street;
 use crate::street::signals::{Light, SignalPlan};
 use crate::street::speed::STREET_TOLERANCE;
@@ -27,8 +29,16 @@ pub const DT: f64 = 0.05;
 pub const ACCELERATION: f64 = 2.0;
 /// The braking a driver plans with.
 pub const COMFORT_BRAKE: f64 = 3.0;
-/// The braking the vehicle can do.
-pub const MAX_BRAKE: f64 = 8.0;
+/// What the road surface allows, as a factor on a vehicle's own maximum braking: 1 is dry
+/// asphalt. One constant so that weather can lower it later (not modelled yet).
+pub const ROAD_GRIP: f64 = 1.0;
+/// Seconds from the first touch of the pedal to full braking (start value; brake rise
+/// times of 0.2-0.4 s are reported in the braking literature, e.g. NCHRP 400, Fambro
+/// et al. 1997). Phase 8 calibration.
+pub const BRAKE_RISE_S: f64 = 0.3;
+/// Salt of the stream that draws a vehicle's maximum braking: a stream of its own, so
+/// that the draws the agent makes later (distractions) keep their values.
+const BRAKE_STREAM: u64 = 0xB4A4_E5ED;
 /// Braking harder than this to avoid someone is a conflict; harder than
 /// `SERIOUS_BRAKE`, a serious one.
 pub const HARD_BRAKE: f64 = 4.5;
@@ -166,6 +176,43 @@ pub struct Decision {
     pub crossing_entered: bool,
     /// Held at the line by people on the zebra past the junction exit.
     pub held_by_walkers: bool,
+}
+
+/// The hardest braking of one vehicle on a dry road, m/s², drawn once at spawn. Start
+/// values (Phase 8 calibration): cars 7.5-9.5 (emergency stops of modern cars with ABS on
+/// dry asphalt reach 8-10; Fambro et al. 1997, NCHRP 400, find drivers' emergency
+/// decelerations around 0.55 g with a wide spread), vans 6.5-8.0, buses 5.0-6.5.
+pub fn draw_max_brake(mode: Mode, seed: u64, id: AgentId) -> f64 {
+    let (low, high) = match mode {
+        Mode::Car => (7.5, 9.5),
+        Mode::Van => (6.5, 8.0),
+        _ => (5.0, 6.5),
+    };
+    let mut rng = SimRng::new(mix(mix(seed, id.0 as u64), BRAKE_STREAM));
+    f64::from(rng.randf_range(low, high))
+}
+
+/// The deceleration that brings speed `v` down to `target` within `distance`
+/// (`(v² - target²) / 2·distance`), m/s². This is what a driver needs to brake with, not
+/// the jump to the target in one tick: a walker who steps out 25 m ahead of a car at
+/// 30 km/h asks for 1.4 m/s², not 8.
+pub fn needed_brake(v: f64, target: f64, distance: f64) -> f64 {
+    if v <= target {
+        return 0.0;
+    }
+    // The pedal takes `BRAKE_RISE_S` to build up: about half of it is lost braking, so the
+    // distance that is left is shorter by that much driving.
+    let left = distance - v * BRAKE_RISE_S * 0.5;
+    (v * v - target * target) / (2.0 * left.max(0.1))
+}
+
+/// The acceleration applied this tick: braking builds up at a limited rate, full
+/// braking `BRAKE_RISE_S` after the pedal is touched; letting go is at once.
+pub fn brake_build_up(previous: f64, wanted: f64, max_brake: f64) -> f64 {
+    if wanted >= previous {
+        return wanted;
+    }
+    wanted.max(previous - max_brake / BRAKE_RISE_S * DT)
 }
 
 /// The speed from which one can still stop within `gap` behind a leader at `lead_speed`,
@@ -690,6 +737,10 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
 
     // The road itself: the limit here, and the slower lanes and bends ahead.
     let mut target = desired_speed(agent, route.lanes[index], world);
+    // The deceleration the things ahead ask for (see `needed_brake`), measured to the
+    // thing itself: the margins a driver keeps are comfort, not distance it may not use.
+    let mut need = 0.0_f64;
+    let mut view_need = 0.0_f64;
     let lookahead =
         (v * v / (2.0 * COMFORT_BRAKE) + v * tau + 12.0 + agent.length).min(MAX_LOOKAHEAD);
     for next in index + 1..route.lanes.len() {
@@ -699,6 +750,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         }
         let speed = desired_speed(agent, route.lanes[next], world);
         target = target.min((speed * speed + 2.0 * COMFORT_BRAKE * distance).sqrt());
+        need = need.max(needed_brake(v, speed, distance));
     }
 
     // The junction ahead: go, or stop at the line.
@@ -721,6 +773,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
             if !go {
                 let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
                 target = target.min(safe_speed(stop_d - agent.d - margin, 0.0, DT));
+                need = need.max(needed_brake(v, 0.0, stop_d - agent.d));
             }
             decision.stopped_at_sign = v < STOPPED_SPEED && to_line < AT_LINE;
         }
@@ -757,6 +810,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         leader = Some((gap, speed));
         let min_gap = MIN_GAP * (1.0 - 0.5 * agent.traits.risk);
         let safe = safe_speed(gap - min_gap, speed, tau);
+        need = need.max(needed_brake(v, speed, gap));
         if safe < target {
             target = safe;
             blocker = Some(other);
@@ -779,6 +833,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         {
             decision.held_by_walkers = true;
         }
+        view_need = view.need;
         if view.target < target {
             target = view.target;
             blocker = view.blocker;
@@ -809,13 +864,24 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         }
     }
 
-    let wanted = (target - v) / DT;
-    decision.accel = wanted.clamp(-MAX_BRAKE, ACCELERATION);
-    if let Some(other) = blocker
-        && -wanted > HARD_BRAKE
-        && v > 1.0
-    {
-        decision.hard_brake = Some((other, (-wanted).min(MAX_BRAKE)));
+    // Reaching the target: gently on the way up. Above it, the driver brakes with what the
+    // stop (or the slower speed) asks for over the distance left, never softer than the
+    // comfortable rate that keeps it on the safe-speed curve, and never harder than the
+    // vehicle can. (The jump to the target in one tick would be 8 m/s² for any walker
+    // stepping out.)
+    let limit = agent.max_brake * ROAD_GRIP;
+    if target >= v {
+        decision.accel = ((target - v) / DT).min(ACCELERATION);
+    } else {
+        need = need.max(view_need);
+        let brake = need.max(COMFORT_BRAKE.min((v - target) / DT)).min(limit);
+        decision.accel = -brake;
+        if let Some(other) = blocker
+            && brake > HARD_BRAKE
+            && v > 1.0
+        {
+            decision.hard_brake = Some((other, brake));
+        }
     }
     decision
 }
@@ -862,9 +928,7 @@ mod tests {
         let (mut gap, mut speed) = (40.0, 10.0);
         for _ in 0..600 {
             let safe = safe_speed(gap, 0.0, 1.0);
-            speed = safe
-                .min(speed + ACCELERATION * DT)
-                .max(speed - MAX_BRAKE * DT);
+            speed = safe.min(speed + ACCELERATION * DT).max(speed - 8.0 * DT);
             gap -= speed * DT;
             assert!(gap > 0.0);
         }

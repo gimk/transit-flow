@@ -12,7 +12,7 @@
 //! - **Approaches a hidden zebra slowly**: when a kerb of a zebra ahead is hidden (by a
 //!   parked van, a bus, a tree), it drives no faster than the speed from which it can
 //!   stop before the zebra after its reaction time, braking at `COMFORT_BRAKE`:
-//!   `v = sqrt(b²τ² + 2bD) - bτ` with D the distance to the zebra less `PED_STOP_MARGIN`
+//!   `v = sqrt(b²τ² + 2bD) - bτ` with D the distance to the zebra less `ZEBRA_LINE_MARGIN` (`stop_line`)
 //!   (the same following formula as for a standing car), but never below
 //!   `CREEP_SPEED`, so it moves up until it sees a kerb hidden right at the zebra's edge.
 //!   Someone stepping out from behind the van then always finds a car that can stop.
@@ -32,7 +32,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::agent::Agent;
-use super::drive::{COMFORT_BRAKE, DT, MAX_BRAKE, SIDE_MARGIN, Snapshot, safe_speed};
+use super::drive::{COMFORT_BRAKE, DT, SIDE_MARGIN, Snapshot, needed_brake, safe_speed};
 use super::events::CauseKind;
 use super::kerb::RouteArea;
 use super::sight::{Hider, SightBlockers};
@@ -44,11 +44,16 @@ use crate::street::ids::AgentId;
 /// 1 m/s, and 0.17 m of braking at `COMFORT_BRAKE`), and the in-path rule brakes for
 /// whoever steps out.
 pub const CREEP_SPEED: f64 = 1.0;
-/// A driver stops this far before a zebra it yields at, metres (start value).
-pub const PED_STOP_MARGIN: f64 = 1.0;
-/// When it must stop at a junction line just past a zebra, it stops this far before the
-/// zebra: little, so its front stays within `AT_LINE` of the line for a 3 m zebra.
+/// A driver stops this far before the painted edge of a zebra (start value): at a zebra it
+/// yields at, at the junction line just past one, and when it creeps up to one.
 pub const ZEBRA_LINE_MARGIN: f64 = 0.3;
+
+/// Where a driver on `area` stops for a zebra: its painted edge less `ZEBRA_LINE_MARGIN`,
+/// as a route distance. Every yield, stop and creep path uses this one line.
+pub fn stop_line(area: &RouteArea) -> f64 {
+    area.enter - ZEBRA_LINE_MARGIN
+}
+
 /// A zebra ending this close before a junction's stop line belongs to that line.
 const ZEBRA_AT_LINE: f64 = 1.0;
 /// Room kept to a walker in the path, beyond its body, metres (start value).
@@ -102,6 +107,8 @@ pub struct WalkerView {
     pub yield_all: Vec<AgentId>,
     /// The limit of a hidden zebra, and what hides its kerb.
     pub hidden: Option<(f64, Hider)>,
+    /// The deceleration the walkers ask for now, m/s² (see `drive::needed_brake`).
+    pub need: f64,
 }
 
 /// The front of a car: where its driver looks from.
@@ -159,10 +166,15 @@ pub fn walker_view(
                     .find_map(|p| peds.sight.hider(me, *p, &snapshot.seen, Some(agent.id)))
             });
             if let Some(hider) = hidden {
-                let room = area.enter - front - PED_STOP_MARGIN;
+                let room = stop_line(area) - front;
                 // Never slower than a creep: a kerb hidden right at the zebra's edge stays
                 // hidden until the car has moved up (stage C review, finding 2).
                 let limit = safe_speed(room, 0.0, tau).max(CREEP_SPEED) * (1.0 + risk);
+                // A sight limit, not an obstacle: slowing to it never asks more than the
+                // comfortable rate (the in-path rule brakes for whoever steps out).
+                view.need = view
+                    .need
+                    .max(needed_brake(v, limit, room + ZEBRA_LINE_MARGIN).min(COMFORT_BRAKE));
                 if limit < view.target {
                     view.target = limit;
                     view.blocker = None;
@@ -204,6 +216,7 @@ pub fn walker_view(
             if in_path && d_w > front - 0.5 {
                 let gap = d_w - front - f64::from(walker.radius) - WALKER_GAP;
                 let limit = safe_speed(gap, 0.0, DT);
+                view.need = view.need.max(needed_brake(v, 0.0, gap + WALKER_GAP));
                 if limit < view.target {
                     view.target = limit;
                     view.blocker = Some(walker.id);
@@ -217,13 +230,16 @@ pub fn walker_view(
             let passed = on && beside > reach + PASSED_MARGIN as f32 && closing <= 0.0;
             let waiting = intends && looks && lights.is_none_or(|walk| walk);
             if (on && !passed) || waiting {
-                let room = area.enter - front - PED_STOP_MARGIN;
+                let room = stop_line(area) - front;
                 // Only if it can still stop before the zebra (a car already standing
                 // closer than the margin stays where it is): otherwise it is through
                 // before them, and the in-path rule brakes for whoever is in the way.
-                if area.enter - front > v * v / (2.0 * MAX_BRAKE) {
+                if area.enter - front > v * v / (2.0 * agent.max_brake) {
                     // With its own headway: it comes up slowly to people waiting.
                     let limit = safe_speed(room, 0.0, tau);
+                    view.need = view
+                        .need
+                        .max(needed_brake(v, 0.0, room + ZEBRA_LINE_MARGIN));
                     if limit < view.target {
                         view.target = limit;
                         view.blocker = Some(walker.id);
@@ -331,7 +347,7 @@ pub fn keep_crossing_clear(
             continue;
         }
         if rear_of_leader - area.exit < agent.length + super::drive::MIN_GAP {
-            let room = area.enter - agent.d - PED_STOP_MARGIN;
+            let room = stop_line(area) - agent.d;
             if room > agent.speed * agent.speed / (2.0 * COMFORT_BRAKE) {
                 return Some(safe_speed(room, 0.0, DT));
             }

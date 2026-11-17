@@ -155,6 +155,7 @@ impl StreetRun {
             d: length,
             speed: 0.0,
             accel: 0.0,
+            max_brake: drive::draw_max_brake(flow.mode, self.seed, id),
             length,
             width,
             pos: Vec2::ZERO,

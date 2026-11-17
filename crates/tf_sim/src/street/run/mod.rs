@@ -676,7 +676,7 @@ impl StreetRun {
                 agent.last_hard_brake = Some(tick);
                 brakes.push((agent.id, other, rate));
             }
-            agent.accel = decision.accel;
+            agent.accel = drive::brake_build_up(agent.accel, decision.accel, agent.max_brake);
             agent.speed = (agent.speed + agent.accel * DT).max(0.0);
             agent.d += agent.speed * DT;
             agent.prev_pos = agent.pos;
