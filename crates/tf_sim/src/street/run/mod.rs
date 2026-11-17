@@ -116,6 +116,10 @@ pub struct Summary {
     pub spawned: u32,
     pub arrived: u32,
     pub gave_up: u32,
+    /// Vehicles still on the street at the end, and wishes that never entered (the
+    /// score counts both like give-ups).
+    pub unfinished: u32,
+    pub not_entered: u32,
     pub conflicts_light: u32,
     pub conflicts_serious: u32,
     pub contacts: u32,
@@ -136,6 +140,9 @@ pub struct WalkSummary {
     pub spawned: u32,
     pub arrived: u32,
     pub gave_up: u32,
+    /// People who did not finish or never entered (`Unfinished` events).
+    pub unfinished: u32,
+    pub not_entered: u32,
     pub mean_delay_s: f64,
     /// Mean time an arrived walker spent in a dense crowd.
     pub mean_crowded_s: f64,
@@ -160,7 +167,8 @@ pub struct WalkSummary {
 /// Agents of one flow of one slice that want to enter, and the stream that makes them.
 struct FlowState {
     rng: SimRng,
-    backlog: u32,
+    /// The ticks at which the agents that still want to enter wished to (oldest first).
+    backlog: Vec<u64>,
 }
 
 pub struct StreetRun {
@@ -355,7 +363,7 @@ impl StreetRun {
                 (0..slice.flows.len())
                     .map(|f| FlowState {
                         rng: SimRng::new(mix(options.seed, 1_000_000 + (s * 1000 + f) as u64)),
-                        backlog: 0,
+                        backlog: Vec::new(),
                     })
                     .collect()
             })
@@ -803,13 +811,73 @@ impl StreetRun {
             .flow_state
             .iter()
             .flatten()
-            .any(|flow| flow.backlog > 0);
+            .any(|flow| !flow.backlog.is_empty());
         let empty = self.agents.is_empty() && self.walkers.is_empty();
         if self.tick >= total && ((empty && !waiting) || self.tick >= grace) {
             self.ended = Some(EndReason::Completed);
+            self.log_unfinished();
             self.log(StreetEvent::RunEnded {
                 reason: EndReason::Completed,
             });
+        }
+    }
+
+    /// At the end of a completed run, every person who did not get through is logged as
+    /// `Unfinished`: those still on the street, and those still waiting to enter (the
+    /// backlog). Without it the score would only see who arrived or gave up, so a design
+    /// that jams would lose its slowest people from the delay mean and score better than
+    /// one that does not (a jam must cost points). A backlog wish of pedestrians counts
+    /// `MEAN_GROUP_SIZE` people, rounded (the group size is drawn at entry). Order: the
+    /// vehicles, the walkers, then the backlog by slice and flow, so the log is the same
+    /// on every run.
+    fn log_unfinished(&mut self) {
+        let tick = self.tick;
+        let mut events = Vec::new();
+        for agent in self.agents.values() {
+            if agent.crashed() {
+                continue;
+            }
+            let time_s = (tick - agent.spawn_tick) as f64 * DT;
+            events.push(StreetEvent::Unfinished {
+                agent: Some(agent.id),
+                mode: agent.mode,
+                delay_s: rounded((time_s - agent.free_time_s).max(0.0), 100.0),
+                entered: true,
+            });
+        }
+        for walker in self.walkers.values() {
+            if walker.hit() {
+                continue;
+            }
+            let time_s = (tick - walker.spawn_tick) as f64 * DT;
+            events.push(StreetEvent::Unfinished {
+                agent: Some(walker.id),
+                mode: Mode::Pedestrian,
+                delay_s: rounded((time_s - walker.free_time_s).max(0.0), 100.0),
+                entered: true,
+            });
+        }
+        for (s, slice) in self.slices.iter().enumerate() {
+            for (f, flow) in slice.flows.iter().enumerate() {
+                let people = if flow.mode == Mode::Pedestrian {
+                    walker::MEAN_GROUP_SIZE.round().max(1.0) as usize
+                } else {
+                    1
+                };
+                for &wished in &self.flow_state[s][f].backlog {
+                    for _ in 0..people {
+                        events.push(StreetEvent::Unfinished {
+                            agent: None,
+                            mode: flow.mode,
+                            delay_s: rounded((tick - wished) as f64 * DT, 100.0),
+                            entered: false,
+                        });
+                    }
+                }
+            }
+        }
+        for event in events {
+            self.log(event);
         }
     }
 
@@ -831,6 +899,8 @@ impl StreetRun {
             spawned: 0,
             arrived: 0,
             gave_up: 0,
+            unfinished: 0,
+            not_entered: 0,
             conflicts_light: 0,
             conflicts_serious: 0,
             contacts: 0,
@@ -882,6 +952,15 @@ impl StreetRun {
                     s.total_annoyance += annoyance;
                 }
                 StreetEvent::GaveUp { .. } => s.gave_up += 1,
+                StreetEvent::Unfinished { mode, entered, .. } => {
+                    let walker = *mode == Mode::Pedestrian;
+                    match (walker, *entered) {
+                        (true, true) => s.walkers.unfinished += 1,
+                        (true, false) => s.walkers.not_entered += 1,
+                        (false, true) => s.unfinished += 1,
+                        (false, false) => s.not_entered += 1,
+                    }
+                }
                 StreetEvent::Conflict { grade, .. } => match grade {
                     Grade::Light => s.conflicts_light += 1,
                     Grade::Serious => s.conflicts_serious += 1,

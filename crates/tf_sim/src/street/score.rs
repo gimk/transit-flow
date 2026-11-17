@@ -74,7 +74,10 @@ pub struct ModeStats {
     pub spawned: u32,
     pub arrived: u32,
     pub gave_up: u32,
-    /// Mean delay of those who arrived, seconds.
+    /// Still on the street at the end, and never entered: scored like give-ups.
+    pub unfinished: u32,
+    pub not_entered: u32,
+    /// Mean delay of those who arrived or did not finish (the delay so far), seconds.
     pub mean_delay_s: f64,
     /// Mean annoyance of those who arrived or gave up (a give-up counts
     /// `GAVE_UP_ANNOYANCE`).
@@ -170,6 +173,10 @@ struct ModeTally {
     spawned: u32,
     arrived: u32,
     gave_up: u32,
+    unfinished: u32,
+    not_entered: u32,
+    /// How many `delay` adds up (arrived, and not finished).
+    delayed: u32,
     delay: f64,
     annoyance: f64,
 }
@@ -234,7 +241,7 @@ fn cause_text(modes: &IndexMap<AgentId, Mode>, cause: &Cause) -> String {
 
 fn causes_text(modes: &IndexMap<AgentId, Mode>, causes: &[Cause]) -> String {
     if causes.is_empty() {
-        return "no cause recorded".to_string();
+        return "no one broke a rule: the design brings them too close".to_string();
     }
     causes
         .iter()
@@ -325,6 +332,7 @@ pub fn report_from_events(
                 if let Some(mode) = modes.get(agent) {
                     let tally = tallies.entry(score_mode(*mode)).or_default();
                     tally.arrived += 1;
+                    tally.delayed += 1;
                     tally.delay += delay_s;
                     tally.annoyance += annoyance;
                 }
@@ -334,8 +342,25 @@ pub fn report_from_events(
             } => {
                 let tally = tallies.entry(Mode::Pedestrian).or_default();
                 tally.arrived += 1;
+                tally.delayed += 1;
                 tally.delay += delay_s;
                 tally.annoyance += annoyance;
+            }
+            StreetEvent::Unfinished {
+                mode,
+                delay_s,
+                entered,
+                ..
+            } => {
+                let tally = tallies.entry(score_mode(*mode)).or_default();
+                if *entered {
+                    tally.unfinished += 1;
+                } else {
+                    tally.not_entered += 1;
+                }
+                tally.delayed += 1;
+                tally.delay += delay_s;
+                tally.annoyance += GAVE_UP_ANNOYANCE;
             }
             StreetEvent::GaveUp { agent, .. } => {
                 let mode = modes.get(agent).copied().unwrap_or(if is_walker(*agent) {
@@ -432,7 +457,7 @@ pub fn report_from_events(
     let mut per_mode = Vec::new();
     let mut means = Vec::new();
     for (mode, tally) in &tallies {
-        let people = tally.arrived + tally.gave_up;
+        let people = tally.arrived + tally.gave_up + tally.unfinished + tally.not_entered;
         let mean_annoyance = if people > 0 {
             tally.annoyance / f64::from(people)
         } else {
@@ -446,8 +471,10 @@ pub fn report_from_events(
             spawned: tally.spawned,
             arrived: tally.arrived,
             gave_up: tally.gave_up,
-            mean_delay_s: if tally.arrived > 0 {
-                rounded(tally.delay / f64::from(tally.arrived), 10.0)
+            unfinished: tally.unfinished,
+            not_entered: tally.not_entered,
+            mean_delay_s: if tally.delayed > 0 {
+                rounded(tally.delay / f64::from(tally.delayed), 10.0)
             } else {
                 0.0
             },
@@ -537,9 +564,23 @@ fn top_reasons(
                 let stats = per_mode.iter().find(|stats| stats.mode == *mode);
                 let delay = stats.map_or(0.0, |stats| stats.mean_delay_s);
                 let gave_up = stats.map_or(0, |stats| stats.gave_up);
+                let unfinished = stats.map_or(0, |stats| stats.unfinished);
+                let not_entered = stats.map_or(0, |stats| stats.not_entered);
                 let mut text = format!("{} were delayed {delay:.0} s on average", mode_noun(*mode));
                 if gave_up > 0 {
                     text.push_str(&format!(" and {gave_up} gave up"));
+                }
+                if not_entered > 0 {
+                    text.push_str(&format!(
+                        ", {not_entered} {} could not enter the street",
+                        mode_noun(*mode)
+                    ));
+                }
+                if unfinished > 0 {
+                    text.push_str(&format!(
+                        ", {unfinished} {} did not finish",
+                        mode_noun(*mode)
+                    ));
                 }
                 losses.push((share, format!("{text}: -{}", rounded(share, 10.0))));
             }
