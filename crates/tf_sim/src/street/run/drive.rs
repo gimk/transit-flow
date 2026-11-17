@@ -36,6 +36,9 @@ pub const ROAD_GRIP: f64 = 1.0;
 /// times of 0.2-0.4 s are reported in the braking literature, e.g. NCHRP 400, Fambro
 /// et al. 1997). Phase 8 calibration.
 pub const BRAKE_RISE_S: f64 = 0.3;
+/// The braking at which the pedal needs the whole `BRAKE_RISE_S` (about the middle of a
+/// car's maximum, see `draw_max_brake`); softer braking needs a proportionally shorter rise.
+const REFERENCE_BRAKE: f64 = 8.5;
 /// Salt of the stream that draws a vehicle's maximum braking: a stream of its own, so
 /// that the draws the agent makes later (distractions) keep their values.
 const BRAKE_STREAM: u64 = 0xB4A4_E5ED;
@@ -200,9 +203,20 @@ pub fn needed_brake(v: f64, target: f64, distance: f64) -> f64 {
     if v <= target {
         return 0.0;
     }
-    // The pedal takes `BRAKE_RISE_S` to build up: about half of it is lost braking, so the
-    // distance that is left is shorter by that much driving.
-    let left = distance - v * BRAKE_RISE_S * 0.5;
+    // The pedal takes `BRAKE_RISE_S` to build up to full braking: about half of it is lost
+    // braking, so the distance that is left is shorter by that much driving. That is only
+    // so for hard braking: a gentle brake is reached at once, its rise is short. Without
+    // this scaling, a car 0.2 m/s over the speed of a lane that starts in 1 m would "need"
+    // 10 m/s² and be logged as a hard brake (found on 20 km/h streets, where the junction
+    // movement is a little slower than the road before it).
+    let plain = (v * v - target * target) / (2.0 * distance.max(0.1));
+    // A stop keeps the full loss: missing it by a few decimetres is a body on a zebra.
+    let rise = if target > 0.0 {
+        (plain / REFERENCE_BRAKE).min(1.0)
+    } else {
+        1.0
+    };
+    let left = distance - v * BRAKE_RISE_S * 0.5 * rise;
     (v * v - target * target) / (2.0 * left.max(0.1))
 }
 
@@ -936,6 +950,15 @@ mod tests {
             speed < 0.05 && gap < 1.0,
             "stopped close: {speed} m/s, {gap} m"
         );
+    }
+
+    #[test]
+    fn a_small_speed_step_in_the_last_metre_is_not_a_hard_brake() {
+        // 0.2 m/s over a lane that starts in 0.8 m: about 2 m/s², not 10.
+        assert!(needed_brake(6.8, 6.6, 0.8) < 3.0);
+        // A stop from speed is as hard as before: the pedal rise is lost in full.
+        let stop = needed_brake(14.0, 0.0, 14.0);
+        assert!(stop > 7.0, "{stop}");
     }
 
     #[test]
