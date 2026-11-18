@@ -80,13 +80,16 @@ pub const GAP_LEFT_S: f64 = 2.5;
 pub const LATE_RED_S: f64 = 2.5;
 /// Slower than this is stopped.
 pub const STOPPED_SPEED: f64 = 0.3;
-/// A stopped vehicle this close to its line is waiting at it.
-pub const AT_LINE: f64 = 4.0;
-/// While cyclists are about, a vehicle that stops before a zebra at the line (up to this far
-/// from the line) still stands "at its line" for the priority rules and the ring check:
-/// with `AT_LINE` the heads of the arms that have a zebra were left out and a ring of
-/// four arms could not be broken (start value, metres).
-pub const RING_REACH: f64 = 6.0;
+/// A vehicle whose front is this close to its stopping place (the line, or the edge of a
+/// zebra that ends at the line: `yielding::stop_point`) stands at its line, for the stop
+/// sign, the walkers' hold, the priority rules and the ring check. Measured from the
+/// stopping place and not from the line: a car that waits for a zebra stops 3.3 to 4.3 m
+/// before the line, and a fixed reach from the line missed it (start value, metres).
+pub const AT_STOP_REACH: f64 = 2.0;
+/// A vehicle that is stopped and over its line by less than this has not committed to the
+/// junction: it can still wait (start value, metres; a car cannot back up, so beyond
+/// this it is in).
+pub const OVERRUN_M: f64 = 1.5;
 /// A vehicle that moves slower than this, close ahead, makes a queue of the one behind it
 /// (m/s), and "close" is this far, metres (start values).
 const QUEUE_CRAWL: f64 = 1.5;
@@ -151,6 +154,13 @@ pub struct Seen {
     pub movement: Option<StreetLaneId>,
     pub s_on_movement: f64,
     pub in_junction: bool,
+    /// Distance from its front to where it stops for its line (negative when over it);
+    /// infinite without a junction ahead (`at_line`).
+    pub stop_gap: f64,
+    /// How hard it pulls away (m/s²) and its own top speed (m/s, infinite for a motor
+    /// vehicle: the lane limit rules), for judging when it arrives (`arrival_limit`).
+    pub accel: f64,
+    pub pace: f64,
     pub wait_ticks: u32,
     pub crashed: bool,
     /// Side position in its lane (`bike::lateral_plan`), and whether it is a bicycle.
@@ -209,6 +219,9 @@ pub enum Block {
     InJunction(AgentId, i32),
     /// The lane past the junction has no room for the vehicle (do not block the box).
     ExitFull,
+    /// Went first as the leader of a ring of waiting vehicles, against this one that had
+    /// priority over it (only in the careful check that names causes).
+    RingStart(AgentId),
 }
 
 /// What a careful driver would have done at the zebra ahead that this one does not:
@@ -340,6 +353,19 @@ pub fn travel_time(distance: f64, speed: f64, top_speed: f64) -> f64 {
     travel_time_with(distance, speed, top_speed, ACCELERATION)
 }
 
+/// The top speed to judge the arrival of `other` with: a rider rides at its own pace (a little
+/// over a low limit at most), a motor vehicle at the lane limit; never less than it does now.
+fn arrival_limit(other: &Seen, lane_limit: f64) -> f64 {
+    if other.pace.is_finite() {
+        other
+            .pace
+            .min(lane_limit * BIKE_LIMIT_TOLERANCE)
+            .max(other.speed)
+    } else {
+        lane_limit.max(other.speed)
+    }
+}
+
 /// `travel_time` for a body that accelerates at `a`.
 pub fn travel_time_with(distance: f64, speed: f64, top_speed: f64, a: f64) -> f64 {
     if distance <= 0.0 {
@@ -368,6 +394,12 @@ pub fn critical_gap(turn: Turn) -> f64 {
     }
 }
 
+impl MoveInfo {
+    fn turn_is_straight(&self) -> bool {
+        matches!(self.turn, Turn::Straight | Turn::None)
+    }
+}
+
 fn turn_rank(turn: Turn) -> u8 {
     match turn {
         Turn::Straight | Turn::None => 0,
@@ -382,8 +414,11 @@ pub fn must_yield(me: &MoveInfo, other: &MoveInfo) -> bool {
     if me.rank != other.rank {
         return me.rank < other.rank;
     }
+    // From the same approach (cars in side-by-side lanes, a car and a rider in a bicycle
+    // lane): the one who turns across the other gives way, so a right turn gives way to a
+    // rider going straight on its right (the classic blind-spot conflict).
     if me.from_segment == other.from_segment {
-        return false;
+        return turn_rank(me.turn) > turn_rank(other.turn);
     }
     // y down: a negative cross product means the other heads to my left, so it comes
     // from my right.
@@ -589,11 +624,9 @@ pub fn junction_blocks(
                 (arrives, leaves) = (0.0, f64::INFINITY);
             } else {
                 // It may still be picking up speed: the earliest it can arrive.
-                let limit = world.street.lanes[&other_movement]
-                    .speed_limit
-                    .max(other.speed);
+                let limit = arrival_limit(other, world.street.lanes[&other_movement].speed_limit);
                 (arrives, leaves) = (
-                    travel_time(their_in, other.speed, limit),
+                    travel_time_with(their_in, other.speed, limit, other.accel),
                     their_out / other.speed,
                 );
             }
@@ -603,7 +636,22 @@ pub fn junction_blocks(
                 continue;
             }
             let owes = must_yield(info, other_info);
-            if !(owes || defers) || (!careful && !approach.yields) {
+            // The leader of a ring of waiting vehicles goes although it gives way: it may be
+            // yielding to me, and I would start with it from the same stale view of it.
+            if !owes
+                && (careful || approach.yields)
+                && other.speed < STOPPED_SPEED
+                && !other.held_by_walkers
+                && stands_at_line(other, snapshot)
+                && leads_ring(other.id, snapshot, world)
+            {
+                stop!(block);
+                continue;
+            }
+            // One that has priority still gives way to a vehicle that has just pulled out of its line
+            // (a ring leader, a late start): its view of me is old, mine of it is not.
+            let pulls_out = other.speed >= STOPPED_SPEED && other.s_on_movement > -PULL_OUT_REACH_M;
+            if !(owes || defers || pulls_out) || (!careful && !approach.yields) {
                 continue;
             }
             // Deferring after a hold is owed to those who may have started meanwhile, not
@@ -612,15 +660,20 @@ pub fn junction_blocks(
                 continue;
             }
             if other.speed < STOPPED_SPEED && stands_at_line(other, snapshot) {
-                // Held by people on foot, it is not about to go: it holds nobody.
-                if other.held_by_walkers {
+                // Held by people on foot, it is not about to go: it holds nobody. Not so
+                // for a driver that was held itself a moment ago (`defers`): both are let
+                // go by the same people and each sees the other as held for one reaction
+                // time more, so they would start together (seeds 26 and 3 x4).
+                if other.held_by_walkers && !defers {
                     continue;
                 }
                 // It has priority but it stands at its line. If it is about to go, I
                 // wait; only in a ring of waiting cars that all give way to each other
                 // does one of them (see `leads_ring`) go first.
-                if !leads_ring(agent, snapshot, world) {
+                if !leads_ring(agent.id, snapshot, world) {
                     stop!(block);
+                } else if careful && !first_only {
+                    blocks.push(Block::RingStart(other.id));
                 }
                 continue;
             }
@@ -634,10 +687,8 @@ pub fn junction_blocks(
             {
                 continue;
             }
-            let limit = world.street.lanes[&other_movement]
-                .speed_limit
-                .max(other.speed);
-            arrives = travel_time(their_in, other.speed, limit);
+            let limit = arrival_limit(other, world.street.lanes[&other_movement].speed_limit);
+            arrives = travel_time_with(their_in, other.speed, limit, other.accel);
             leaves = their_out / other.speed.max(1.0);
         }
         let a = accel_of(agent);
@@ -769,11 +820,9 @@ fn box_blocks(
             }
             (arrives, leaves) = (0.0, f64::INFINITY);
         } else {
-            let limit = world.street.lanes[&other_movement]
-                .speed_limit
-                .max(other.speed);
+            let limit = arrival_limit(other, world.street.lanes[&other_movement].speed_limit);
             (arrives, leaves) = (
-                travel_time(their_in, other.speed, limit),
+                travel_time_with(their_in, other.speed, limit, other.accel),
                 their_out / other.speed,
             );
         }
@@ -800,8 +849,11 @@ fn box_blocks(
 /// next: the old game's priority-to-the-right deadlock). In the ring of `agent`, the one
 /// who has waited longest goes, the lower id on a tie. Everyone reads the same past tick,
 /// the waits too, so exactly one of a ring goes; a car that waits for a car that is free
-/// to go is not in a ring and waits.
-fn leads_ring(agent: &Agent, snapshot: &Snapshot, world: &World) -> bool {
+/// to go is not in a ring and waits. A left turn never leads against oncoming traffic that goes
+/// straight and waits at its line, and the others do not wait for it to lead: it gives way to
+/// that traffic (French road code R415-4), and breaking the ring with it made it start at the
+/// same time as the oncoming rider (seed 26 x4).
+fn leads_ring(agent: AgentId, snapshot: &Snapshot, world: &World) -> bool {
     let standing: Vec<&Seen> = snapshot
         .seen
         .iter()
@@ -817,7 +869,7 @@ fn leads_ring(agent: &Agent, snapshot: &Snapshot, world: &World) -> bool {
         })
         .collect();
     let n = standing.len();
-    let Some(me) = standing.iter().position(|s| s.id == agent.id) else {
+    let Some(me) = standing.iter().position(|s| s.id == agent) else {
         return false;
     };
     let mut reach = vec![vec![false; n]; n];
@@ -842,10 +894,31 @@ fn leads_ring(agent: &Agent, snapshot: &Snapshot, world: &World) -> bool {
     if !reach[me][me] {
         return false;
     }
-    let mine = (standing[me].wait_ticks, std::cmp::Reverse(standing[me].id));
+    // A left turn gives way to oncoming traffic that goes straight (R415-4): it never leads
+    // the ring against one that waits at its line, and the others do not wait for it.
+    let cannot_lead = |x: usize| {
+        let Some(mx) = standing[x].movement else {
+            return false;
+        };
+        let tx = &world.moves[&mx];
+        matches!(tx.turn, Turn::Left | Turn::UTurn)
+            && (0..n).any(|y| {
+                y != x
+                    && reach[x][y]
+                    && standing[y].movement.is_some_and(|my| {
+                        let ty = &world.moves[&my];
+                        ty.turn_is_straight() && tx.heading.dot(ty.heading) < -0.5
+                    })
+            })
+    };
+    if cannot_lead(me) {
+        return false;
+    }
+    // The lowest id of the ring goes: not the longest wait, which each reads from its own
+    // snapshot (as old as its reaction time) and two of a ring could disagree.
     (0..n)
-        .filter(|&x| x != me && reach[x][me] && reach[me][x])
-        .all(|x| mine > (standing[x].wait_ticks, std::cmp::Reverse(standing[x].id)))
+        .filter(|&x| x != me && reach[x][me] && reach[me][x] && !cannot_lead(x))
+        .all(|x| standing[me].id < standing[x].id)
 }
 
 /// What the careful check says a driver did wrong by entering anyway.
@@ -867,6 +940,7 @@ fn cause_of(block: Block, approach: &Approach) -> Option<CauseKind> {
             CauseKind::GapTooShort { to: other }
         }),
         Block::ExitFull => Some(CauseKind::BlockedBox),
+        Block::RingStart(other) => Some(CauseKind::LedRingAgainst { other }),
     }
 }
 
@@ -994,9 +1068,10 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     if let Some(approach) = &agent.approach
         && !approach.committed
         && agent.d >= approach.line_d
+        && commits(approach, agent.d, v, agent.max_brake)
     {
         decision.committed = true;
-        if !approach.go {
+        if approach.go == Some(false) {
             decision.causes.push(CauseKind::EnteredWithoutGap);
         }
         for block in junction_blocks(agent, approach, snapshot, world, true, false) {
@@ -1074,12 +1149,16 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     // The junction ahead: go, or stop at the line.
     if let Some(approach) = &agent.approach
         && !approach.committed
-        && agent.d < approach.line_d
+        && !decision.committed
     {
-        let to_line = approach.line_d - agent.d;
+        // Also when the front is over the line but not committed (a late stop): it holds
+        // there and decides again.
+        let to_line = (approach.line_d - agent.d).max(0.0);
         if to_line < v * v / (2.0 * COMFORT_BRAKE) + v * tau + DECIDE_MARGIN {
             // Too close to stop without braking hard: the decision to go stands.
-            let no_return = approach.go && to_line < v * v / (2.0 * HARD_BRAKE);
+            let no_return = approach.go == Some(true)
+                && agent.d < approach.line_d
+                && to_line < v * v / (2.0 * HARD_BRAKE);
             let exit_busy = world.peds.is_some_and(|peds| {
                 (yielding::is_careful(agent) || approach.keeps_box)
                     && yielding::exit_zebra_busy(
@@ -1094,12 +1173,12 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
                 || (!exit_busy && junction_check(agent, approach, snapshot, world, false).is_ok());
             decision.held_by_walkers = exit_busy && !go;
             decision.go = Some(go);
+            let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
             if !go {
-                let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
                 target = target.min(safe_speed(stop_d - agent.d - margin, 0.0, DT));
                 need = need.max(needed_brake(v, 0.0, stop_d - agent.d));
             }
-            decision.stopped_at_sign = v < STOPPED_SPEED && to_line < AT_LINE;
+            decision.stopped_at_sign = v < STOPPED_SPEED && at_line(stop_d - margin - agent.d);
         }
     }
 
@@ -1152,10 +1231,10 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         if view.blocker.is_some()
             && view.target <= target
             && v < STOPPED_SPEED
-            && agent
-                .approach
-                .as_ref()
-                .is_some_and(|approach| !approach.committed && approach.line_d - agent.d < AT_LINE)
+            && agent.approach.as_ref().is_some_and(|approach| {
+                let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
+                !approach.committed && at_line(stop_d - margin - agent.d)
+            })
         {
             decision.held_by_walkers = true;
         }
@@ -1280,23 +1359,38 @@ fn approach_line(agent: &Agent) -> f64 {
         .map_or(f64::INFINITY, |a| a.line_d + 1.0)
 }
 
-/// Does `other` stand at its line (for the priority rules and the ring check)? Without
-/// cyclists: within `AT_LINE` of it. With cyclists: within `RING_REACH`, and only the head
-/// of a queue (a follower cannot go before the one ahead, so it holds nobody and does not
-/// count in a ring; its long wait must not outrank the head's).
+/// Is a body whose front is `stop_gap` from its stopping place at its line (`AT_STOP_REACH`)?
+/// The one test for the stop sign, the walkers' hold and `stands_at_line`.
+pub fn at_line(stop_gap: f64) -> bool {
+    stop_gap < AT_STOP_REACH
+}
+
+/// Does `other` stand at its line (for the priority rules and the ring check)? Only the
+/// head of a queue does (a follower cannot go before the one ahead, so it holds nobody
+/// and does not count in a ring; its long wait must not outrank the head's).
 fn stands_at_line(other: &Seen, snapshot: &Snapshot) -> bool {
-    if !snapshot.seen.iter().any(|s| s.bike) {
-        return -other.s_on_movement < AT_LINE;
-    }
-    -other.s_on_movement < RING_REACH
+    at_line(other.stop_gap)
         && !snapshot.seen.iter().any(|ahead| {
             ahead.id != other.id
                 && ahead.lane == other.lane
                 && ahead.speed < STOPPED_SPEED
                 && ahead.s > other.s
-                && ahead.s - other.s < RING_REACH + 2.0
+                && ahead.s - other.s < QUEUE_REACH
                 && in_front_of(ahead, other)
         })
+}
+
+/// A vehicle that moves and is this close to its line (metres) has just pulled out of it
+/// (start value).
+pub const PULL_OUT_REACH_M: f64 = 3.0;
+
+/// Has a vehicle with its front past the line committed to the junction? Yes when it decided
+/// to go, or when it can no longer stop within `OVERRUN_M` of the line (at its own hardest
+/// braking). Otherwise it stopped, or is about to stop, just over the line (a late stop): it
+/// waits there and decides again.
+pub fn commits(approach: &Approach, d: f64, speed: f64, max_brake: f64) -> bool {
+    approach.go == Some(true)
+        || d - approach.line_d + speed * speed / (2.0 * max_brake * ROAD_GRIP) > OVERRUN_M
 }
 
 /// Is `other` in a queue behind a vehicle that stands or crawls (`QUEUE_CRAWL`) close
@@ -1379,6 +1473,52 @@ mod tests {
         assert!(stop > 7.0, "{stop}");
     }
 
+    fn approach(go: Option<bool>) -> Approach {
+        Approach {
+            movement: StreetLaneId(0),
+            line_d: 50.0,
+            end_d: 60.0,
+            obeys_signal: true,
+            yields: true,
+            full_stop: true,
+            keeps_box: false,
+            unseen: Vec::new(),
+            stopped_at_sign: false,
+            go,
+            committed: false,
+        }
+    }
+
+    #[test]
+    fn a_vehicle_that_stopped_just_over_its_line_has_not_committed() {
+        // Front 0.1 m over the line, standing, last decision "stop": it waits there.
+        assert!(!commits(&approach(Some(false)), 50.1, 0.0, 8.0));
+        // Rolling at 1 m/s it still stops within the allowance at 8 m/s².
+        assert!(!commits(&approach(Some(false)), 50.1, 1.0, 8.0));
+        // Too fast to stop within `OVERRUN_M` of the line: in.
+        assert!(commits(&approach(Some(false)), 50.1, 5.0, 8.0));
+        // Far over the line: in, whatever it decided.
+        assert!(commits(&approach(Some(false)), 52.0, 0.0, 8.0));
+        // It decided to go.
+        assert!(commits(&approach(Some(true)), 50.2, 0.5, 8.0));
+    }
+
+    #[test]
+    fn a_right_turn_gives_way_to_a_rider_going_straight_from_the_same_approach() {
+        let straight = info(1, Vec2::X, Turn::Straight, 2);
+        let right = info(1, Vec2::X, Turn::Right, 2);
+        assert!(must_yield(&right, &straight));
+        assert!(!must_yield(&straight, &right));
+        // Same turn from the same approach: neither gives way (they follow each other).
+        assert!(!must_yield(&straight, &straight));
+    }
+
+    #[test]
+    fn the_head_of_a_queue_stands_at_its_line_by_its_stopping_place() {
+        assert!(at_line(0.3));
+        assert!(at_line(-2.9));
+        assert!(!at_line(AT_STOP_REACH + 0.1));
+    }
     #[test]
     fn travel_time_ramps_then_cruises() {
         assert_eq!(travel_time(0.0, 3.0, 8.0), 0.0);

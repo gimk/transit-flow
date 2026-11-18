@@ -107,6 +107,12 @@ pub enum CauseKind {
     /// with its front on the line counts as committed). Whoever it meets inside is not the
     /// only one at fault.
     EnteredWithoutGap,
+    /// Went first as the leader of a ring of waiting vehicles that give way to each other, in
+    /// front of `other`, which had priority over it: two of a ring may leave together when each
+    /// reads a view as old as its reaction time.
+    LedRingAgainst {
+        other: AgentId,
+    },
 }
 
 impl CauseKind {
@@ -117,6 +123,7 @@ impl CauseKind {
             | CauseKind::GapTooShort { to }
             | CauseKind::DidNotYieldToWalker { to }
             | CauseKind::PassedTooClose { to } => Some(to),
+            CauseKind::LedRingAgainst { other } => Some(other),
             CauseKind::HiddenWalker { walker, .. } => Some(walker),
             CauseKind::LookedElsewhere { at, .. } => Some(at),
             CauseKind::InBlindSpot { walker } => Some(walker),
@@ -142,6 +149,9 @@ pub enum ConflictKind {
     Pet,
     /// `a` had to brake hard for `b`.
     HardBrake,
+    /// A motor vehicle passed a rider with little side room at speed (`a` is the driver,
+    /// `b` the rider); the measure is the room in metres.
+    ClosePass,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -154,6 +154,8 @@ pub struct CyclistSummary {
     pub pet_with_walkers: u32,
     pub pet_with_cyclists: u32,
     pub hard_brakes: u32,
+    /// Passes by a motor vehicle with little room at speed (`conflicts::close_pass_stage`).
+    pub close_passes: u32,
     pub conflicts_serious: u32,
     /// Contacts by the other party.
     pub contacts_with_cars: u32,
@@ -505,6 +507,7 @@ impl StreetRun {
         self.integrate_stage(decisions);
         self.walk_stage();
         self.zone_stage();
+        self.close_pass_stage();
         self.contact_stage();
         self.walker_contact_stage();
         self.walker_pet_stage();
@@ -596,7 +599,7 @@ impl StreetRun {
                         keeps_box,
                         unseen,
                         stopped_at_sign: false,
-                        go: false,
+                        go: None,
                         committed: false,
                     });
                 }
@@ -705,7 +708,7 @@ impl StreetRun {
             }
             if let Some(approach) = &mut agent.approach {
                 if let Some(go) = decision.go {
-                    approach.go = go;
+                    approach.go = Some(go);
                 }
                 approach.stopped_at_sign |= decision.stopped_at_sign;
                 approach.committed |= decision.committed;
@@ -826,13 +829,26 @@ impl StreetRun {
         for agent in self.agents.values() {
             let route = &self.routes[agent.route];
             let index = route.lane_index(agent.d);
-            let (movement, s_on_movement, in_junction) = match &agent.approach {
-                Some(a) => (
-                    Some(a.movement),
-                    agent.d - a.line_d,
-                    agent.d >= a.line_d && agent.d - agent.length < a.end_d,
-                ),
-                None => (None, 0.0, false),
+            // In the junction only when committed to it: a vehicle that stopped just over
+            // its line still waits at it, and the others must see it so (`drive::commits`).
+            let (movement, s_on_movement, in_junction, stop_gap) = match &agent.approach {
+                Some(a) => {
+                    let committed = a.committed
+                        || (agent.d >= a.line_d
+                            && drive::commits(a, agent.d, agent.speed, agent.max_brake));
+                    let (stop_d, margin) = yielding::stop_point_on(
+                        &self.walk_space,
+                        &self.route_areas[agent.route],
+                        a.line_d,
+                    );
+                    (
+                        Some(a.movement),
+                        agent.d - a.line_d,
+                        committed && agent.d - agent.length < a.end_d,
+                        stop_d - margin - agent.d,
+                    )
+                }
+                None => (None, 0.0, false, f64::INFINITY),
             };
             grid.insert(seen.len() as u32, agent.pos);
             seen.push(Seen {
@@ -847,6 +863,13 @@ impl StreetRun {
                 movement,
                 s_on_movement,
                 in_junction,
+                stop_gap,
+                accel: drive::accel_of(agent),
+                pace: if agent.bike.is_some() {
+                    agent.traits.speed_factor
+                } else {
+                    f64::INFINITY
+                },
                 wait_ticks: agent.wait_ticks,
                 crashed: agent.crashed(),
                 lateral: agent.lateral,
@@ -1019,6 +1042,8 @@ impl StreetRun {
                 } if is_cyclist(modes, *a) || is_cyclist(modes, *b) => {
                     if *kind == ConflictKind::HardBrake {
                         c.hard_brakes += 1;
+                    } else if *kind == ConflictKind::ClosePass {
+                        c.close_passes += 1;
                     } else {
                         match other(modes, *a, *b) {
                             Other::Car => c.pet_with_cars += 1,

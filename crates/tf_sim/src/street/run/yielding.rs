@@ -137,6 +137,26 @@ pub fn project(line: &[(f64, Vec2)], point: Vec2) -> Option<(f64, f32)> {
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
+/// A rider that bends the rules passes a walker on a zebra with at least this much side room
+/// between the bodies, metres (start value: a person's width and a little more).
+pub const SLIP_CLEARANCE_M: f64 = 0.7;
+/// The speed at which it slips through (start value: a walking pace plus a little).
+pub const SLIP_SPEED: f64 = 1.5;
+const SLIP_STREAM: u64 = 0x51_19;
+
+/// Does this rider slip between walkers on a zebra instead of holding like a car? A draw that
+/// is fixed per rider (from the run seed and the id, so no stream shifts) against a chance
+/// that grows with its lack of compliance, its risk and its frustration (start values).
+pub fn slips(agent: &Agent) -> bool {
+    if agent.bike.is_none() {
+        return false;
+    }
+    let chance = ((1.0 - agent.traits.compliance) * (0.6 + 0.4 * agent.frustration)
+        + 0.3 * agent.traits.risk)
+        .min(1.0);
+    perceive::roll(agent.gaze_seed, agent.id.0 as u64, SLIP_STREAM) < chance
+}
+
 /// The speed walkers allow `agent` this tick. `careful` asks what a driver with full
 /// compliance and attention would do from the same view.
 pub fn walker_view(
@@ -165,6 +185,7 @@ pub fn walker_view(
             .as_ref()
             .is_none_or(|approach| approach.yields);
     let risk = if careful { 0.0 } else { agent.traits.risk };
+    let slip = !careful && slips(agent);
     // A driver who does not look at the kerbs of a zebra only drives on.
     let task = if task == DriverTask::ZebraScan && !looks {
         DriverTask::Cruise
@@ -238,8 +259,21 @@ pub fn walker_view(
             let t_car = ((d_w - front) / v.max(1.0)).max(0.0);
             let predicted = beside - (closing * t_car as f32).max(0.0);
             let in_path = on && (beside < reach || predicted < reach);
+            // A rider that bends the rules slips past a walker that is not in its body's way: it
+            // slows to `SLIP_SPEED` and goes on instead of holding (user, 2026-11-18).
+            let slipping = slip && beside > half + walker.radius + SLIP_CLEARANCE_M as f32;
+            if slipping {
+                view.target = view.target.min(SLIP_SPEED.max(v.min(SLIP_SPEED)));
+                continue;
+            }
             if in_path && d_w > front - 0.5 {
-                let gap = d_w - front - f64::from(walker.radius) - WALKER_GAP;
+                // Standing on the zebra, it waits for the walker to be through, not for a gap.
+                let on_zebra = zebra && !ahead && v < super::drive::STOPPED_SPEED;
+                let gap = if on_zebra {
+                    -1.0
+                } else {
+                    d_w - front - f64::from(walker.radius) - WALKER_GAP
+                };
                 let limit = safe_speed(gap, 0.0, DT);
                 view.need = view.need.max(needed_brake(v, 0.0, gap + WALKER_GAP));
                 if limit < view.target {
@@ -465,11 +499,16 @@ const EXIT_ZEBRA_REACH: f64 = 6.0;
 
 /// Where a driver stops for its junction line: before a zebra that ends at the line.
 pub fn stop_point(agent: &Agent, line_d: f64, peds: Option<&PedWorld>) -> (f64, f64) {
-    let Some(peds) = peds else {
-        return (line_d, super::drive::STOP_MARGIN);
-    };
-    for area in &peds.route_areas[agent.route] {
-        let zebra = matches!(peds.space.areas[area.area].kind, AreaKind::Crossing { .. });
+    match peds {
+        Some(peds) => stop_point_on(peds.space, &peds.route_areas[agent.route], line_d),
+        None => (line_d, super::drive::STOP_MARGIN),
+    }
+}
+
+/// `stop_point` from the zebras of a route (the snapshot stage has no `PedWorld`).
+pub fn stop_point_on(space: &WalkSpace, areas: &[RouteArea], line_d: f64) -> (f64, f64) {
+    for area in areas {
+        let zebra = matches!(space.areas[area.area].kind, AreaKind::Crossing { .. });
         if zebra && area.exit <= line_d + 0.01 && line_d - area.exit < ZEBRA_AT_LINE {
             return (area.enter, ZEBRA_LINE_MARGIN);
         }

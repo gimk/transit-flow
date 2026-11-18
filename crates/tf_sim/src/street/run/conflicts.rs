@@ -25,6 +25,14 @@ use crate::street::level::Mode;
 pub(super) const SPEEDING_FACTOR: f64 = 1.15;
 /// "Could not stop" is blamed on agents who braked hard this recently.
 const HARD_BRAKE_MEMORY_S: f64 = 3.0;
+/// A pass of a rider is a conflict when the side room between the bodies is under this (metres,
+/// the French rule in town, R414-4) and the vehicle is faster than `CLOSE_PASS_MIN_SPEED` (m/s,
+/// start value: below a walking-to-jogging pace nobody is at risk); serious under
+/// `CLOSE_PASS_SERIOUS_M` and over `CLOSE_PASS_SERIOUS_SPEED` (start values).
+const CLOSE_PASS_LIGHT_M: f64 = 1.0;
+const CLOSE_PASS_MIN_SPEED: f64 = 5.0;
+const CLOSE_PASS_SERIOUS_M: f64 = 0.5;
+const CLOSE_PASS_SERIOUS_SPEED: f64 = 10.0;
 /// Bodies further apart than the sum of their half lengths and this are not tested.
 const CONTACT_REACH: f32 = 2.0;
 
@@ -175,6 +183,45 @@ impl StreetRun {
             measure: rounded(measure, 100.0),
             causes,
         });
+    }
+
+    /// Stage 6b: a motor vehicle that passes a rider with little room at speed. The rule is the
+    /// French one of 1 m in town (R414-4); a pass is a vehicle going the same way, faster
+    /// than the rider, level with it. Light under `CLOSE_PASS_LIGHT_M` at over
+    /// `CLOSE_PASS_MIN_SPEED`, serious under `CLOSE_PASS_SERIOUS_M` at over
+    /// `CLOSE_PASS_SERIOUS_SPEED` (user, 2026-11-18).
+    pub(super) fn close_pass_stage(&mut self) {
+        let mut found: Vec<(AgentId, AgentId, Vec2, f64, Grade)> = Vec::new();
+        for rider in self.agents.values().filter(|a| a.mode == Mode::Bicycle) {
+            for car in self.agents.values() {
+                if !matches!(car.mode, Mode::Car | Mode::Van | Mode::Bus)
+                    || car.speed <= CLOSE_PASS_MIN_SPEED
+                    || car.speed <= rider.speed + 1.0
+                    || car.dir.dot(rider.dir) < 0.9
+                {
+                    continue;
+                }
+                let to = rider.pos - car.pos;
+                let along = f64::from(to.dot(car.dir)).abs();
+                if along > (car.length + rider.length) * 0.5 + 0.5 {
+                    continue;
+                }
+                let room =
+                    f64::from(to.dot(car.dir.perp()).abs()) - (car.width + rider.width) * 0.5;
+                if room >= CLOSE_PASS_LIGHT_M {
+                    continue;
+                }
+                let grade = if room < CLOSE_PASS_SERIOUS_M && car.speed > CLOSE_PASS_SERIOUS_SPEED {
+                    Grade::Serious
+                } else {
+                    Grade::Light
+                };
+                found.push((car.id, rider.id, rider.pos, room.max(0.0), grade));
+            }
+        }
+        for (car, rider, at, room, grade) in found {
+            self.log_conflict(ConflictKind::ClosePass, grade, (car, rider), at, room);
+        }
     }
 
     /// Stage 6: post-encroachment time. An agent entering the conflict zone of its
