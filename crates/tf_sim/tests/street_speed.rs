@@ -5,7 +5,7 @@
 
 use glam::Vec2;
 use tf_sim::geom::Circle;
-use tf_sim::street::level::{LevelFile, ObstacleDef, ObstacleKind, Shape};
+use tf_sim::street::level::{LevelFile, Mode, ObstacleDef, ObstacleKind, Shape};
 use tf_sim::street::run::{Population, RunOptions, StreetRun};
 use tf_sim::street::space::StripUse;
 use tf_sim::street::speed::street_speeds;
@@ -240,7 +240,11 @@ fn mean_speed_between(level: &LevelFile, from: f32, to: f32) -> f64 {
         while !run.finished() {
             run.step();
             for agent in run.agents.values() {
-                if (from..to).contains(&agent.pos.x) && (agent.pos.y - 75.0).abs() < 6.0 {
+                // Cars only: a rider has its own pace (Phase 6).
+                if agent.mode == Mode::Car
+                    && (from..to).contains(&agent.pos.x)
+                    && (agent.pos.y - 75.0).abs() < 6.0
+                {
                     sum += agent.speed;
                     count += 1;
                 }

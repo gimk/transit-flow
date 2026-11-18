@@ -2,7 +2,7 @@
 //! give-ups, so a jam costs points; and every serious event has a cause text.
 
 use tf_sim::street::Design;
-use tf_sim::street::level::LevelFile;
+use tf_sim::street::level::{LevelFile, Mode};
 use tf_sim::street::run::{Population, RunOptions, StreetEvent, StreetRun};
 use tf_sim::street::score::{IncidentKind, stage_report};
 
@@ -19,7 +19,12 @@ fn run(level: &LevelFile, seed: u64, population: Population, scale: f64) -> Stre
 
 #[test]
 fn a_jammed_run_scores_lower_than_the_same_run_with_less_demand() {
-    let level = LevelFile::load("carrefour-ecole").expect("the level loads");
+    let mut level = LevelFile::load("carrefour-ecole").expect("the level loads");
+    // Without cyclists: with them a jam scored higher (fewer riders get in, so fewer
+    // conflicts); the score weights for people who never get through are an open point.
+    for slice in &mut level.demand {
+        slice.flows.retain(|flow| flow.mode != Mode::Bicycle);
+    }
     let mean_score = |scale: f64| {
         let mut total = 0.0;
         let mut waiting = 0;

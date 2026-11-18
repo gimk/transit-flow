@@ -98,10 +98,85 @@ pub const CARELESS: Archetype = Archetype {
     courtesy: (0.0, 0.5),
 };
 
+// Cyclists. `speed_factor` is the cruising speed in m/s for a bicycle (not a factor of the
+// limit: a cyclist does not follow the sign). Start values for Phase 8, from the brief of
+// Phase 6: tourist 12-16 km/h, commuter 18-25 km/h, delivery rider on an e-bike (assist
+// stops at 25 km/h), cargo bike / parent 10-14 km/h.
+pub const BIKE_CAREFUL: Archetype = Archetype {
+    name: "careful cyclist",
+    speed_factor: (4.0, 5.5),
+    patience_s: (40.0, 90.0),
+    compliance: (1.0, 1.0),
+    attention: (1.0, 1.0),
+    reaction_s: (0.6, 1.2),
+    risk: (0.0, 0.0),
+    courtesy: (1.0, 1.0),
+};
+pub const VELIB_TOURIST: Archetype = Archetype {
+    name: "velib tourist",
+    speed_factor: (3.3, 4.4),
+    patience_s: (40.0, 100.0),
+    compliance: (0.8, 1.0),
+    attention: (0.8, 0.95),
+    reaction_s: (0.9, 1.5),
+    risk: (0.0, 0.3),
+    courtesy: (0.6, 1.0),
+};
+pub const BIKE_COMMUTER: Archetype = Archetype {
+    name: "bike commuter",
+    speed_factor: (5.0, 6.9),
+    patience_s: (20.0, 50.0),
+    compliance: (0.6, 0.9),
+    attention: (0.88, 0.98),
+    reaction_s: (0.6, 1.0),
+    risk: (0.3, 0.7),
+    courtesy: (0.3, 0.8),
+};
+pub const DELIVERY_RIDER: Archetype = Archetype {
+    name: "delivery rider",
+    speed_factor: (6.4, 6.9),
+    patience_s: (10.0, 30.0),
+    compliance: (0.3, 0.7),
+    attention: (0.8, 0.95),
+    reaction_s: (0.6, 1.0),
+    risk: (0.5, 0.9),
+    courtesy: (0.1, 0.5),
+};
+pub const CARGO_BIKE: Archetype = Archetype {
+    name: "cargo bike",
+    speed_factor: (2.8, 3.9),
+    patience_s: (40.0, 100.0),
+    compliance: (0.9, 1.0),
+    attention: (0.93, 1.0),
+    reaction_s: (0.8, 1.3),
+    risk: (0.0, 0.15),
+    courtesy: (0.8, 1.0),
+};
+pub const BIKE_CARELESS: Archetype = Archetype {
+    name: "careless cyclist",
+    speed_factor: (6.0, 7.5),
+    patience_s: (8.0, 25.0),
+    compliance: (0.2, 0.6),
+    attention: (0.6, 0.9),
+    reaction_s: (0.8, 1.6),
+    risk: (0.6, 1.0),
+    courtesy: (0.0, 0.4),
+};
+
 impl Population {
     /// One draw from the agent's stream picks the archetype.
     pub fn archetype(self, mode: Mode, rng: &mut SimRng) -> Archetype {
         let pick = rng.randf();
+        if mode == Mode::Bicycle {
+            return match self {
+                Population::Careful => BIKE_CAREFUL,
+                Population::Careless => BIKE_CARELESS,
+                Population::Mixed if pick < 0.20 => VELIB_TOURIST,
+                Population::Mixed if pick < 0.65 => BIKE_COMMUTER,
+                Population::Mixed if pick < 0.85 => DELIVERY_RIDER,
+                Population::Mixed => CARGO_BIKE,
+            };
+        }
         match self {
             Population::Careful => CAREFUL,
             Population::Careless => CARELESS,
@@ -150,6 +225,36 @@ impl Traits {
     }
 }
 
+/// The habits only a cyclist has, drawn at spawn (after the seven traits, so that no car
+/// draw moves). Each is a uniform value compared, at each decision, with a chance that
+/// depends on the situation (like the walkers' habits): one person can obey one rule and
+/// bend another.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BikeHabits {
+    /// Metres from the right edge of a car lane where the rider rides (0.8-1.0, start
+    /// value: French guidance asks for about 1 m from parked cars because of opening
+    /// doors, so beside parking it is at least `drive::DOOR_ZONE_M`).
+    pub edge_m: f64,
+    /// Goes on red if this is below the chance (`drive::red_chance`).
+    pub red_u: f64,
+    /// Rides on the sidewalk if this is below the chance (`drive::sidewalk_chance`).
+    pub sidewalk_u: f64,
+    /// Rides past a queue if this is below `drive::filter_chance`.
+    pub filter_u: f64,
+}
+
+impl BikeHabits {
+    /// Four draws, always in this order.
+    pub fn draw(rng: &mut SimRng) -> Self {
+        Self {
+            edge_m: f64::from(rng.randf_range(0.8, 1.0)),
+            red_u: f64::from(rng.randf()),
+            sidewalk_u: f64::from(rng.randf()),
+            filter_u: f64::from(rng.randf()),
+        }
+    }
+}
+
 /// Length and width of the body, metres.
 pub fn body_size(mode: Mode) -> (f64, f64) {
     match mode {
@@ -161,13 +266,17 @@ pub fn body_size(mode: Mode) -> (f64, f64) {
     }
 }
 
-/// The class a mode travels as; `None` for the modes Phase 2 does not simulate yet.
+/// The body of a cargo bike or a parent with a child: longer and wider.
+pub const CARGO_BIKE_SIZE: (f64, f64) = (2.6, 0.9);
+
+/// The class a mode travels as; `None` for pedestrians (they are walkers).
 pub fn vehicle_class(mode: Mode) -> Option<Access> {
     match mode {
         Mode::Car => Some(Access::CAR),
         Mode::Van => Some(Access::DELIVERY),
         Mode::Bus => Some(Access::BUS),
-        Mode::Bicycle | Mode::Pedestrian => None,
+        Mode::Bicycle => Some(Access::BICYCLE),
+        Mode::Pedestrian => None,
     }
 }
 
@@ -241,6 +350,18 @@ pub struct Agent {
     pub last_held: Option<u64>,
     /// The zebra coming up on its route, and how it means to behave there.
     pub crossing: Option<super::yielding::CrossingApproach>,
+    /// Metres from the middle of its lane, to the right of its direction of travel (negative
+    /// is left). Real state: the body is placed and tested at this offset, and the others
+    /// see it (`Seen::lateral`). Cars keep 0 except when they pass a cyclist.
+    pub lateral: f64,
+    /// Where the side position is heading (`drive::lateral_plan`), eased at
+    /// `drive::LATERAL_SPEED`.
+    pub lateral_target: f64,
+    /// Riding past something in its lane (a slower cyclist, a queue): kept until nothing
+    /// it passes is left beside or ahead of it.
+    pub passing: bool,
+    /// Cyclists only.
+    pub bike: Option<BikeHabits>,
 }
 
 impl Agent {

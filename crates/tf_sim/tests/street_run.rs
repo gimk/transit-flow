@@ -91,6 +91,15 @@ fn body(agent: &tf_sim::street::run::Agent) -> Body {
 /// among themselves run without walkers. Cars and walkers together are covered by the
 /// stage C tests in `street_meet.rs` (`careful_drivers_and_walkers_never_touch`: no
 /// contact, and a stated bound on those who give up).
+/// The level with no cyclists: for the tests about how the junction control treats cars
+/// (cyclists change the flow and are tested in `street_bike.rs`).
+fn without_bicycles(mut level: LevelFile) -> LevelFile {
+    for slice in &mut level.demand {
+        slice.flows.retain(|flow| flow.mode != Mode::Bicycle);
+    }
+    level
+}
+
 fn without_walkers(mut level: LevelFile) -> LevelFile {
     for slice in &mut level.demand {
         slice.flows.retain(|flow| flow.mode != Mode::Pedestrian);
@@ -300,7 +309,8 @@ fn careful_drivers_keep_to_the_speed_limit() {
         let mut run = new_run(&level, &design, seed, Population::Careful, 3.0);
         while !run.finished() {
             run.step();
-            for agent in run.agents.values() {
+            // Riders may go a little over a low limit (`BIKE_LIMIT_TOLERANCE`).
+            for agent in run.agents.values().filter(|a| a.mode != Mode::Bicycle) {
                 let limit = run.limit_for(agent);
                 assert!(
                     agent.speed <= limit + 0.01,
@@ -426,8 +436,8 @@ fn signals_cost_more_time_than_priority_to_the_right() {
         }
         total / arrived
     };
-    let priority = mean_delay(&level());
-    let signals = mean_delay(&signal_level());
+    let priority = mean_delay(&without_bicycles(level()));
+    let signals = mean_delay(&without_bicycles(signal_level()));
     assert!(
         signals > priority,
         "mean delay: signals {signals:.2} s, priority to the right {priority:.2} s"

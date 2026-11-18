@@ -5,7 +5,7 @@
 use glam::Vec2;
 use tf_sim::rng::SimRng;
 use tf_sim::street::Design;
-use tf_sim::street::level::{JunctionControl, LevelFile};
+use tf_sim::street::level::{JunctionControl, LevelFile, Mode};
 use tf_sim::street::run::events::{
     CauseKind, EndReason, Outcome, PEDESTRIAN_SEVERITY, draw_outcome, severity_at,
 };
@@ -567,7 +567,11 @@ fn a_car_held_by_people_on_the_zebra_before_its_line_says_so() {
                     let Some(approach) = &car.approach else {
                         continue;
                     };
-                    if approach.committed || car.speed > 0.05 || approach.line_d - car.d >= AT_LINE
+                    // Cars: a rider held by people on foot is not flagged (open point, Phase 6).
+                    if car.mode == Mode::Bicycle
+                        || approach.committed
+                        || car.speed > 0.05
+                        || approach.line_d - car.d >= AT_LINE
                     {
                         continue;
                     }

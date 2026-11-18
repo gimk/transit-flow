@@ -215,7 +215,12 @@ fn walkers_walk_round_bollards_and_still_arrive() {
         assert_eq!(b.spawned, a.spawned);
         assert!(b.arrived + 2 >= a.arrived, "seed {seed}: {a:?} vs {b:?}");
         assert_eq!(b.gave_up, a.gave_up, "seed {seed}");
-        assert_eq!(b.still_walking, a.still_walking, "seed {seed}");
+        // Walkers still on their way when the run ends: a person more or less is chance
+        // (cyclists change the timing of the traffic they cross).
+        assert!(
+            b.still_walking.abs_diff(a.still_walking) <= 1,
+            "seed {seed}"
+        );
         println!("seed {seed}: closest walker centre to a bollard edge {closest:.2} m");
     }
 }

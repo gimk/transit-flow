@@ -39,10 +39,15 @@ use super::yielding::project;
 use super::{CRASH_BLOCK_S, EndReason, PET_LIGHT_S, PET_SERIOUS_S, StreetRun, mix};
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
+use crate::street::level::Mode;
 
 /// A vehicle and a walker further apart than this (beyond half the vehicle's length)
 /// are not tested, metres.
 const MEET_REACH: f32 = 2.0;
+/// A walker hit by a cyclist: the impact speed that the pedestrian table is read at is this
+/// share of the closing speed (start value, our own: the square root of the mass ratio
+/// would be 0.25; a bicycle is hard and narrow, so it is set higher).
+pub(super) const CYCLIST_IMPACT_FACTOR: f64 = 0.5;
 /// The band of a vehicle route through a road area: this far each side of its line,
 /// beyond the walker's body, metres (half a car width).
 pub(super) const BAND_HALF_WIDTH: f32 = 0.9;
@@ -218,7 +223,14 @@ impl StreetRun {
                 mix(self.seed, car_id.0 as u64),
                 mix(walker_id.0 as u64, tick),
             );
-            let outcome = draw_outcome(PEDESTRIAN_SEVERITY, impact, &mut SimRng::new(seed));
+            // The table is for the front of a car (about 1.4 t). A cyclist with its bike
+            // (about 90 kg) carries much less energy at the same speed: its speed counts
+            // `CYCLIST_IMPACT_FACTOR` times.
+            let effective = match self.agents[&car_id].mode {
+                Mode::Bicycle => impact * CYCLIST_IMPACT_FACTOR,
+                _ => impact,
+            };
+            let outcome = draw_outcome(PEDESTRIAN_SEVERITY, effective, &mut SimRng::new(seed));
             self.log(StreetEvent::Contact {
                 a: car_id,
                 b: walker_id,

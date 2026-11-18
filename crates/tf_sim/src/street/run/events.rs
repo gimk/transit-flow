@@ -65,6 +65,13 @@ pub enum CauseKind {
     /// A walker already on the road kept its pace when a car came, expecting the driver
     /// to stop (it has priority once engaged, R415-11 at a crossing).
     KeptPaceOnRoad,
+    /// Passed `to` with less side room than the rule asks (1 m in town, R414-4) or than
+    /// a careful rider keeps.
+    PassedTooClose {
+        to: AgentId,
+    },
+    /// A cyclist rode on the sidewalk because the street felt hostile.
+    RodeOnSidewalk,
 }
 
 impl CauseKind {
@@ -73,7 +80,8 @@ impl CauseKind {
         match *self {
             CauseKind::DidNotYield { to }
             | CauseKind::GapTooShort { to }
-            | CauseKind::DidNotYieldToWalker { to } => Some(to),
+            | CauseKind::DidNotYieldToWalker { to }
+            | CauseKind::PassedTooClose { to } => Some(to),
             CauseKind::HiddenWalker { walker, .. } => Some(walker),
             CauseKind::DidNotLook { at } => Some(at),
             _ => None,

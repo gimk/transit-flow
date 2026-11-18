@@ -233,6 +233,10 @@ fn cause_text(modes: &IndexMap<AgentId, Mode>, cause: &Cause) -> String {
             format!("{who} stepped off in a gap of {gap_s:.1} s")
         }
         CauseKind::HurriedOnRoad => format!("{who} had to hurry across to clear a vehicle"),
+        CauseKind::PassedTooClose { to } => {
+            format!("{who} passed {} with too little room", other(to))
+        }
+        CauseKind::RodeOnSidewalk => format!("{who} rode on the sidewalk"),
         CauseKind::KeptPaceOnRoad => {
             format!("{who} kept its pace on the road, expecting the car to stop")
         }
