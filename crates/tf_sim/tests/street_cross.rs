@@ -420,7 +420,7 @@ fn careful_walkers_cross_a_busy_street_out_of_a_zebra_safely() {
         + &flow("Car", "west", "east", 700)
         + &flow("Car", "east", "west", 700);
     let level = street(None, &flows, 150.0);
-    let (mut starts, mut waited, mut arrived, mut spawned, mut missed) = (0, 0, 0, 0, 0);
+    let (mut starts, mut waited, mut arrived, mut spawned) = (0, 0, 0, 0);
     for seed in 1..=4 {
         let mut run = run(&level, seed, Population::Careful, 1.0);
         let mut seen = 0;
@@ -458,13 +458,14 @@ fn careful_walkers_cross_a_busy_street_out_of_a_zebra_safely() {
                     if past {
                         continue;
                     }
-                    if to_line <= 0.0 {
-                        missed += 1;
-                        continue;
-                    }
+                    assert!(to_line > 0.0, "seed {seed}: car {:?} is in the way", car.id);
                     if car.speed > 0.3 {
                         let time = f64::from(to_line) / car.speed;
-                        missed += usize::from(time < crossing_s);
+                        assert!(
+                            time >= crossing_s,
+                            "seed {seed}: car {:?} is {time:.2} s away",
+                            car.id
+                        );
                     }
                 }
             }
@@ -474,16 +475,7 @@ fn careful_walkers_cross_a_busy_street_out_of_a_zebra_safely() {
         arrived += s.arrived;
         spawned += s.spawned;
     }
-    println!(
-        "{starts} crossings, {waited} after a wait, {arrived} of {spawned} arrived, {missed} \
-         cars missed"
-    );
-    // Perception (Phase 6): a glance can miss a car, so a rare step in front of one is
-    // allowed; most crossings must still be safe.
-    assert!(
-        missed * 10 <= starts,
-        "{missed} cars missed in {starts} crossings"
-    );
+    println!("{starts} crossings, {waited} after a wait, {arrived} of {spawned} arrived");
     assert!(waited >= 5, "traffic makes them wait");
     assert!(starts >= 40, "careful walkers do get across: {starts}");
 }
