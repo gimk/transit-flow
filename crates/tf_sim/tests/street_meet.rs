@@ -238,14 +238,6 @@ fn careful_drivers_and_walkers_never_touch() {
             let level = signal_level(signals);
             let (mut cars, mut cars_gave_up, mut walkers, mut walkers_gave_up) = (0, 0, 0, 0);
             for seed in 1..=50 {
-                // The two known open cases, each in its own ignored test below.
-                if !signals
-                    && ((scale == 1.0 && seed == SEED_47)
-                        || (scale == 4.0
-                            && (LEFT_TURN_SEEDS.contains(&seed) || seed == SEED_17_X4)))
-                {
-                    continue;
-                }
                 let mut run = run(&level, seed, Population::Careful, scale);
                 run.run_to_end();
                 let s = run.summary();
@@ -560,7 +552,6 @@ fn a_careful_driver_creeps_past_a_kerb_that_stays_hidden() {
 /// 4).
 #[test]
 fn a_car_held_by_people_on_the_zebra_before_its_line_says_so() {
-    use tf_sim::street::run::drive::AT_LINE;
     let mut checked = 0;
     for signals in [false, true] {
         let level = signal_level(signals);
@@ -579,7 +570,7 @@ fn a_car_held_by_people_on_the_zebra_before_its_line_says_so() {
                     if car.mode == Mode::Bicycle
                         || approach.committed
                         || car.speed > 0.05
-                        || approach.line_d - car.d >= AT_LINE
+                        || approach.line_d - car.d >= 6.0
                     {
                         continue;
                     }
@@ -612,7 +603,7 @@ fn a_car_held_by_people_on_the_zebra_before_its_line_says_so() {
     assert!(checked > 0);
 }
 
-/// The open case of `careful_drivers_and_walkers_never_touch` (no signals, level demand).
+/// Seed 47 of `careful_drivers_and_walkers_never_touch` (no signals, level demand): fixed in Phase 6 W4a (a car stopped over its line is not committed).
 const SEED_47: u64 = 47;
 
 /// Seed 47, no signals, level demand: two cars touch at 27 km/h (no injury). Cause chain:
@@ -626,7 +617,6 @@ const SEED_47: u64 = 47;
 /// others count it as in the junction and the two blocked each other: the fix needs the
 /// junction box rule looked at (Phase 6 W4).
 #[test]
-#[ignore = "seed 47: car stopped on the line counts as committed; fix in Phase 6 W4"]
 fn careful_drivers_and_walkers_never_touch_seed_47() {
     let level = signal_level(false);
     let mut run = run(&level, SEED_47, Population::Careful, 1.0);
@@ -647,7 +637,6 @@ const SEED_17_X4: u64 = 17;
 /// gaps against each other; the rider gap factor is 0.7). The contact also happens with the
 /// rider perception switched off. Gap acceptance against riders is the work of Phase 6 W4.
 #[test]
-#[ignore = "seed 17 x4: car and rider both accept a short gap; fix in Phase 6 W4"]
 fn careful_drivers_and_walkers_never_touch_seed_17_x4() {
     let level = signal_level(false);
     let mut run = run(&level, SEED_17_X4, Population::Careful, 4.0);
@@ -671,7 +660,6 @@ const LEFT_TURN_SEEDS: [u64; 2] = [26, 32];
 /// rider and no rule broken). This is the classic left-turn conflict with a cyclist: its
 /// gap acceptance is the work of Phase 6 W4.
 #[test]
-#[ignore = "seeds 26 and 32 x4: left turn against a rider; fix in Phase 6 W4"]
 fn careful_drivers_and_walkers_never_touch_left_turn_seeds_x4() {
     let level = signal_level(false);
     for seed in LEFT_TURN_SEEDS {

@@ -120,10 +120,6 @@ fn careful_drivers_never_touch_and_everybody_arrives() {
 #[test]
 fn careful_drivers_never_touch_on_a_busy_street() {
     for (seed, s) in summaries(&level(), 1..=20, Population::Careful, 4.0) {
-        // Seed 17 is its own ignored test below.
-        if seed == BUSY_OPEN_SEED {
-            continue;
-        }
         assert_eq!(s.contacts, 0, "seed {seed}: {s:?}");
     }
 }
@@ -133,9 +129,8 @@ const BUSY_OPEN_SEED: u64 = 17;
 /// Seed 17 at four times the demand, with walkers: a car and a rider across its path touch
 /// at 26 km/h (serious injury). Cause chain: `GapTooShort` on both. The same class as
 /// seeds 26 and 32 of `street_meet` (see there); the contact also happens with the rider
-/// perception switched off. Fix in Phase 6 W4 (gap acceptance against riders).
+/// perception switched off. Fixed in Phase 6 W4a (committed rule, pull-out rule).
 #[test]
-#[ignore = "seed 17 x4: car and rider both accept a short gap; fix in Phase 6 W4"]
 fn careful_drivers_never_touch_on_a_busy_street_seed_17() {
     for (seed, s) in summaries(
         &level(),
@@ -280,12 +275,15 @@ fn the_same_inputs_give_the_same_log_hash() {
 // simulated (cyclists, their side position, passing, junction rules). Before: 5cfe9cc14a6fd06a,
 // f299f8c34180579a, 69a86433e41e329b, ba8bd3e81ff39825. After the merge with perception (W3: gaze,
 // field of view, blind spots, surprise, hearing; riders seen through it) and the cause
-// `EnteredWithoutGap`: see the values below.
+// `EnteredWithoutGap`: 0x4c23_82f7_e2df_b0ef, 0x9aeb_f813_b7c4_9860, 0x92fe_7d63_a49f_bc07,
+// 0xb272_d3db_cdaa_6107. Moved on purpose again in Phase 6 W4a (2026-11-18): committed rule,
+// at_line by stopping place, right turn gives way to a rider, ring leader by id, pull-out
+// rule, rider slip rule on zebras, close-pass conflicts.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x4c23_82f7_e2df_b0ef),
-    (2, Population::Mixed, 1.0, 0x9aeb_f813_b7c4_9860),
-    (1, Population::Careless, 4.0, 0x92fe_7d63_a49f_bc07),
-    (2, Population::Careless, 4.0, 0xb272_d3db_cdaa_6107),
+    (1, Population::Mixed, 1.0, 0xe067_d5d5_72b3_7e18),
+    (2, Population::Mixed, 1.0, 0x24de_fecd_d144_42ad),
+    (1, Population::Careless, 4.0, 0x84c1_225b_cbec_7160),
+    (2, Population::Careless, 4.0, 0xb0b8_6af5_1771_ac36),
 ];
 
 #[test]

@@ -240,6 +240,10 @@ fn cause_text(modes: &IndexMap<AgentId, Mode>, cause: &Cause) -> String {
         CauseKind::EnteredWithoutGap => {
             format!("{who} went into the junction although it had decided to stop")
         }
+        CauseKind::LedRingAgainst { other: to } => format!(
+            "{who} went first from a ring of waiting vehicles, in front of {}",
+            other(to)
+        ),
         CauseKind::KeptPaceOnRoad => {
             format!("{who} kept its pace on the road, expecting the car to stop")
         }
@@ -428,6 +432,7 @@ pub fn report_from_events(
                 let what = match kind {
                     ConflictKind::Pet => format!("passed {measure:.1} s after each other"),
                     ConflictKind::HardBrake => format!("hard braking at {measure:.1} m/s²"),
+                    ConflictKind::ClosePass => format!("passed with {measure:.1} m of room"),
                 };
                 let severity = match grade {
                     Grade::Light => "Near miss",

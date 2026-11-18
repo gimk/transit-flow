@@ -297,9 +297,11 @@ pub struct Approach {
     /// The approach segments this agent did not look at.
     pub unseen: Vec<i32>,
     pub stopped_at_sign: bool,
-    /// The last decision at the line.
-    pub go: bool,
-    /// The front has passed the stop line.
+    /// The last decision at the line (`None`: none taken yet).
+    pub go: Option<bool>,
+    /// In the junction for good: the front is past the stop line and the driver decided to
+    /// go, or moves, or is too far over to stop (`drive::commits`). A vehicle that stopped
+    /// just over its line is not committed and decides again.
     pub committed: bool,
 }
 
