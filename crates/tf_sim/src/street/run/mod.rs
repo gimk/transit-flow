@@ -680,13 +680,17 @@ impl StreetRun {
         };
         self.agents
             .values()
-            .map(|agent| {
-                let ticks = ((agent.traits.reaction_s / DT).round() as usize).max(1);
-                let back = ticks.min(self.history.len());
-                let snapshot = &self.history[self.history.len() - back];
-                drive::decide(agent, snapshot, &world, self.tick)
-            })
+            .map(|agent| drive::decide(agent, self.decided_from(agent), &world, self.tick))
             .collect()
+    }
+
+    /// The past tick `agent` decides from: its reaction time old (at least one tick, at
+    /// most as old as the history). The cause code reads the same tick, so that it asks
+    /// what the driver could have seen, not what was there.
+    pub(super) fn decided_from(&self, agent: &Agent) -> &Snapshot {
+        let ticks = ((agent.traits.reaction_s / DT).round() as usize).max(1);
+        let back = ticks.min(self.history.len());
+        &self.history[self.history.len() - back]
     }
 
     /// Stage 5: apply the decisions and move.

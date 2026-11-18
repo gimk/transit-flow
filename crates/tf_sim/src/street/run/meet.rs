@@ -6,9 +6,10 @@
 //!   outcome is drawn from `PEDESTRIAN_SEVERITY` at the impact speed (the closing speed of
 //!   the two) with a stream seeded from the run seed, the two ids and the tick, as for
 //!   two vehicles. A vehicle standing (slower than `crowd::STANDING_VEHICLE`) is solid for
-//!   walkers instead: they are kept out of it, and brushing it is no contact. Both stop: the vehicle as after a vehicle contact, the walker where it
-//!   fell (`Walker::hit_until`), and both are taken away after `CRASH_BLOCK_S`. A death
-//!   ends the run.
+//!   walkers instead: they are kept out of it, and brushing it is no contact. Both stop:
+//!   the vehicle as after a vehicle contact, the walker where it fell
+//!   (`Walker::hit_until`), and both are taken away after `CRASH_BLOCK_S`. A death ends
+//!   the run.
 //! - **Causes** come from both sides: what the driver did lately (distracted, ran the
 //!   red, did not yield at the zebra, did not look, too fast for a hidden kerb, too fast),
 //!   whether the walker was hidden from it in the snapshot it decided from (and by what),
@@ -21,6 +22,11 @@
 //!   or a vehicle after a walker, is a conflict (`PET_LIGHT_S`, `PET_SERIOUS_S`), and so
 //!   is the two in the band at once (time 0). Braking hard for a walker is logged like
 //!   braking for a vehicle.
+//!
+//! Riders are road users here like drivers: a rider's body is swept and meets a walker in
+//! the contact code (its impact is scaled by `CYCLIST_IMPACT_FACTOR`, the logged
+//! `impact_kmh` is the unscaled closing speed), and a moving rider makes the PET bands
+//! like a car (with a car's band width, see the open cases of Phase 6).
 
 use glam::Vec2;
 use indexmap::IndexMap;
@@ -43,7 +49,8 @@ use crate::street::ids::AgentId;
 use crate::street::level::Mode;
 
 /// A vehicle and a walker further apart than this (beyond half the vehicle's length)
-/// are not tested, metres.
+/// are not tested, metres (start value: a cheap cut-off, a little over what one tick of
+/// movement at 50 km/h covers; it only skips pairs that cannot touch).
 const MEET_REACH: f32 = 2.0;
 /// A walker who could not be seen this long before a meeting (1 s) was a surprise.
 const SURPRISE_BEFORE_TICKS: usize = 20;
@@ -117,10 +124,7 @@ impl StreetRun {
             );
         }
         // Hidden in what the driver saw?
-        let back = ((car.traits.reaction_s / DT).round() as usize)
-            .max(1)
-            .min(self.history.len());
-        let snapshot = &self.history[self.history.len() - back];
+        let snapshot = self.decided_from(car);
         let seen_car = snapshot.seen.iter().find(|s| s.id == car.id);
         let seen_walker = snapshot.walkers.iter().find(|w| w.id == walker.id);
         if let (Some(c), Some(w)) = (seen_car, seen_walker) {
@@ -177,10 +181,7 @@ impl StreetRun {
     /// What perception adds to the cause chain of a meeting (`perceive`): the driver's gaze,
     /// blind spot and surprise, and what the walker saw and heard of the car.
     fn perception_causes(&self, car: &Agent, walker: &Walker, causes: &mut Vec<Cause>) {
-        let back = ((car.traits.reaction_s / DT).round() as usize)
-            .max(1)
-            .min(self.history.len());
-        let snapshot = &self.history[self.history.len() - back];
+        let snapshot = self.decided_from(car);
         let (Some(c), Some(w)) = (
             snapshot.seen.iter().find(|s| s.id == car.id),
             snapshot.walkers.iter().find(|w| w.id == walker.id),
@@ -194,15 +195,7 @@ impl StreetRun {
             .hider(eye, w.pos, &snapshot.seen, Some(car.id))
             .is_some();
         if !hidden_from_car {
-            let looker = perceive::Looker {
-                mode: car.mode,
-                eye,
-                dir: c.dir,
-                table: perceive::driver_table(car.gaze_task),
-                seed: car.gaze_seed,
-                fov: perceive::useful_fov(car.traits.attention, car.traits.risk),
-                alternate: false,
-            };
+            let looker = perceive::Looker::for_agent(car, eye, c.dir);
             // A glance at a kerb or an exit is a glance at the place the walker is.
             let place = |_: perceive::Focus, _: u64| to;
             if perceive::in_blind_spot(car.mode, c.dir, to) {
@@ -429,23 +422,25 @@ impl StreetRun {
                 }
             }
         }
-        let mut found: Vec<(AgentId, AgentId, f64, Vec2)> = Vec::new();
-        let keys: Vec<BandKey> = self.bands.keys().chain(now.keys()).copied().collect();
+        let mut found: Vec<(AgentId, AgentId, f64)> = Vec::new();
+        // The bands of the last tick first, then the new ones: each key once.
+        let mut keys: Vec<BandKey> = self.bands.keys().copied().collect();
+        keys.extend(now.keys().filter(|k| !self.bands.contains_key(*k)).copied());
         for key in keys {
             let (vehicles, walkers) = now.get(&key).cloned().unwrap_or_default();
             let band = self.bands.entry(key).or_default();
             for v in vehicles.iter().filter(|v| !band.vehicles.contains(v)) {
                 if let Some(&w) = walkers.first() {
-                    found.push((w, *v, 0.0, Vec2::ZERO));
+                    found.push((w, *v, 0.0));
                 } else if let Some((w, left)) = band.walker_left {
-                    found.push((w, *v, (tick - left) as f64 * DT, Vec2::ZERO));
+                    found.push((w, *v, (tick - left) as f64 * DT));
                 }
             }
             for w in walkers.iter().filter(|w| !band.walkers.contains(w)) {
                 if let Some(&v) = vehicles.first() {
-                    found.push((v, *w, 0.0, Vec2::ZERO));
+                    found.push((v, *w, 0.0));
                 } else if let Some((v, left)) = band.vehicle_left {
-                    found.push((v, *w, (tick - left) as f64 * DT, Vec2::ZERO));
+                    found.push((v, *w, (tick - left) as f64 * DT));
                 }
             }
             for v in band.vehicles.iter().filter(|v| !vehicles.contains(v)) {
@@ -466,7 +461,7 @@ impl StreetRun {
                     .chain(band.walker_left)
                     .any(|(_, left)| ((tick - left) as f64 * DT) < PET_LIGHT_S)
         });
-        for (first, second, pet, _) in found {
+        for (first, second, pet) in found {
             if pet >= PET_LIGHT_S {
                 continue;
             }

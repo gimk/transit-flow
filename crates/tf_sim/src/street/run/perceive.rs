@@ -26,6 +26,7 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use super::agent::Agent;
 use super::mix;
 use crate::street::level::Mode;
 
@@ -374,6 +375,23 @@ pub struct Noticed {
     pub delay_s: f64,
     pub focus: Focus,
     pub zone: Zone,
+}
+
+impl Looker<'static> {
+    /// A driver or rider looking from `eye` along `dir`: its gaze table, glance seed and
+    /// useful field of view. One place, so that the choice of a vehicle noticing a thing
+    /// and the cause text written after a contact are made from the same eyes.
+    pub fn for_agent(agent: &Agent, eye: Vec2, dir: Vec2) -> Self {
+        Looker {
+            mode: agent.mode,
+            eye,
+            dir,
+            table: driver_table(agent.gaze_task),
+            seed: agent.gaze_seed,
+            fov: useful_fov(agent.traits.attention, agent.traits.risk),
+            alternate: false,
+        }
+    }
 }
 
 impl Looker<'_> {

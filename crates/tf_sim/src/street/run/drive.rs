@@ -28,7 +28,10 @@ use crate::street::speed::{CELL, STREET_TOLERANCE, StreetSpeeds};
 pub const DT: f64 = 0.05;
 /// Metres per second squared.
 pub const ACCELERATION: f64 = 2.0;
-/// The braking a driver plans with.
+/// The braking a driver plans with (start value: the usual comfortable deceleration of
+/// 2-3 m/s² in traffic engineering). Riders use it too, although it equals
+/// `BIKE_HARD_BRAKE`; a rider with a little more than comfortable braking is logged as a
+/// light conflict (open case, a change of behaviour).
 pub const COMFORT_BRAKE: f64 = 3.0;
 /// What the road surface allows, as a factor on a vehicle's own maximum braking: 1 is dry
 /// asphalt. One constant so that weather can lower it later (not modelled yet).
@@ -60,6 +63,8 @@ pub const TURN_ACCELERATION: f64 = 2.0;
 pub const MAX_LOOKAHEAD: f64 = 60.0;
 /// The route ahead is sampled every this many metres to find bodies in the way.
 pub const SAMPLE_STEP: f64 = 0.75;
+/// A driver scans the kerbs of a zebra this far before it, metres (start value).
+const ZEBRA_LOOK_M: f64 = 40.0;
 /// Room kept on each side of the body when passing something.
 pub const SIDE_MARGIN: f64 = 0.3;
 /// A waiting driver stops this far before the line.
@@ -100,9 +105,11 @@ pub const BIKE_HARD_BRAKE: f64 = 3.0;
 pub const BIKE_SERIOUS_BRAKE: f64 = 4.0;
 /// A cyclist keeps less room to the one ahead than a car (start value).
 pub const BIKE_MIN_GAP: f64 = 1.0;
-/// A cyclist may ride this much over a low limit (a 20 km/h zone), as a factor.
-pub const BIKE_LIMIT_TOLERANCE: f64 = 1.15;
-/// Riders keep this share of a driver's time gap to the one ahead.
+/// A cyclist may ride this much over a low limit (a 20 km/h zone), as a factor. It is the
+/// same number as `SPEEDING_FACTOR` on purpose: a rider at its allowed top speed is not
+/// told as speeding.
+pub const BIKE_LIMIT_TOLERANCE: f64 = super::conflicts::SPEEDING_FACTOR;
+/// Riders keep this share of a driver's time gap to the one ahead (start value, our own).
 pub const BIKE_HEADWAY_FACTOR: f64 = 0.8;
 /// A rider asks for this share of the time margin a driver asks for when it crosses a
 /// stream at a junction: it is narrow and can slip behind a car (start value, our own).
@@ -111,7 +118,9 @@ pub const BIKE_GAP_FACTOR: f64 = 0.7;
 /// What is fixed about a movement for a run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MoveInfo {
+    /// The junction node the movement is in.
     pub node: i32,
+    /// The road segment the movement comes from (its arm).
     pub from_segment: i32,
     /// Unit heading at the stop line.
     pub heading: Vec2,
@@ -170,6 +179,9 @@ pub struct Snapshot {
     pub noise: f64,
 }
 
+/// What a decision reads besides the snapshot and the agent: the street, the routes and
+/// movements, the signal plans and the clock. Shared and read only, so that every agent of
+/// a tick decides from the same facts.
 pub struct World<'a> {
     pub street: &'a Street,
     pub routes: &'a [RoutePath],
@@ -185,13 +197,17 @@ pub struct World<'a> {
 /// Why a driver does not enter the junction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Block {
+    /// The signal is red for this movement.
     Red,
+    /// The signal is amber and the vehicle can still stop.
     Amber,
+    /// A stop sign: the vehicle has not yet stopped and looked.
     StopSign,
     /// Gives way to this agent, who comes from this approach.
     Yield(AgentId, i32),
     /// This agent is in the junction, on a path that crosses.
     InJunction(AgentId, i32),
+    /// The lane past the junction has no room for the vehicle (do not block the box).
     ExitFull,
 }
 
@@ -201,9 +217,11 @@ pub type CrossingPending = (Vec<AgentId>, Option<(f64, f64)>);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decision {
+    /// The acceleration wanted this tick, m/s² (negative is braking).
     pub accel: f64,
     /// The decision at the line, when one was taken this tick.
     pub go: Option<bool>,
+    /// The vehicle stands at its stop sign: it has done the full stop.
     pub stopped_at_sign: bool,
     /// The front has passed the line.
     pub committed: bool,
@@ -340,6 +358,8 @@ pub fn travel_time_with(distance: f64, speed: f64, top_speed: f64, a: f64) -> f6
     }
 }
 
+/// The time a driver keeps between itself and a vehicle with priority where their paths
+/// cross, for this turn, seconds (a left turn crosses the most lanes, so it needs the most).
 pub fn critical_gap(turn: Turn) -> f64 {
     match turn {
         Turn::Left | Turn::UTurn => GAP_LEFT_S,
@@ -486,17 +506,19 @@ pub fn junction_blocks(
             let stops = if agent.bike.is_some() {
                 // A rider decides at the line, from the street it would cross: the habit
                 // (`red_u`) against a chance that is high with nobody coming.
-                let empty = super::bike::cross_traffic_empty(
-                    agent,
-                    info.node,
-                    info.from_segment,
-                    snapshot,
-                    world,
-                );
+                // The street is scanned only when the habit decides (not for a careful
+                // rider, who stops anyway).
                 careful
-                    || !agent
-                        .bike
-                        .is_some_and(|h| h.red_u < super::bike::red_chance(agent, empty))
+                    || !agent.bike.is_some_and(|h| {
+                        let empty = super::bike::cross_traffic_empty(
+                            agent,
+                            info.node,
+                            info.from_segment,
+                            snapshot,
+                            world,
+                        );
+                        h.red_u < super::bike::red_chance(agent, empty)
+                    })
             } else {
                 careful || approach.obeys_signal || age > LATE_RED_S
             };
@@ -651,15 +673,7 @@ pub fn junction_blocks(
 /// vehicle (the cabin of a car shuts the sound of a bicycle out, so a driver only sees).
 pub fn notices_other(agent: &Agent, other: &Seen, snapshot: &Snapshot, world: &World) -> bool {
     let eye = yielding::eye(agent);
-    let looker = perceive::Looker {
-        mode: agent.mode,
-        eye,
-        dir: agent.dir,
-        table: perceive::driver_table(agent.gaze_task),
-        seed: agent.gaze_seed,
-        fov: perceive::useful_fov(agent.traits.attention, agent.traits.risk),
-        alternate: false,
-    };
+    let looker = perceive::Looker::for_agent(agent, eye, agent.dir);
     let sees = |pos: Vec2, tick: u64| {
         looker
             .notices(other.id.0 as u64, pos, tick, |_, _| Vec2::ZERO)
@@ -1266,8 +1280,6 @@ fn approach_line(agent: &Agent) -> f64 {
         .map_or(f64::INFINITY, |a| a.line_d + 1.0)
 }
 
-/// A driver scans the kerbs of a zebra this far before it, metres (start value).
-const ZEBRA_LOOK_M: f64 = 40.0;
 /// Does `other` stand at its line (for the priority rules and the ring check)? Without
 /// cyclists: within `AT_LINE` of it. With cyclists: within `RING_REACH`, and only the head
 /// of a queue (a follower cannot go before the one ahead, so it holds nobody and does not
