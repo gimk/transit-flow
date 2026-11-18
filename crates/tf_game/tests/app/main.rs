@@ -7,6 +7,7 @@
 
 mod common;
 
+mod bicycle_tools;
 mod camera_input;
 mod play;
 mod street_runner;

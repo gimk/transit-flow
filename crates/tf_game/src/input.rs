@@ -25,11 +25,15 @@ pub enum Action {
     SimSpeed3,
     /// Esc: drop the active tool.
     ToolCancel,
-    /// The play tools: C zebra, V speed limit, B bollards, L signals.
+    /// The play tools: C zebra, V speed limit, B bollards, L signals, X separator,
+    /// N bicycle box, G leading bicycle green.
     ToolZebra,
     ToolSpeedLimit,
     ToolBollards,
     ToolSignals,
+    ToolSeparator,
+    ToolBicycleBox,
+    ToolBicycleLead,
     ToggleFullscreen,
     /// Enter starts the run, ends it early, and leaves the report.
     PlayConfirm,
@@ -41,7 +45,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 20] = [
         Action::CameraPanLeft,
         Action::CameraPanRight,
         Action::CameraPanUp,
@@ -55,6 +59,9 @@ impl Action {
         Action::ToolSpeedLimit,
         Action::ToolBollards,
         Action::ToolSignals,
+        Action::ToolSeparator,
+        Action::ToolBicycleBox,
+        Action::ToolBicycleLead,
         Action::ToggleFullscreen,
         Action::PlayConfirm,
         Action::PlayUndo,
@@ -72,7 +79,7 @@ impl Default for KeyBindings {
     fn default() -> Self {
         use Action::*;
         use KeyCode::*;
-        let table: [(Action, &[KeyCode]); 17] = [
+        let table: [(Action, &[KeyCode]); 20] = [
             (CameraPanLeft, &[KeyA, ArrowLeft]),
             (CameraPanRight, &[KeyD, ArrowRight]),
             (CameraPanUp, &[KeyW, ArrowUp]),
@@ -86,6 +93,9 @@ impl Default for KeyBindings {
             (ToolSpeedLimit, &[KeyV]),
             (ToolBollards, &[KeyB]),
             (ToolSignals, &[KeyL]),
+            (ToolSeparator, &[KeyX]),
+            (ToolBicycleBox, &[KeyN]),
+            (ToolBicycleLead, &[KeyG]),
             (ToggleFullscreen, &[F11]),
             (PlayConfirm, &[Enter, NumpadEnter]),
             (PlayUndo, &[Backspace]),

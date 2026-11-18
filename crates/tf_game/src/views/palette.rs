@@ -31,6 +31,9 @@ pub const PAINT: Color = rgb(0xFF, 0xFF, 0xFF);
 pub const BUS_LANE: Color = rgb(0xD8, 0xA9, 0xA3);
 pub const BIKE_LANE: Color = rgb(0xBF, 0xE6, 0xCF);
 pub const BIKE_TRACK: Color = rgb(0xA6, 0xDC, 0xBC);
+/// The bicycle box (*sas vélo*): a stronger green than the bicycle lane, so it reads as one
+/// flat area across the motor lanes.
+pub const BIKE_BOX: Color = rgb(0x5C, 0xC2, 0x86);
 pub const DELIVERY_BAY: Color = rgb(0xE3, 0xD3, 0xA4);
 pub const MEDIAN: Color = rgb(0xD5, 0xD9, 0xDE);
 pub const PLANTING: Color = rgb(0xC8, 0xEB, 0xD5);
