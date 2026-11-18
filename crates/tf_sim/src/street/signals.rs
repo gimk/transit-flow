@@ -19,6 +19,12 @@ pub const PEDESTRIAN_CLEARANCE_S: f64 = 5.0;
 /// The shortest and longest green the player may set (seconds).
 pub const MIN_GREEN_S: f32 = 10.0;
 pub const MAX_GREEN_S: f32 = 60.0;
+/// The longest leading bicycle green the player may set (seconds; start value). It must
+/// also be shorter than every green of the plan.
+pub const MAX_BICYCLE_LEAD_S: f32 = 6.0;
+/// The leading green a UI offers first (start value: a few seconds, enough for a cyclist to
+/// clear the box before the cars move off).
+pub const DEFAULT_BICYCLE_LEAD_S: f32 = 4.0;
 
 /// Groups approaches into phases: each approach with the later ones that head against
 /// it (`heading` dot < -0.7). Shared by the default plan and the templates, so both
@@ -63,6 +69,11 @@ pub struct SignalPlan {
     pub amber_s: f32,
     #[serde(default = "default_all_red")]
     pub all_red_s: f32,
+    /// Leading bicycle green (seconds; 0 = none): at the start of each phase the bicycles
+    /// of its approaches have green this long before the cars of the same approaches. Part
+    /// of the same signal group as the cars, so the plan lists no extra approaches.
+    #[serde(default)]
+    pub bicycle_lead_s: f32,
 }
 
 /// What an approach shows, with the seconds it has shown it.
@@ -84,7 +95,22 @@ impl SignalPlan {
 
     /// The light of `approach` (a segment id) at `time_s` since the start of the run.
     /// An approach in no phase is always red.
+    ///
+    /// This is the light for cars (and walkers' conflict checks): with a leading bicycle
+    /// green it starts `bicycle_lead_s` after the phase starts. With no lead it is the
+    /// same as `bicycle_light`.
     pub fn light(&self, approach: i32, time_s: f64) -> Light {
+        self.light_after(approach, time_s, f64::from(self.bicycle_lead_s))
+    }
+
+    /// The light of the bicycle lane of `approach`: the approach's own light, but green
+    /// from the start of the phase, before the cars when there is a leading green.
+    pub fn bicycle_light(&self, approach: i32, time_s: f64) -> Light {
+        self.light_after(approach, time_s, 0.0)
+    }
+
+    /// `light` with the green of each phase starting `lead_s` after the phase starts.
+    fn light_after(&self, approach: i32, time_s: f64, lead_s: f64) -> Light {
         let cycle = self.cycle_s();
         if cycle <= 0.0 {
             return Light::Red(time_s);
@@ -97,8 +123,8 @@ impl SignalPlan {
             let green_end = start + f64::from(phase.green_s);
             let amber_end = green_end + f64::from(self.amber_s);
             if phase.green.contains(&approach) {
-                if t >= start && t < green_end {
-                    return Light::Green(t - start);
+                if t >= start + lead_s && t < green_end {
+                    return Light::Green(t - start - lead_s);
                 }
                 if t >= green_end && t < amber_end {
                     return Light::Amber(t - green_end);
@@ -178,6 +204,7 @@ mod tests {
             ],
             amber_s: 3.0,
             all_red_s: 2.0,
+            bicycle_lead_s: 0.0,
         }
     }
 
@@ -214,6 +241,7 @@ mod tests {
             ],
             amber_s: 3.0,
             all_red_s: 2.0,
+            bicycle_lead_s: 0.0,
         };
         assert!(short.walk(&[1], 25.5));
         assert_eq!(short.until_conflict(&[1], 25.0), 9.0);
@@ -241,6 +269,37 @@ mod tests {
         );
         assert_eq!(plan.light(3, 26.0), Light::Green(1.0));
         assert_eq!(plan.light(1, 45.0), Light::Green(5.0), "the cycle repeats");
+    }
+
+    #[test]
+    fn a_leading_bicycle_green_starts_before_the_cars_and_changes_nothing_else() {
+        let plain = plan();
+        for tenth in 0..800 {
+            let t = f64::from(tenth) / 10.0;
+            for approach in [1, 2, 3, 9] {
+                assert_eq!(plain.light(approach, t), plain.bicycle_light(approach, t));
+            }
+        }
+        let lead = SignalPlan {
+            bicycle_lead_s: 4.0,
+            ..plan()
+        };
+        // Approach 1: bicycles green from 0 s, cars from 4 s; both end together.
+        assert_eq!(lead.bicycle_light(1, 1.0), Light::Green(1.0));
+        assert!(matches!(lead.light(1, 1.0), Light::Red(_)));
+        assert_eq!(lead.light(1, 5.0), Light::Green(1.0));
+        assert_eq!(
+            lead.light(1, 21.0),
+            plain.light(1, 21.0),
+            "the amber is kept"
+        );
+        assert_eq!(lead.bicycle_light(1, 21.0), plain.light(1, 21.0));
+        // The cycle length and the other approaches do not change.
+        assert_eq!(lead.cycle_s(), plain.cycle_s());
+        // Approach 3 (phase from 25 s): bicycles green at 26 s, cars from 29 s.
+        assert_eq!(lead.bicycle_light(3, 26.0), Light::Green(1.0));
+        assert!(matches!(lead.light(3, 26.0), Light::Red(_)));
+        assert_eq!(lead.light(3, 30.0), Light::Green(1.0));
     }
 
     #[test]
