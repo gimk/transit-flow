@@ -1,6 +1,6 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). **Next: the last Phase 4 measure fixes (local street speed, yielding to intent), then Phase 6, cyclists.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). Phase 4 measure fixes merged. **Phase 6 (cyclists) in progress on `pivot-phase-6`: W1, W2, W3, W4a, W6a merged; W4b, W6b stopped as WIP branches; then W5. See the progress note of 2026-11-18.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
@@ -8,17 +8,34 @@
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
 
-### 2026-11-17 (evening): Phase 6 started, stopped for a break
+### 2026-11-18 (evening): Phase 6 half done, stopped for a break
 
-**State.** `main` holds Phases 4 and 5 (`04fcf65`; `scripts/check.sh` passed). Branch `pivot-phase-6` = `main` + this note. Three Phase 6 work packages were started in parallel in git worktrees and stopped mid-task; their work is saved as one **WIP commit per branch** (not built or tested as a whole; do not merge as is):
-- `p6-bike` (W1, cyclist core: agents, side position, following, passing, filtering, archetypes): new `street/run/bike.rs`, `tests/street_bike.rs`, edits in `run/{agent,conflicts,drive,events,meet,mod,route,spawn}.rs`, `score.rs`.
-- `p6-infra` (W2, bicycle design: strips, separators, contraflow, bicycle box, bicycle signals): edits in `design.rs`, `model.rs`, `signals.rs`, `space.rs`, `run/mod.rs`, new `tests/street_bicycle.rs`; its report is `WIP-REPORT.md` in the branch (remove it before a merge).
-- `p6-sense` (W3, perception: field of view, gaze, blind spots, surprise, hearing): new `run/perceive.rs`, `tests/street_perceive.rs`, edits in `run/{agent,drive,events,kerb,meet,mod,spawn,walker,yielding}.rs`, `score.rs`.
-The briefs are in sections 5.7 and 8 (Phase 6 work packages). W1 and W3 both edit `agent.rs`, `drive.rs`, `events.rs`, `meet.rs`, `spawn.rs`, `score.rs`: expect merge conflicts; merge W2 first, then W1, then W3 (W3 must give its perception API an agent kind, so cyclists use it).
+**State.** Branch `pivot-phase-6` (pushed) holds Phase 6 work packages W2 (bicycle design), W1 (cyclist core), W3 (perception), W6a (views and tools for the bicycle design), W4a (junction conflicts) and a hash-neutral cleanup after a review. `scripts/check.sh` passed on it (merge `f846516`, before the `opt-level` change below). The reports of each package, the review and the briefs are in [phase6/](phase6/) (read them before you resume; they hold the API, the constants, the measures and the text for this plan).
 
-**To resume:** for each branch, `git worktree add ../tf-p6-<name> p6-<name>`, build with a warm `CARGO_TARGET_DIR` (`tf-target-1/2/3`), finish the brief (tests, replay hashes, measure), drop the WIP commit message with a real one. Then packages 4 (classic conflicts), 5 (swerving), 6 (views).
+Two packages were started and stopped after a few minutes; each is one **WIP commit** on its branch (pushed; not built or tested; do not merge as is). Their briefs and state notes are in `phase6/`:
+- `p6-conflicts` (W4b, `phase6/tf-p6-conflicts-brief.md`): the run reads the separator (paint against kerb), impatient drivers squeeze past riders, vans and cars in a painted lane, door of a parked car, early right turn across a painted lane, pedestrian against cyclist, and the "done when" test track < painted lane < no facility (W4a measured that today the three are equal: nothing reads `Separator::crossability`).
+- `p6-views2` (W6b, `phase6/tf-p6-views2-brief.md`): draw riders at their side position, bicycle light in a run, riders in the report.
 
-**Small open points from the Phase 4 measures** (fix after W1 and W3 are merged, same files): one serious car-walker PET event still has no cause text (slow design, x4, seed 10, tick 3103); check that a PET of 0.0 s (two cars in the same cell at once) is right to grade as serious. For Phase 8: cars that never enter cost less than their delay, so a design can score higher at x4 than at stage 3 (with the jam rule decision); 20 km/h gives as many conflicts as 30 km/h on level 1 and no injuries in either, so its benefit (severity) must be checked against real accident data.
+**Decisions of the user today** (all in the code or the briefs):
+- Perception: a fully attentive agent always notices a visible thing within 40 m; realistic misses only in blind spots, hidden or behind. The old exact safety tests stay exact.
+- Level 1 bicycle flows lowered to about two thirds, after the rider gap rules were fixed; `BIKE_MIN_GAP` 1.0 m, `BIKE_HEADWAY_FACTOR` 0.8.
+- A left turn never leads a priority ring against oncoming straight traffic (R415-4). One ring leader: lowest id, cause `LedRingAgainst`.
+- Riders act more like pedestrians with rules: by traits they slip through gaps between walkers on zebras; fully careful riders hold like cars.
+- Close passes are conflicts (light: side room < 1.0 m at > 5 m/s; serious: < 0.5 m at > 10 m/s; R414-4).
+- Rare cases are never hidden: they get an ignored test with the cause chain until a package fixes them (all four from today are fixed by W4a).
+- The jam score point stays for Phase 8 (the test runs bike-free for now).
+- `[profile.dev.package.tf_sim] opt-level = 3` (check.sh took about 25 minutes in debug). Not yet checked: run `scripts/check.sh` once and confirm the replay hashes do not move.
+
+**Measured (W4a, 24 seeds, right-turn street):** serious conflicts / contacts 52/25 with a painted lane and priority to the right, 25/13 with signals, 17/8 with a bicycle box, 12/4 with box and leading green. This is the second "done when" point of Phase 6.
+
+**To resume:**
+1. `git fetch`, check out `pivot-phase-6`, run `scripts/check.sh` (confirms the opt-level change).
+2. For each WIP branch: `git worktree add ../tf-<branch> <branch>`, read its brief and state note in `phase6/`, finish it, replace the WIP commit by a real one. W4b and W6b can run in parallel (W4b only `tf_sim`, W6b only `tf_game`). Use a warm `CARGO_TARGET_DIR` per worktree, and at most 6 build threads in total.
+3. Merge W4b and W6b into `pivot-phase-6`, `check.sh`.
+4. Then: W5 (swerving, section 8), then the rider behaviour package from the review (F3 leader lag in the snapshot frame, F5 PET band with side position, F6 rider brake constants, F7 body beside the agent; all change hashes), then the drive.rs splits (review F12, F10 duplicates, F8 per-tick scan cache).
+5. Close Phase 6: "done when" points, text for the plan from the reports, status line, merge to `main`.
+
+**Open points:** see the reports in `phase6/`. Main ones: a walker/car wait at a zebra seen once (W4a); busy x4 runs jam as on the base; seeds 16 and 21 give-ups behind zebras (W1); a rider waiting for walkers is not flagged `held_by_walkers` (W1, in the W4b brief); the 30 km/h contraflow limit is not checked against decree 2008-754; a bicycle box can overlap a zebra (W2). The small Phase 4 points of the previous note (PET of 0.0 s graded serious; one serious car-walker PET with no cause text; Phase 8 jam and 20 km/h points) are still open.
 
 ### 2026-11-17: Phase 5 done
 

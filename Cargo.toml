@@ -47,6 +47,12 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# The sim tests run many seeds of full street runs; at opt-level 1 `check.sh` took
+# about 25 minutes (Phase 6). Full optimisation for the sim crate only keeps the
+# tf_game debug build fast to compile. Hash-safe: street code uses no sin/cos/exp/powf.
+[profile.dev.package.tf_sim]
+opt-level = 3
+
 [profile.release-lto]
 inherits = "release"
 lto = "thin"
