@@ -330,6 +330,7 @@ fn signal_plans(
                 phases,
                 amber_s: DEFAULT_AMBER_S,
                 all_red_s: DEFAULT_ALL_RED_S,
+                bicycle_lead_s: 0.0,
             },
         );
     }
