@@ -12,7 +12,7 @@ use super::agent::{Agent, Approach};
 use super::events::CauseKind;
 use super::grid::Grid;
 use super::mix;
-use super::perceive::DriverTask;
+use super::perceive::{self, DriverTask};
 use super::route::RoutePath;
 use super::walker::WalkerSeen;
 use super::yielding::{self, PedWorld};
@@ -77,10 +77,36 @@ pub const LATE_RED_S: f64 = 2.5;
 pub const STOPPED_SPEED: f64 = 0.3;
 /// A stopped vehicle this close to its line is waiting at it.
 pub const AT_LINE: f64 = 4.0;
+/// While cyclists are about, a vehicle that stops before a zebra at the line (up to this far
+/// from the line) still stands "at its line" for the priority rules and the ring check:
+/// with `AT_LINE` the heads of the arms that have a zebra were left out and a ring of
+/// four arms could not be broken (start value, metres).
+pub const RING_REACH: f64 = 6.0;
+/// A vehicle that moves slower than this, close ahead, makes a queue of the one behind it
+/// (m/s), and "close" is this far, metres (start values).
+const QUEUE_CRAWL: f64 = 1.5;
+const QUEUE_REACH: f64 = 12.0;
+
 /// After people on foot held it at its line, a driver gives way to everyone for this
 /// long: the others ignored it meanwhile, and see it moving only after their reaction
 /// time (the slowest archetype reacts within 1.6 s), seconds.
 pub const HELD_DEFER_S: f64 = 2.0;
+/// A cyclist pulls away more slowly than a car (start value; 1-1.5 m/s² is usual for a
+/// rider on a city bike).
+pub const BIKE_ACCELERATION: f64 = 1.3;
+/// Hard braking for a cyclist is gentler than for a car: the most a bicycle does is about
+/// 4-5.5 m/s² (`draw_max_brake`), so the conflict thresholds are lower (start values).
+pub const BIKE_HARD_BRAKE: f64 = 3.0;
+pub const BIKE_SERIOUS_BRAKE: f64 = 4.0;
+/// A cyclist keeps less room to the one ahead than a car (start value).
+pub const BIKE_MIN_GAP: f64 = 1.0;
+/// A cyclist may ride this much over a low limit (a 20 km/h zone), as a factor.
+pub const BIKE_LIMIT_TOLERANCE: f64 = 1.15;
+/// Riders keep this share of a driver's time gap to the one ahead.
+pub const BIKE_HEADWAY_FACTOR: f64 = 0.8;
+/// A rider asks for this share of the time margin a driver asks for when it crosses a
+/// stream at a junction: it is narrow and can slip behind a car (start value, our own).
+pub const BIKE_GAP_FACTOR: f64 = 0.7;
 
 /// What is fixed about a movement for a run.
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +144,9 @@ pub struct Seen {
     pub in_junction: bool,
     pub wait_ticks: u32,
     pub crashed: bool,
+    /// Side position in its lane (`bike::lateral_plan`), and whether it is a bicycle.
+    pub lateral: f64,
+    pub bike: bool,
     /// A van or a bus: people behind it are hidden (`sight`).
     pub hides: bool,
     /// Held at its line by people on foot (the zebra past its exit is in use): it does
@@ -191,6 +220,37 @@ pub struct Decision {
     pub held_by_walkers: bool,
     /// What the driver was doing this tick, which set its gaze (`perceive::DriverTask`).
     pub task: DriverTask,
+    /// Where the side position is heading, and whether the agent is passing
+    /// (`bike::lateral_plan`).
+    pub lateral_target: f64,
+    pub passing: bool,
+}
+
+/// How hard this agent can pull away, m/s².
+pub fn accel_of(agent: &Agent) -> f64 {
+    if agent.bike.is_some() {
+        BIKE_ACCELERATION
+    } else {
+        ACCELERATION
+    }
+}
+
+/// Bumper to bumper at a standstill, for this agent (before the risk discount).
+pub fn min_gap_of(agent: &Agent) -> f64 {
+    if agent.bike.is_some() {
+        BIKE_MIN_GAP
+    } else {
+        MIN_GAP
+    }
+}
+
+/// The braking rates above which a manoeuvre is a light / a serious conflict.
+pub fn brake_thresholds(mode: Mode) -> (f64, f64) {
+    if mode == Mode::Bicycle {
+        (BIKE_HARD_BRAKE, BIKE_SERIOUS_BRAKE)
+    } else {
+        (HARD_BRAKE, SERIOUS_BRAKE)
+    }
 }
 
 /// The hardest braking of one vehicle on a dry road, m/s², drawn once at spawn. Start
@@ -201,6 +261,9 @@ pub fn draw_max_brake(mode: Mode, seed: u64, id: AgentId) -> f64 {
     let (low, high) = match mode {
         Mode::Car => (7.5, 9.5),
         Mode::Van => (6.5, 8.0),
+        // A bicycle on dry asphalt: about 4-5.5 m/s² before the rear wheel lifts (start
+        // values for Phase 8).
+        Mode::Bicycle => (4.0, 5.5),
         _ => (5.0, 6.5),
     };
     let mut rng = SimRng::new(mix(mix(seed, id.0 as u64), BRAKE_STREAM));
@@ -256,6 +319,11 @@ pub fn safe_speed(gap: f64, lead_speed: f64, tau: f64) -> f64 {
 /// Seconds to cover `distance` from `speed`, accelerating to `top_speed` (the old
 /// `time_to_cover`).
 pub fn travel_time(distance: f64, speed: f64, top_speed: f64) -> f64 {
+    travel_time_with(distance, speed, top_speed, ACCELERATION)
+}
+
+/// `travel_time` for a body that accelerates at `a`.
+pub fn travel_time_with(distance: f64, speed: f64, top_speed: f64, a: f64) -> f64 {
     if distance <= 0.0 {
         return 0.0;
     }
@@ -263,7 +331,6 @@ pub fn travel_time(distance: f64, speed: f64, top_speed: f64) -> f64 {
     if speed >= top {
         return distance / speed;
     }
-    let a = ACCELERATION;
     let ramp_time = (top - speed) / a;
     let ramp = speed * ramp_time + 0.5 * a * ramp_time * ramp_time;
     if ramp >= distance {
@@ -331,6 +398,19 @@ pub fn desired_speed_at(agent: &Agent, id: StreetLaneId, s: f64, world: &World) 
 
 fn desired_speed_with(agent: &Agent, id: StreetLaneId, street: Option<f64>, world: &World) -> f64 {
     let lane = &world.street.lanes[&id];
+    if agent.bike.is_some() {
+        // A cyclist rides at its own pace (`speed_factor` is m/s for it), a little over a
+        // low limit at most, slower round a bend and on a sidewalk.
+        let own = agent.traits.speed_factor;
+        let mut wanted = own.min(lane.speed_limit * BIKE_LIMIT_TOLERANCE);
+        if let Some(info) = world.moves.get(&id) {
+            return wanted.min(info.turn_speed);
+        }
+        if super::bike::on_sidewalk(agent, world) {
+            wanted = wanted.min(super::bike::SIDEWALK_SPEED);
+        }
+        return wanted;
+    }
     if let Some(info) = world.moves.get(&id) {
         let speed = lane.speed_limit * agent.traits.speed_factor;
         return speed.min(info.turn_speed * agent.traits.speed_factor);
@@ -344,6 +424,12 @@ fn desired_speed_with(agent: &Agent, id: StreetLaneId, street: Option<f64>, worl
 
 /// The time gap this agent keeps to what is ahead.
 pub fn headway(agent: &Agent) -> f64 {
+    if agent.bike.is_some() {
+        // Riders follow closer than drivers: they see past the one ahead and brake
+        // lightly (start value).
+        return BIKE_HEADWAY_FACTOR
+            * (agent.traits.reaction_s + HEADWAY_MARGIN_S * (1.0 - agent.traits.risk));
+    }
     agent.traits.reaction_s + HEADWAY_MARGIN_S * (1.0 - agent.traits.risk)
 }
 
@@ -397,7 +483,24 @@ pub fn junction_blocks(
     let to_line = (approach.line_d - agent.d).max(0.0);
     match light_of(world, info) {
         Some(Light::Red(age)) => {
-            if careful || approach.obeys_signal || age > LATE_RED_S {
+            let stops = if agent.bike.is_some() {
+                // A rider decides at the line, from the street it would cross: the habit
+                // (`red_u`) against a chance that is high with nobody coming.
+                let empty = super::bike::cross_traffic_empty(
+                    agent,
+                    info.node,
+                    info.from_segment,
+                    snapshot,
+                    world,
+                );
+                careful
+                    || !agent
+                        .bike
+                        .is_some_and(|h| h.red_u < super::bike::red_chance(agent, empty))
+            } else {
+                careful || approach.obeys_signal || age > LATE_RED_S
+            };
+            if stops {
                 stop!(Block::Red);
             }
         }
@@ -417,7 +520,12 @@ pub fn junction_blocks(
         stop!(Block::StopSign);
     }
     let top_speed = desired_speed(agent, approach.movement, world);
-    let mut margin = critical_gap(info.turn);
+    let mut margin = critical_gap(info.turn)
+        * if agent.bike.is_some() {
+            BIKE_GAP_FACTOR
+        } else {
+            1.0
+        };
     if !careful {
         margin *= 1.0 - agent.traits.risk * (0.6 + 0.4 * agent.frustration);
     }
@@ -436,6 +544,14 @@ pub fn junction_blocks(
         };
         let other_info = &world.moves[&other_movement];
         if !careful && approach.unseen.contains(&other_info.from_segment) {
+            continue;
+        }
+        // Drivers and riders take in each other through perception (gaze, field of view,
+        // blind spots: the right turn against a rider). Pairs of the same kind do as before.
+        if !careful
+            && agent.bike.is_some() != other.bike
+            && !notices_other(agent, other, snapshot, world)
+        {
             continue;
         }
         let their_zone = world.street.lanes[&other_movement].conflict_zones[&approach.movement];
@@ -473,7 +589,7 @@ pub fn junction_blocks(
             if !owes && other.speed < STOPPED_SPEED {
                 continue;
             }
-            if other.speed < STOPPED_SPEED && -other.s_on_movement < AT_LINE {
+            if other.speed < STOPPED_SPEED && stands_at_line(other, snapshot) {
                 // Held by people on foot, it is not about to go: it holds nobody.
                 if other.held_by_walkers {
                     continue;
@@ -486,17 +602,29 @@ pub fn junction_blocks(
                 }
                 continue;
             }
+            // A vehicle that stands further back (in a queue behind its own head) holds
+            // nobody: it cannot go before the vehicles ahead of it, which are the ones that
+            // claim the priority. Without this a queue follower from each of four arms makes
+            // a ring that no head can break (the cyclist from the fourth arm of the test
+            // level showed it).
+            if (agent.bike.is_some() || snapshot.seen.iter().any(|s| s.bike))
+                && (other.speed < STOPPED_SPEED || queued_behind(other, snapshot))
+            {
+                continue;
+            }
             let limit = world.street.lanes[&other_movement]
                 .speed_limit
                 .max(other.speed);
             arrives = travel_time(their_in, other.speed, limit);
             leaves = their_out / other.speed.max(1.0);
         }
-        let my_in = travel_time(to_line + f64::from(my_zone.x), agent.speed, top_speed);
-        let my_out = travel_time(
+        let a = accel_of(agent);
+        let my_in = travel_time_with(to_line + f64::from(my_zone.x), agent.speed, top_speed, a);
+        let my_out = travel_time_with(
             to_line + f64::from(my_zone.y) + agent.length,
             agent.speed,
             top_speed,
+            a,
         );
         if my_in < leaves + margin && arrives < my_out + margin {
             stop!(block);
@@ -517,6 +645,50 @@ pub fn junction_blocks(
     blocks
 }
 
+/// Does `agent` take in `other`, a vehicle of the other kind (a rider for a driver, a motor
+/// vehicle for a rider)? By sight (`perceive::Looker` of its kind: the gaze of its task, the
+/// zones of the visual field, its blind spots) or, for a rider, by hearing the motor
+/// vehicle (the cabin of a car shuts the sound of a bicycle out, so a driver only sees).
+pub fn notices_other(agent: &Agent, other: &Seen, snapshot: &Snapshot, world: &World) -> bool {
+    let eye = yielding::eye(agent);
+    let looker = perceive::Looker {
+        mode: agent.mode,
+        eye,
+        dir: agent.dir,
+        table: perceive::driver_table(agent.gaze_task),
+        seed: agent.gaze_seed,
+        fov: perceive::useful_fov(agent.traits.attention, agent.traits.risk),
+        alternate: false,
+    };
+    let sees = |pos: Vec2, tick: u64| {
+        looker
+            .notices(other.id.0 as u64, pos, tick, |_, _| Vec2::ZERO)
+            .is_some()
+    };
+    if agent.bike.is_some()
+        && perceive::hears(
+            other.level,
+            f64::from(eye.distance(other.pos)),
+            snapshot.noise,
+        )
+    {
+        return true;
+    }
+    if sees(other.pos, snapshot.tick) {
+        return true;
+    }
+    // What was in view a moment ago is still known when it has moved to the side or behind
+    // (a rider that comes alongside the car): the places it was at in the last glances.
+    world.peds.is_some_and(|peds| {
+        (1..perceive::MEMORY_GLANCES).any(|k| {
+            let ticks = k * perceive::GLANCE_TICKS;
+            yielding::snapshot_before(peds, snapshot, ticks)
+                .and_then(|old| old.seen.iter().find(|s| s.id == other.id))
+                .is_some_and(|old| sees(old.pos, snapshot.tick - ticks))
+        })
+    })
+}
+
 /// What holds back a car that already stands inside the junction (it went in when the
 /// way was clear, then was held up by what is ahead of it) before it pulls away: the cars
 /// in the junction on paths that cross its own. Two such cars may wait for each other, so
@@ -532,7 +704,12 @@ fn box_blocks(
     let movement = &world.street.lanes[&approach.movement];
     let front = agent.d - approach.line_d;
     let top_speed = desired_speed(agent, approach.movement, world);
-    let mut margin = critical_gap(info.turn);
+    let mut margin = critical_gap(info.turn)
+        * if agent.bike.is_some() {
+            BIKE_GAP_FACTOR
+        } else {
+            1.0
+        };
     if !careful {
         margin *= 1.0 - agent.traits.risk * (0.6 + 0.4 * agent.frustration);
     }
@@ -557,6 +734,14 @@ fn box_blocks(
         if !careful && approach.unseen.contains(&other_info.from_segment) {
             continue;
         }
+        // Drivers and riders take in each other through perception (gaze, field of view,
+        // blind spots: the right turn against a rider). Pairs of the same kind do as before.
+        if !careful
+            && agent.bike.is_some() != other.bike
+            && !notices_other(agent, other, snapshot, world)
+        {
+            continue;
+        }
         let their_zone = world.street.lanes[&other_movement].conflict_zones[&approach.movement];
         let their_out = f64::from(their_zone.y) + other.length - other.s_on_movement;
         if their_out <= 0.0 {
@@ -578,15 +763,17 @@ fn box_blocks(
                 their_out / other.speed,
             );
         }
-        let my_in = travel_time(
+        let my_in = travel_time_with(
             (f64::from(my_zone.x) - front).max(0.0),
             agent.speed,
             top_speed,
+            accel_of(agent),
         );
-        let my_out = travel_time(
+        let my_out = travel_time_with(
             (f64::from(my_zone.y) + agent.length - front).max(0.0),
             agent.speed,
             top_speed,
+            accel_of(agent),
         );
         if my_in < leaves + margin && arrives < my_out + margin {
             blocks.push(Block::InJunction(other.id, other_info.from_segment));
@@ -608,8 +795,11 @@ fn leads_ring(agent: &Agent, snapshot: &Snapshot, world: &World) -> bool {
             !s.crashed
                 && !s.in_junction
                 && s.speed < STOPPED_SPEED
-                && -s.s_on_movement < AT_LINE
-                && s.movement.is_some()
+                && stands_at_line(s, snapshot)
+                && s.movement.is_some_and(|m| {
+                    // Waiting for its red light, not for the others: not part of a ring.
+                    !matches!(light_of(world, &world.moves[&m]), Some(Light::Red(_)))
+                })
         })
         .collect();
     let n = standing.len();
@@ -693,8 +883,22 @@ fn nearest_obstacle(
             .position(|lane| *lane == other.lane)
             .map(|ahead| index + ahead);
         let (gap, speed) = if let Some(lane_index) = on_route {
-            let front = route.offsets[lane_index] + other.s;
+            // The view is one reaction time old: with a cyclist about, the other is taken to
+            // where it has got to since (a rider keeps less than a reaction time of headway, so
+            // a leader close ahead would otherwise look level with or behind the follower).
+            let lag = if agent.bike.is_some() || other.bike {
+                other.speed * agent.traits.reaction_s
+            } else {
+                0.0
+            };
+            let front = route.offsets[lane_index] + other.s + lag;
             if front <= agent.d {
+                continue;
+            }
+            // Beside it, not behind it: a body that has moved over far enough (a car
+            // passing a cyclist, a rider filtering past a queue) is not in the way.
+            let side = (agent.lateral - other.lateral).abs() - (agent.width + other.width) * 0.5;
+            if side > SIDE_MARGIN {
                 continue;
             }
             (front - other.length - agent.d, other.speed)
@@ -704,6 +908,16 @@ fn nearest_obstacle(
                 samples = (0..=count)
                     .map(|k| route.point(world.street, agent.d + k as f64 * SAMPLE_STEP))
                     .collect();
+                // The body is at its side position, not on the middle of the lane.
+                if agent.lateral != 0.0 {
+                    let line = samples.clone();
+                    for k in 0..samples.len() {
+                        let tangent = (line[(k + 1).min(line.len() - 1)]
+                            - line[k.saturating_sub(1)])
+                        .normalize_or_zero();
+                        samples[k] = line[k] + tangent.perp() * agent.lateral as f32;
+                    }
+                }
             }
             let reach = (other.width * 0.5 + agent.width * 0.5 + SIDE_MARGIN) as f32;
             let half = (other.length * 0.5 - other.width * 0.5).max(0.0) as f32;
@@ -745,6 +959,18 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     if agent.crashed() {
         return decision;
     }
+
+    // Where to ride: the side position (cars keep the middle of the lane, cyclists pick
+    // their place, and either may move over to pass a cyclist or a queue).
+    let plan = super::bike::lateral_plan(agent, snapshot, world);
+    decision.lateral_target = plan.target;
+    decision.passing = plan.passing;
+    if let Some(to) = plan.too_close {
+        decision.causes.push(CauseKind::PassedTooClose { to });
+    }
+    if agent.bike.is_some() && super::bike::on_sidewalk(agent, world) {
+        decision.causes.push(CauseKind::RodeOnSidewalk);
+    }
     let route = &world.routes[agent.route];
     let index = route.lane_index(agent.d);
     let v = agent.speed;
@@ -756,6 +982,9 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         && agent.d >= approach.line_d
     {
         decision.committed = true;
+        if !approach.go {
+            decision.causes.push(CauseKind::EnteredWithoutGap);
+        }
         for block in junction_blocks(agent, approach, snapshot, world, true, false) {
             decision.causes.extend(cause_of(block, approach));
         }
@@ -889,7 +1118,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         && stopping_at.is_none_or(|to_line| gap <= to_line)
     {
         leader = Some((gap, speed));
-        let min_gap = MIN_GAP * (1.0 - 0.5 * agent.traits.risk);
+        let min_gap = min_gap_of(agent) * (1.0 - 0.5 * agent.traits.risk);
         let safe = safe_speed(gap - min_gap, speed, tau);
         need = need.max(needed_brake(v, speed, gap));
         if safe < target {
@@ -954,13 +1183,13 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     // stepping out.)
     let limit = agent.max_brake * ROAD_GRIP;
     if target >= v {
-        decision.accel = ((target - v) / DT).min(ACCELERATION);
+        decision.accel = ((target - v) / DT).min(accel_of(agent));
     } else {
         need = need.max(view_need);
         let brake = need.max(COMFORT_BRAKE.min((v - target) / DT)).min(limit);
         decision.accel = -brake;
         if let Some(other) = blocker
-            && brake > HARD_BRAKE
+            && brake > brake_thresholds(agent.mode).0
             && v > 1.0
         {
             decision.hard_brake = Some((other, brake));
@@ -1020,7 +1249,7 @@ fn driver_task(
                     DriverTask::RightTurn
                 };
             }
-            _ => {}
+            _ => return DriverTask::Junction,
         }
     }
     if leader.is_some_and(|(gap, speed)| gap < QUEUE_GAP_M && speed < 3.0) && agent.speed < 3.0 {
@@ -1039,6 +1268,43 @@ fn approach_line(agent: &Agent) -> f64 {
 
 /// A driver scans the kerbs of a zebra this far before it, metres (start value).
 const ZEBRA_LOOK_M: f64 = 40.0;
+/// Does `other` stand at its line (for the priority rules and the ring check)? Without
+/// cyclists: within `AT_LINE` of it. With cyclists: within `RING_REACH`, and only the head
+/// of a queue (a follower cannot go before the one ahead, so it holds nobody and does not
+/// count in a ring; its long wait must not outrank the head's).
+fn stands_at_line(other: &Seen, snapshot: &Snapshot) -> bool {
+    if !snapshot.seen.iter().any(|s| s.bike) {
+        return -other.s_on_movement < AT_LINE;
+    }
+    -other.s_on_movement < RING_REACH
+        && !snapshot.seen.iter().any(|ahead| {
+            ahead.id != other.id
+                && ahead.lane == other.lane
+                && ahead.speed < STOPPED_SPEED
+                && ahead.s > other.s
+                && ahead.s - other.s < RING_REACH + 2.0
+                && in_front_of(ahead, other)
+        })
+}
+
+/// Is `other` in a queue behind a vehicle that stands or crawls (`QUEUE_CRAWL`) close
+/// ahead of it in its lane? It cannot reach the junction before that one.
+fn queued_behind(other: &Seen, snapshot: &Snapshot) -> bool {
+    snapshot.seen.iter().any(|ahead| {
+        ahead.id != other.id
+            && ahead.lane == other.lane
+            && ahead.speed < QUEUE_CRAWL
+            && ahead.s > other.s
+            && ahead.s - other.s < QUEUE_REACH
+            && in_front_of(ahead, other)
+    })
+}
+
+/// Is `ahead` in the way of `other` (their bodies overlap sideways, plus a little room)?
+/// One that stands level beside it, in the same lane, is not ahead of it.
+fn in_front_of(ahead: &Seen, other: &Seen) -> bool {
+    (ahead.lateral - other.lateral).abs() < (ahead.width + other.width) * 0.5 + 0.3
+}
 
 #[cfg(test)]
 mod tests {

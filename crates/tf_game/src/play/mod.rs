@@ -551,7 +551,7 @@ fn design_input(
     steps += i32::from(keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd));
     steps -=
         i32::from(keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract));
-    if state.tool == Some(PlayTool::Signals)
+    if matches!(state.tool, Some(PlayTool::Signals | PlayTool::BicycleLead))
         && usable
         && steps != 0
         && loaded
@@ -559,8 +559,13 @@ fn design_input(
             .as_ref()
             .is_some_and(|street| pick::signalled_junction_at(street, at).is_some())
     {
+        let lead = state.tool == Some(PlayTool::BicycleLead);
         edit_with(&mut state, &mut loaded, "", |street| {
-            pick::green_command(street, at, steps)
+            if lead {
+                pick::lead_step_command(street, at, steps)
+            } else {
+                pick::green_command(street, at, steps)
+            }
         });
     }
 
@@ -581,7 +586,7 @@ fn update_wheel_lock(
     mut lock: ResMut<WheelLock>,
 ) {
     let locked = *phase.get() == PlayPhase::Design
-        && state.tool == Some(PlayTool::Signals)
+        && matches!(state.tool, Some(PlayTool::Signals | PlayTool::BicycleLead))
         && pointer.in_window
         && !over_ui.0
         && loaded.street.as_ref().is_some_and(|street| {

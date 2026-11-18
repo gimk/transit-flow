@@ -6,16 +6,18 @@ use glam::Vec2;
 
 use super::agent::Agent;
 use super::detect::{Body, swept_overlap};
-use super::drive::{DT, SERIOUS_BRAKE};
+use super::drive::{DT, brake_thresholds};
 use super::events::{
-    Cause, CauseKind, ConflictKind, Grade, Outcome, StreetEvent, VEHICLE_SEVERITY, draw_outcome,
-    rounded, rounded_point,
+    Cause, CauseKind, ConflictKind, Grade, Outcome, PEDESTRIAN_SEVERITY, StreetEvent,
+    VEHICLE_SEVERITY, draw_outcome, rounded, rounded_point,
 };
+use super::perceive;
 use super::{
     CONFLICT_COOLDOWN_S, CRASH_BLOCK_S, EndReason, PET_LIGHT_S, PET_SERIOUS_S, StreetRun, mix,
 };
 use crate::rng::SimRng;
 use crate::street::ids::{AgentId, StreetLaneId};
+use crate::street::level::Mode;
 
 /// Speeding is told when an agent drives this much faster than the limit.
 pub(super) const SPEEDING_FACTOR: f64 = 1.15;
@@ -102,6 +104,48 @@ impl StreetRun {
             }
         }
         causes
+    }
+
+    /// What perception adds to the causes of a contact of `driver` with `rider`.
+    fn perception_cause_of_rider(&self, driver: &Agent, rider: &Agent, causes: &mut Vec<Cause>) {
+        let eye = super::yielding::eye(driver);
+        let to = rider.pos - eye;
+        if perceive::in_blind_spot(driver.mode, driver.dir, to) {
+            push_unique(
+                causes,
+                Cause {
+                    agent: driver.id,
+                    what: CauseKind::InBlindSpot { walker: rider.id },
+                },
+            );
+            return;
+        }
+        let looker = perceive::Looker {
+            mode: driver.mode,
+            eye,
+            dir: driver.dir,
+            table: perceive::driver_table(driver.gaze_task),
+            seed: driver.gaze_seed,
+            fov: perceive::useful_fov(driver.traits.attention, driver.traits.risk),
+            alternate: false,
+        };
+        let place = |_: perceive::Focus, _: u64| Vec2::ZERO;
+        if looker
+            .notices(rider.id.0 as u64, rider.pos, self.tick, place)
+            .is_none()
+        {
+            let index = perceive::glance_index(driver.gaze_seed, self.tick);
+            push_unique(
+                causes,
+                Cause {
+                    agent: driver.id,
+                    what: CauseKind::LookedElsewhere {
+                        at: rider.id,
+                        focus: looker.gaze(index, place).1,
+                    },
+                },
+            );
+        }
     }
 
     /// Logs a conflict unless the same pair had one of the same kind a moment ago.
@@ -223,9 +267,35 @@ impl StreetRun {
                 }
                 let impact_kmh = f64::from((a.velocity() - b.velocity()).length()) * 3.6;
                 let position = (a.pos + b.pos) * 0.5;
-                let causes = self.causes_between(Some(a), Some(b));
+                let mut causes = self.causes_between(Some(a), Some(b));
+                // A contact between a motor vehicle and a rider: did the driver look at it, or
+                // was it in a blind spot (the right turn against a rider going straight)?
+                if let Some((driver, rider)) = match (a.mode, b.mode) {
+                    (Mode::Bicycle, Mode::Bicycle) => None,
+                    (Mode::Bicycle, _) => Some((b, a)),
+                    (_, Mode::Bicycle) => Some((a, b)),
+                    _ => None,
+                } {
+                    self.perception_cause_of_rider(driver, rider, &mut causes);
+                }
+                // Only for contacts with a cyclist: the vehicle-only logs stay as they were.
+                if causes.is_empty() && (a.mode == Mode::Bicycle || b.mode == Mode::Bicycle) {
+                    // No hard brake and no rule broken (one that follows too close and brakes
+                    // late and gently): the faster one could not stop in time.
+                    let striker = if b.speed > a.speed { b } else { a };
+                    causes.push(Cause {
+                        agent: striker.id,
+                        what: CauseKind::TooFastToStop,
+                    });
+                }
                 let seed = mix(mix(self.seed, ids[i].0 as u64), mix(ids[j].0 as u64, tick));
-                let outcome = draw_outcome(VEHICLE_SEVERITY, impact_kmh, &mut SimRng::new(seed));
+                // A cyclist is as exposed as a person on foot, against a car or another cyclist.
+                let table = if a.mode == Mode::Bicycle || b.mode == Mode::Bicycle {
+                    PEDESTRIAN_SEVERITY
+                } else {
+                    VEHICLE_SEVERITY
+                };
+                let outcome = draw_outcome(table, impact_kmh, &mut SimRng::new(seed));
                 self.log(StreetEvent::Contact {
                     a: ids[i],
                     b: ids[j],
@@ -250,8 +320,8 @@ impl StreetRun {
     }
 
     /// The grade of a hard brake.
-    pub(super) fn brake_grade(rate: f64) -> Grade {
-        if rate >= SERIOUS_BRAKE {
+    pub(super) fn brake_grade(mode: Mode, rate: f64) -> Grade {
+        if rate >= brake_thresholds(mode).1 {
             Grade::Serious
         } else {
             Grade::Light

@@ -241,3 +241,39 @@ fn a_narrow_useful_field_loses_the_periphery_first() {
     assert_eq!(perceive::look_in(perceive::Zone::Centre, 0.5).0, 1.0);
     assert_eq!(perceive::useful_fov(1.0, 0.0), 1.0);
 }
+
+/// The right-turn case: a cyclist rides straight on the right of a van that turns right, in
+/// the large blind spot of the van. Rate over many drivers and ticks: a van driver who only
+/// cruises never notices it (even a fully attentive one, at 3 m); a turning one notices it
+/// only in the glances over the shoulder, which is a minority of the time; a car driver in
+/// the same place (the pillar band does not cover it) sees it at once.
+#[test]
+fn a_van_driver_notices_a_cyclist_in_its_blind_spot_only_by_shoulder_checks() {
+    let cyclist = Vec2::new(0.5, 3.0);
+    let rate = |task: DriverTask, mode: Mode| {
+        let (mut seen, mut total) = (0u32, 0u32);
+        for id in 0..200u64 {
+            let looker = driver(task, mode, id);
+            for tick in (0..TICKS).step_by(5) {
+                total += 1;
+                seen += u32::from(looker.notices(id, cyclist, tick, none).is_some());
+            }
+        }
+        f64::from(seen) / f64::from(total)
+    };
+    assert_eq!(
+        rate(DriverTask::Cruise, Mode::Van),
+        0.0,
+        "no shoulder check"
+    );
+    let turning = rate(DriverTask::RightTurn, Mode::Van);
+    assert!(
+        (0.1..0.7).contains(&turning),
+        "a right turn sees it in some glances only: {turning}"
+    );
+    let car = rate(DriverTask::RightTurn, Mode::Car);
+    assert!(
+        car > turning,
+        "a car has no large blind spot: {car} against {turning}"
+    );
+}

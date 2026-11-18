@@ -4,7 +4,9 @@
 //! `click` or `release`; nothing else changes.
 //!
 //! Keys: `C` (`ToolZebra`) is the zebra, `V` (`ToolSpeedLimit`) the speed limit, `B`
-//! (`ToolBollards`) the bollards, `L` (`ToolSignals`) the signals.
+//! (`ToolBollards`) the bollards, `L` (`ToolSignals`) the signals, `X` (`ToolSeparator`) the
+//! separator of a strip boundary, `N` (`ToolBicycleBox`) the bicycle box, `G`
+//! (`ToolBicycleLead`) the leading bicycle green.
 
 use bevy::prelude::Vec2;
 use tf_sim::street::design::{Side, SignalTemplate};
@@ -20,14 +22,20 @@ pub enum PlayTool {
     SpeedLimit,
     Bollards,
     Signals,
+    Separator,
+    BicycleBox,
+    BicycleLead,
 }
 
 impl PlayTool {
-    pub const ALL: [PlayTool; 4] = [
+    pub const ALL: [PlayTool; 7] = [
         PlayTool::Zebra,
         PlayTool::SpeedLimit,
         PlayTool::Bollards,
         PlayTool::Signals,
+        PlayTool::Separator,
+        PlayTool::BicycleBox,
+        PlayTool::BicycleLead,
     ];
 
     pub fn label(self) -> &'static str {
@@ -36,6 +44,9 @@ impl PlayTool {
             PlayTool::SpeedLimit => "Speed limit",
             PlayTool::Bollards => "Bollards",
             PlayTool::Signals => "Signals",
+            PlayTool::Separator => "Separator",
+            PlayTool::BicycleBox => "Bicycle box",
+            PlayTool::BicycleLead => "Bicycle lead",
         }
     }
 
@@ -50,6 +61,15 @@ impl PlayTool {
             PlayTool::Signals => {
                 "click a junction: priority, lights, lights with a walk phase; wheel or +/- on lights: green time"
             }
+            PlayTool::Separator => {
+                "click the line between two strips: none, paint, kerb, bollards, planter"
+            }
+            PlayTool::BicycleBox => {
+                "click an approach of a junction with lights: add a bicycle box, click again to remove it"
+            }
+            PlayTool::BicycleLead => {
+                "click a junction with lights: leading bicycle green on or off; wheel or +/-: seconds"
+            }
         }
     }
 
@@ -60,6 +80,9 @@ impl PlayTool {
             PlayTool::SpeedLimit => Action::ToolSpeedLimit,
             PlayTool::Bollards => Action::ToolBollards,
             PlayTool::Signals => Action::ToolSignals,
+            PlayTool::Separator => Action::ToolSeparator,
+            PlayTool::BicycleBox => Action::ToolBicycleBox,
+            PlayTool::BicycleLead => Action::ToolBicycleLead,
         }
     }
 
@@ -70,6 +93,9 @@ impl PlayTool {
             PlayTool::SpeedLimit => "V",
             PlayTool::Bollards => "B",
             PlayTool::Signals => "L",
+            PlayTool::Separator => "X",
+            PlayTool::BicycleBox => "N",
+            PlayTool::BicycleLead => "G",
         }
     }
 
@@ -85,6 +111,9 @@ impl PlayTool {
             PlayTool::Zebra => pick::zebra_command(street, p),
             PlayTool::SpeedLimit => pick::speed_command(street, p),
             PlayTool::Signals => pick::signals_click_command(street, p),
+            PlayTool::Separator => pick::separator_command(street, p),
+            PlayTool::BicycleBox => pick::box_command(street, p),
+            PlayTool::BicycleLead => pick::lead_click_command(street, p),
             PlayTool::Bollards => None,
         }
     }
@@ -102,7 +131,9 @@ impl PlayTool {
     pub fn nothing_text(self) -> &'static str {
         match self {
             PlayTool::Bollards => "Drag along one sidewalk edge, or click a row to remove it.",
-            PlayTool::Signals => "Click inside a junction.",
+            PlayTool::Signals | PlayTool::BicycleLead => "Click inside a junction.",
+            PlayTool::Separator => "Click on the line between two strips.",
+            PlayTool::BicycleBox => "Click on a street, near the junction.",
             _ => "Nothing to change there.",
         }
     }
@@ -149,6 +180,26 @@ impl PlayTool {
                     (_, None) => "lights".to_string(),
                 };
                 format!("Junction {node}: {what}.")
+            }
+            DesignCommand::SetSeparator {
+                segment,
+                boundary,
+                separator,
+            } => format!("Segment {segment}, line {boundary}: separator {separator:?}."),
+            DesignCommand::AddBicycleBox {
+                node,
+                segment,
+                depth,
+            } => format!("Bicycle box of {depth:.0} m on segment {segment} at junction {node}."),
+            DesignCommand::RemoveBicycleBox { node, segment } => {
+                format!("Bicycle box removed from segment {segment} at junction {node}.")
+            }
+            DesignCommand::SetBicycleLead { node, lead_s } => {
+                if *lead_s > 0.0 {
+                    format!("Junction {node}: bicycles get green {lead_s:.0} s early.")
+                } else {
+                    format!("Junction {node}: no leading bicycle green.")
+                }
             }
             other => format!("Edit made: {other:?}"),
         }

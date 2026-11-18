@@ -175,6 +175,9 @@ pub enum DriverTask {
     /// its zebra later.
     RightTurn,
     RightTurnExit,
+    /// Going straight on through a junction: the cross traffic from the right (priority to
+    /// the right) and from the left, and the way ahead.
+    Junction,
 }
 
 /// What a walker is doing.
@@ -201,6 +204,11 @@ pub fn driver_table(task: DriverTask) -> &'static [(Focus, f64)] {
             (Focus::Exit, 0.5),
             (Focus::Ahead, 0.25),
             (Focus::Oncoming, 0.25),
+        ],
+        DriverTask::Junction => &[
+            (Focus::CrossRight, 0.4),
+            (Focus::CrossLeft, 0.3),
+            (Focus::Ahead, 0.3),
         ],
         DriverTask::RightTurn => &[
             (Focus::CrossRight, 0.35),

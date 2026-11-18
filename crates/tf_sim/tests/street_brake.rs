@@ -183,6 +183,19 @@ fn slow_school_run(seed: u64) -> StreetRun {
 fn a_20_kmh_street_has_no_serious_brake_for_a_small_speed_step_or_a_walker_still_on_the_pavement() {
     for seed in [2, 8] {
         let run = slow_school_run(seed);
+        // Cyclists (Phase 6) are a new cause of brakes: this test is about cars and walkers.
+        let cyclists: Vec<_> = run
+            .events()
+            .iter()
+            .filter_map(|e| match &e.event {
+                StreetEvent::Spawned {
+                    agent,
+                    mode: Mode::Bicycle,
+                    ..
+                } => Some(*agent),
+                _ => None,
+            })
+            .collect();
         for entry in run.events() {
             if let StreetEvent::Conflict {
                 kind: ConflictKind::HardBrake,
@@ -195,7 +208,8 @@ fn a_20_kmh_street_has_no_serious_brake_for_a_small_speed_step_or_a_walker_still
                 assert!(
                     !causes
                         .iter()
-                        .any(|c| c.what == tf_sim::street::run::CauseKind::TooFastToStop),
+                        .any(|c| c.what == tf_sim::street::run::CauseKind::TooFastToStop
+                            && !cyclists.contains(&c.agent)),
                     "seed {seed}, tick {}: a serious brake at {measure} m/s² (too fast to stop)",
                     entry.tick
                 );

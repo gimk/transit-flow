@@ -95,6 +95,18 @@ pub enum CauseKind {
         electric: bool,
         deaf: bool,
     },
+    /// Passed `to` with less side room than the rule asks (1 m in town, R414-4) or than
+    /// a careful rider keeps.
+    PassedTooClose {
+        to: AgentId,
+    },
+    /// A cyclist rode on the sidewalk because the street felt hostile.
+    RodeOnSidewalk,
+    /// Went past the stop line into the junction although its own last decision at the
+    /// line was "stop": it could no longer stop without braking hard (a car that stopped
+    /// with its front on the line counts as committed). Whoever it meets inside is not the
+    /// only one at fault.
+    EnteredWithoutGap,
 }
 
 impl CauseKind {
@@ -103,7 +115,8 @@ impl CauseKind {
         match *self {
             CauseKind::DidNotYield { to }
             | CauseKind::GapTooShort { to }
-            | CauseKind::DidNotYieldToWalker { to } => Some(to),
+            | CauseKind::DidNotYieldToWalker { to }
+            | CauseKind::PassedTooClose { to } => Some(to),
             CauseKind::HiddenWalker { walker, .. } => Some(walker),
             CauseKind::LookedElsewhere { at, .. } => Some(at),
             CauseKind::InBlindSpot { walker } => Some(walker),

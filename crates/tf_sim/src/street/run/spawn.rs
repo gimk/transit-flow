@@ -3,11 +3,11 @@
 //! entry lane has room, so a jammed gate delays people instead of stacking bodies.
 //! Pedestrian flows work the same way: one wish brings one walker or a small group
 //! (`StreetRun::add_walkers`), which enters when the sidewalk at the gate is clear.
-//! Bicycle flows are not simulated yet.
+//! Bicycle flows spawn cyclists, who are vehicles with a side position (`bike`).
 
 use glam::Vec2;
 
-use super::agent::{Agent, Traits, body_size, chance, vehicle_class};
+use super::agent::{Agent, BikeHabits, CARGO_BIKE_SIZE, Traits, body_size, chance, vehicle_class};
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::kerb;
@@ -34,14 +34,19 @@ pub(super) fn pose(
     d: f64,
     length: f64,
     old_dir: Vec2,
+    lateral: f64,
 ) -> (Vec2, Vec2) {
     let front = route.point(street, d);
     let rear = route.point(street, d - length);
     let dir = (front - rear).normalize_or_zero();
-    (
-        (front + rear) / 2.0,
-        if dir == Vec2::ZERO { old_dir } else { dir },
-    )
+    let dir = if dir == Vec2::ZERO { old_dir } else { dir };
+    // The body is shifted to its side position, to the right of its heading.
+    let shift = if lateral == 0.0 {
+        Vec2::ZERO
+    } else {
+        dir.perp() * lateral as f32
+    };
+    ((front + rear) / 2.0 + shift, dir)
 }
 
 impl StreetRun {
@@ -125,7 +130,7 @@ impl StreetRun {
         let Some(route_index) = self.route_for(&flow.from, &flow.to, class) else {
             return Attempt::NoRoute;
         };
-        let (length, width) = body_size(flow.mode);
+        let (mut length, mut width) = body_size(flow.mode);
         let first = self.routes[route_index].lanes[0];
         // The entry is clear when the last one to come in has moved on by a body and a gap.
         // The leader is the one whose rear is nearest the entry: the newcomer must be able
@@ -149,6 +154,11 @@ impl StreetRun {
         let mut rng = SimRng::new(mix(self.seed, id.0 as u64));
         let archetype = self.population.archetype(flow.mode, &mut rng);
         let traits = Traits::draw(&archetype, &mut rng);
+        // A cyclist's own habits come after the seven traits, so no car draw moves.
+        let bike = (flow.mode == Mode::Bicycle).then(|| BikeHabits::draw(&mut rng));
+        if flow.mode == Mode::Bicycle && archetype.name == "cargo bike" {
+            (length, width) = CARGO_BIKE_SIZE;
+        }
         let mut agent = Agent {
             id,
             mode: flow.mode,
@@ -182,6 +192,10 @@ impl StreetRun {
             electric: perceive::is_electric(self.seed, id.0, flow.mode),
             gaze_seed: perceive::gaze_seed(self.seed, id.0),
             gaze_task: perceive::DriverTask::Cruise,
+            lateral: 0.0,
+            lateral_target: 0.0,
+            passing: false,
+            bike,
         };
         let route = &self.routes[route_index];
         let world = World {
@@ -217,7 +231,10 @@ impl StreetRun {
                     / drive::desired_speed(&agent, *lane, &world).max(0.1)
             })
             .sum();
-        let (pos, dir) = pose(&self.street, route, agent.d, length, Vec2::X);
+        // A cyclist starts at its resting place in the lane.
+        agent.lateral = super::bike::rest_lateral(&agent, first, &world);
+        agent.lateral_target = agent.lateral;
+        let (pos, dir) = pose(&self.street, route, agent.d, length, Vec2::X, agent.lateral);
         (agent.pos, agent.dir, agent.prev_pos, agent.prev_dir) = (pos, dir, pos, dir);
         self.log(StreetEvent::Spawned {
             agent: id,
