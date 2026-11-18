@@ -37,8 +37,10 @@ use super::drive::{
 };
 use super::events::CauseKind;
 use super::kerb::RouteArea;
+use super::perceive::{self, DriverTask, Focus, Looker};
 use super::sight::{Hider, SightBlockers};
 use super::walk::{AreaKind, WalkSpace};
+use super::walker::WalkerSeen;
 use crate::street::ids::AgentId;
 
 /// A driver comes up to a zebra whose kerb stays hidden at this speed until it sees the
@@ -95,6 +97,15 @@ pub struct PedWorld<'a> {
     pub kerb_points: &'a IndexMap<usize, Vec<Vec2>>,
     /// Per zebra area under signals: is its walk light on now?
     pub walk_lights: &'a IndexMap<usize, bool>,
+    /// What perception needs from the run (`None`: everyone sees everything not hidden).
+    pub perception: Option<Perception<'a>>,
+}
+
+/// The past, for what perception asks of it: the older snapshots, and the tick.
+#[derive(Clone, Copy)]
+pub struct Perception<'a> {
+    pub history: &'a std::collections::VecDeque<Snapshot>,
+    pub tick: u64,
 }
 
 /// What the walkers ahead ask of a driver.
@@ -134,6 +145,7 @@ pub fn walker_view(
     peds: &PedWorld,
     careful: bool,
     tau: f64,
+    task: DriverTask,
 ) -> WalkerView {
     let mut view = WalkerView {
         target: f64::INFINITY,
@@ -153,6 +165,12 @@ pub fn walker_view(
             .as_ref()
             .is_none_or(|approach| approach.yields);
     let risk = if careful { 0.0 } else { agent.traits.risk };
+    // A driver who does not look at the kerbs of a zebra only drives on.
+    let task = if task == DriverTask::ZebraScan && !looks {
+        DriverTask::Cruise
+    } else {
+        task
+    };
     let half = (agent.width * 0.5) as f32;
     for area in &peds.route_areas[agent.route] {
         if area.exit <= front - agent.length || area.enter - front > super::drive::MAX_LOOKAHEAD {
@@ -198,6 +216,11 @@ pub fn walker_view(
                 .hider(me, walker.pos, &snapshot.seen, Some(agent.id))
                 .is_some()
             {
+                continue;
+            }
+            // Seen is not noticed: the gaze, the blind spots and surprise (`perceive`). The
+            // careful check takes what is in view as noticed.
+            if !careful && driver_notices(agent, task, area, walker, snapshot, peds).is_err() {
                 continue;
             }
             let Some((d_w, beside)) = project(&area.line, walker.pos) else {
@@ -266,6 +289,130 @@ pub fn walker_view(
     view
 }
 
+/// The snapshot taken `ticks` before `snapshot`, if the history still has it.
+pub fn snapshot_before<'a>(
+    peds: &'a PedWorld,
+    snapshot: &Snapshot,
+    ticks: u64,
+) -> Option<&'a Snapshot> {
+    let perception = peds.perception?;
+    let newest = perception.history.back()?.tick;
+    let wanted = snapshot.tick.checked_sub(ticks)?;
+    let back = usize::try_from(newest.checked_sub(wanted)?).ok()?;
+    perception
+        .history
+        .len()
+        .checked_sub(back + 1)
+        .and_then(|i| perception.history.get(i))
+}
+
+/// Was `walker` in view of `eye` `ticks` earlier (there, and not hidden)? What was not there
+/// or was hidden is new to the driver now: a surprise, and it takes the time to notice.
+fn in_view_before(
+    eye: Vec2,
+    agent: &Agent,
+    walker: &WalkerSeen,
+    snapshot: &Snapshot,
+    peds: &PedWorld,
+    ticks: u64,
+) -> bool {
+    let Some(old) = snapshot_before(peds, snapshot, ticks) else {
+        return true;
+    };
+    let Ok(i) = old.walkers.binary_search_by_key(&walker.id, |w| w.id) else {
+        return false;
+    };
+    peds.sight
+        .hider(eye, old.walkers[i].pos, &old.seen, Some(agent.id))
+        .is_none()
+}
+
+/// What a driver looks for: the table of its task.
+fn looker<'a>(agent: &Agent, task: DriverTask, eye: Vec2) -> Looker<'a> {
+    Looker {
+        mode: agent.mode,
+        eye,
+        dir: agent.dir,
+        table: perceive::driver_table(task),
+        seed: agent.gaze_seed,
+        fov: perceive::useful_fov(agent.traits.attention, agent.traits.risk),
+        alternate: false,
+    }
+}
+
+/// Where the zebra `area` is from the eye, for the glances at an exit and at its kerbs.
+fn place_of<'a>(
+    peds: &'a PedWorld,
+    area: &'a RouteArea,
+    eye: Vec2,
+) -> impl Fn(Focus, u64) -> Vec2 + Copy + 'a {
+    let kerbs = peds.kerb_points.get(&area.area);
+    let middle = match (area.line.first(), area.line.last()) {
+        (Some(a), Some(b)) => (a.1 + b.1) * 0.5,
+        _ => eye,
+    };
+    move |focus, index| match focus {
+        Focus::Kerb => kerbs
+            .filter(|points| !points.is_empty())
+            .map_or(Vec2::ZERO, |points| {
+                points[index as usize % points.len()] - eye
+            }),
+        Focus::Exit => middle - eye,
+        _ => Vec2::ZERO,
+    }
+}
+
+/// How a driver notices a walker (the field of view, the gaze its task sets, its blind
+/// spots and surprise: `perceive`): `Ok` with the extra seconds a surprise cost, or `Err`
+/// with what it was looking at. Walkers are only hidden or not without perception.
+pub fn driver_notices(
+    agent: &Agent,
+    task: DriverTask,
+    area: &RouteArea,
+    walker: &WalkerSeen,
+    snapshot: &Snapshot,
+    peds: &PedWorld,
+) -> Result<f64, Focus> {
+    let Some(perception) = peds.perception else {
+        return Ok(0.0);
+    };
+    let eye = eye(agent);
+    let looker = looker(agent, task, eye);
+    let place = place_of(peds, area, eye);
+    let id = walker.id.0 as u64;
+    let Some(noticed) = looker.notices(id, walker.pos, perception.tick, place) else {
+        let index = perceive::glance_index(agent.gaze_seed, perception.tick);
+        return Err(looker.gaze(index, place).1);
+    };
+    // Expected: it was seen before, or it is at a place the driver was scanning.
+    let scanned = matches!(
+        task,
+        DriverTask::ZebraScan | DriverTask::LeftTurnExit | DriverTask::RightTurnExit
+    ) || matches!(noticed.focus, Focus::Kerb | Focus::Exit);
+    let new_to_the_eye =
+        !scanned && !in_view_before(eye, agent, walker, snapshot, peds, SURPRISE_LOOKBACK_TICKS);
+    let wait = noticed.delay_s
+        + if new_to_the_eye {
+            perceive::SURPRISE_EXTRA_S
+        } else {
+            0.0
+        };
+    if wait > 0.0 {
+        let ticks = (wait / DT).round() as u64;
+        if !in_view_before(eye, agent, walker, snapshot, peds, ticks) {
+            return Err(noticed.focus);
+        }
+    }
+    Ok(if new_to_the_eye {
+        perceive::SURPRISE_EXTRA_S
+    } else {
+        0.0
+    })
+}
+
+/// Seen this long ago (0.5 s) is not new to the eye.
+const SURPRISE_LOOKBACK_TICKS: u64 = 10;
+
 /// A driver who bends no rule: the careful check would say the same.
 pub fn is_careful(agent: &Agent) -> bool {
     agent.traits.compliance >= 1.0 && agent.traits.attention >= 1.0 && agent.traits.risk <= 0.0
@@ -292,15 +439,23 @@ pub fn kerb_points(space: &WalkSpace) -> IndexMap<usize, Vec<Vec2>> {
 /// Is the zebra just past the junction exit of this approach busy (someone on it, or
 /// about to step on it and allowed to)? A driver who keeps the box clear does not enter
 /// the junction then: it would stand in it, blocking the crossing traffic.
-pub fn exit_zebra_busy(agent: &Agent, end_d: f64, snapshot: &Snapshot, peds: &PedWorld) -> bool {
+pub fn exit_zebra_busy(
+    agent: &Agent,
+    end_d: f64,
+    snapshot: &Snapshot,
+    peds: &PedWorld,
+    task: DriverTask,
+) -> bool {
     peds.route_areas[agent.route].iter().any(|area| {
         matches!(peds.space.areas[area.area].kind, AreaKind::Crossing { .. })
             && area.enter >= end_d - 1.0
             && area.enter <= end_d + EXIT_ZEBRA_REACH
             && snapshot.walkers.iter().any(|walker| {
-                walker.area == Some(area.area)
+                (walker.area == Some(area.area)
                     || (walker.intent == Some(area.area)
-                        && peds.walk_lights.get(&area.area).is_none_or(|walk| *walk))
+                        && peds.walk_lights.get(&area.area).is_none_or(|walk| *walk)))
+                    && (is_careful(agent)
+                        || driver_notices(agent, task, area, walker, snapshot, peds).is_ok())
             })
     })
 }

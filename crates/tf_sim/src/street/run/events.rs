@@ -6,6 +6,7 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use super::perceive::Focus;
 use super::sight::Hider;
 use crate::rng::SimRng;
 use crate::street::ids::AgentId;
@@ -65,6 +66,35 @@ pub enum CauseKind {
     /// A walker already on the road kept its pace when a car came, expecting the driver
     /// to stop (it has priority once engaged, R415-11 at a crossing).
     KeptPaceOnRoad,
+    /// Did not look at `at`: the gaze was on something else (a left turn on the oncoming
+    /// cars, not on the exit zebra) or `at` was outside the useful field of view.
+    LookedElsewhere {
+        at: AgentId,
+        focus: Focus,
+    },
+    /// `walker` was in a blind spot of the vehicle (a pillar, or the right side of a van or
+    /// a bus) and no shoulder check was made.
+    InBlindSpot {
+        walker: AgentId,
+    },
+    /// A surprise (the thing came out of a hiding place or was not looked at): the reaction
+    /// took this long, seconds.
+    Surprise {
+        reaction_s: f64,
+    },
+    /// Could not see `vehicle`: the sight line was cut by `by`.
+    HiddenVehicle {
+        vehicle: AgentId,
+        by: Hider,
+    },
+    /// Did not see and did not hear `vehicle`: the street noise hid it (a quiet car), or the
+    /// person does not hear the street.
+    NotHeard {
+        vehicle: AgentId,
+        kmh: f64,
+        electric: bool,
+        deaf: bool,
+    },
 }
 
 impl CauseKind {
@@ -75,6 +105,11 @@ impl CauseKind {
             | CauseKind::GapTooShort { to }
             | CauseKind::DidNotYieldToWalker { to } => Some(to),
             CauseKind::HiddenWalker { walker, .. } => Some(walker),
+            CauseKind::LookedElsewhere { at, .. } => Some(at),
+            CauseKind::InBlindSpot { walker } => Some(walker),
+            CauseKind::HiddenVehicle { vehicle, .. } | CauseKind::NotHeard { vehicle, .. } => {
+                Some(vehicle)
+            }
             CauseKind::DidNotLook { at } => Some(at),
             _ => None,
         }

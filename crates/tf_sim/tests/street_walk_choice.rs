@@ -5,6 +5,7 @@
 use tf_sim::rng::SimRng;
 use tf_sim::street::Design;
 use tf_sim::street::level::{JunctionControl, LevelFile};
+use tf_sim::street::run::walker::WALKER_ID_BASE;
 use tf_sim::street::run::walker::{
     WALK_CAREFUL, WALK_CHILD, WALK_COMMUTER, WALK_ELDERLY, WALK_HURRIED, WALK_RESIDENT,
     WalkerTraits,
@@ -264,7 +265,16 @@ fn some_walkers_cut_the_corner_at_a_zebra_and_drivers_still_yield() {
         }
         let s = run.summary();
         assert_eq!(s.contacts, 0, "seed {seed}");
-        assert_eq!(s.walkers.contacts, 0, "seed {seed}");
+        // A careful driver never makes a contact; a hurried walker who did not hear or see
+        // a car (Phase 6 perception) may, and then the cause is the walker's alone.
+        for event in run.events() {
+            if let StreetEvent::Contact { causes, .. } = &event.event {
+                assert!(
+                    causes.iter().all(|c| c.agent.0 >= WALKER_ID_BASE),
+                    "seed {seed}: a driver is a cause of {causes:?}"
+                );
+            }
+        }
         assert_eq!(s.walkers.off_crossing, 0, "seed {seed}");
     }
     println!("{at_zebra} steps off on the zebra, {beside} beside it");

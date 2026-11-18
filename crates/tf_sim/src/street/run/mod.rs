@@ -22,6 +22,7 @@ pub mod events;
 pub mod grid;
 pub mod kerb;
 mod meet;
+pub mod perceive;
 pub mod route;
 pub mod sight;
 mod spawn;
@@ -373,6 +374,8 @@ impl StreetRun {
             grid: Grid::new(street.bounds),
             walkers: Vec::new(),
             walker_grid: Grid::with_cell(street.bounds, crowd::WALKER_CELL),
+            tick: 0,
+            noise: perceive::background_noise(0),
         };
         let walk_space = WalkSpace::new(&street, &level.gates);
         let walk_signals = kerb::walk_signal_table(&walk_space, &street, &moves);
@@ -616,6 +619,10 @@ impl StreetRun {
             sight: &self.sight,
             kerb_points: &self.kerb_points,
             walk_lights: &walk_lights,
+            perception: Some(yielding::Perception {
+                history: &self.history,
+                tick: self.tick,
+            }),
         };
         let world = World {
             street: &self.street,
@@ -655,6 +662,7 @@ impl StreetRun {
                 approach.committed |= decision.committed;
             }
             agent.held_by_walkers = decision.held_by_walkers;
+            agent.gaze_task = decision.task;
             if decision.held_by_walkers {
                 agent.last_held = Some(tick);
             }
@@ -782,14 +790,18 @@ impl StreetRun {
                 crashed: agent.crashed(),
                 hides: matches!(agent.mode, Mode::Van | Mode::Bus),
                 held_by_walkers: agent.held_by_walkers,
+                level: perceive::sound_level(agent.mode, agent.speed, agent.electric),
             });
         }
         let (walkers, walker_grid) = self.walker_snapshot();
+        let moving = seen.iter().filter(|s| s.speed > 1.0).count();
         self.history.push_back(Snapshot {
             seen,
             grid,
             walkers,
             walker_grid,
+            tick: self.tick,
+            noise: perceive::background_noise(moving),
         });
         while self.history.len() > HISTORY {
             self.history.pop_front();

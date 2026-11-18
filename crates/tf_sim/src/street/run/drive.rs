@@ -12,6 +12,7 @@ use super::agent::{Agent, Approach};
 use super::events::CauseKind;
 use super::grid::Grid;
 use super::mix;
+use super::perceive::DriverTask;
 use super::route::RoutePath;
 use super::walker::WalkerSeen;
 use super::yielding::{self, PedWorld};
@@ -122,6 +123,8 @@ pub struct Seen {
     /// Held at its line by people on foot (the zebra past its exit is in use): it does
     /// not hold the drivers who give way to it.
     pub held_by_walkers: bool,
+    /// How loud it is at 1 m (`perceive::sound_level`).
+    pub level: f64,
 }
 
 /// The world as it was after one tick.
@@ -132,6 +135,10 @@ pub struct Snapshot {
     /// The pedestrians, in id order, and their grid (`crowd::WALKER_CELL`).
     pub walkers: Vec<WalkerSeen>,
     pub walker_grid: Grid,
+    /// The tick it was taken after (so an older snapshot can be found from a newer one).
+    pub tick: u64,
+    /// The noise of the street then (`perceive::background_noise`).
+    pub noise: f64,
 }
 
 pub struct World<'a> {
@@ -182,6 +189,8 @@ pub struct Decision {
     pub crossing_entered: bool,
     /// Held at the line by people on the zebra past the junction exit.
     pub held_by_walkers: bool,
+    /// What the driver was doing this tick, which set its gaze (`perceive::DriverTask`).
+    pub task: DriverTask,
 }
 
 /// The hardest braking of one vehicle on a dry road, m/s², drawn once at spawn. Start
@@ -830,7 +839,13 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
             let no_return = approach.go && to_line < v * v / (2.0 * HARD_BRAKE);
             let exit_busy = world.peds.is_some_and(|peds| {
                 (yielding::is_careful(agent) || approach.keeps_box)
-                    && yielding::exit_zebra_busy(agent, approach.end_d, snapshot, peds)
+                    && yielding::exit_zebra_busy(
+                        agent,
+                        approach.end_d,
+                        snapshot,
+                        peds,
+                        driver_task(agent, world, peds, None),
+                    )
             });
             let go = no_return
                 || (!exit_busy && junction_check(agent, approach, snapshot, world, false).is_ok());
@@ -885,7 +900,9 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
 
     // People on foot: in the path, at a zebra, behind a hidden kerb.
     if let Some(peds) = world.peds {
-        let view = yielding::walker_view(agent, snapshot, peds, false, tau);
+        let task = driver_task(agent, world, peds, leader);
+        decision.task = task;
+        let view = yielding::walker_view(agent, snapshot, peds, false, tau, task);
         // Standing at its line for people on the zebra before it (they hold it, even when
         // the line holds it too): the drivers who give way to it do not wait for it
         // (stage C review, finding 4).
@@ -916,7 +933,7 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
             && agent.d < crossing.enter_d
             && !yielding::is_careful(agent)
         {
-            let careful = yielding::walker_view(agent, snapshot, peds, true, tau);
+            let careful = yielding::walker_view(agent, snapshot, peds, true, tau, task);
             let not_yielding = if view.yield_to.is_none() {
                 careful.yield_all
             } else {
@@ -951,6 +968,77 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     }
     decision
 }
+
+/// A driver looks for its turn this far before the stop line, metres (start value).
+const TURN_LOOK_M: f64 = 30.0;
+/// It looks at the exit zebra when its front is this near it, metres (start value).
+const EXIT_LOOK_M: f64 = 20.0;
+/// A driver this close behind a car that is slow looks at it (a queue), metres.
+const QUEUE_GAP_M: f64 = 8.0;
+
+/// What a driver is doing, which sets where it looks (`perceive::DriverTask`): a turn
+/// looks at the oncoming cars or at the traffic that has priority and only later at the
+/// exit, a zebra coming up is scanned, a queue is the car in front.
+fn driver_task(
+    agent: &Agent,
+    world: &World,
+    peds: &yielding::PedWorld,
+    leader: Option<(f64, f64)>,
+) -> DriverTask {
+    let zebra_ahead = |reach: f64| {
+        agent.crossing.as_ref().is_some_and(|c| {
+            agent.d < c.enter_d && c.enter_d - agent.d < reach && c.exit_d <= approach_line(agent)
+        })
+    };
+    if zebra_ahead(ZEBRA_LOOK_M) {
+        return DriverTask::ZebraScan;
+    }
+    if let Some(approach) = &agent.approach
+        && agent.d >= approach.line_d - TURN_LOOK_M
+        && let Some(info) = world.moves.get(&approach.movement)
+    {
+        let exit_near = peds.route_areas[agent.route].iter().any(|area| {
+            matches!(
+                peds.space.areas[area.area].kind,
+                super::walk::AreaKind::Crossing { .. }
+            ) && area.enter >= approach.end_d - 1.0
+                && area.enter - agent.d < EXIT_LOOK_M
+                && area.exit > agent.d - agent.length
+        });
+        match info.turn {
+            Turn::Left | Turn::UTurn => {
+                return if exit_near {
+                    DriverTask::LeftTurnExit
+                } else {
+                    DriverTask::LeftTurn
+                };
+            }
+            Turn::Right => {
+                return if exit_near {
+                    DriverTask::RightTurnExit
+                } else {
+                    DriverTask::RightTurn
+                };
+            }
+            _ => {}
+        }
+    }
+    if leader.is_some_and(|(gap, speed)| gap < QUEUE_GAP_M && speed < 3.0) && agent.speed < 3.0 {
+        return DriverTask::Queue;
+    }
+    DriverTask::Cruise
+}
+
+/// The stop line of the junction the agent comes up to (the route end when none).
+fn approach_line(agent: &Agent) -> f64 {
+    agent
+        .approach
+        .as_ref()
+        .map_or(f64::INFINITY, |a| a.line_d + 1.0)
+}
+
+/// A driver scans the kerbs of a zebra this far before it, metres (start value).
+const ZEBRA_LOOK_M: f64 = 40.0;
 
 #[cfg(test)]
 mod tests {

@@ -11,6 +11,7 @@ use super::agent::{Agent, Traits, body_size, chance, vehicle_class};
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::kerb;
+use super::perceive;
 use super::route::{self, RoutePath};
 use super::walker::{MEAN_GROUP_SIZE, WalkSpawn};
 use super::{StreetRun, mix};
@@ -178,6 +179,9 @@ impl StreetRun {
             crossing: None,
             held_by_walkers: false,
             last_held: None,
+            electric: perceive::is_electric(self.seed, id.0, flow.mode),
+            gaze_seed: perceive::gaze_seed(self.seed, id.0),
+            gaze_task: perceive::DriverTask::Cruise,
         };
         let route = &self.routes[route_index];
         let world = World {

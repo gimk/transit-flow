@@ -405,6 +405,11 @@ pub struct Walker {
     pub hit_until: Option<u64>,
     /// What it does about the vehicles it saw on the road at its last look.
     pub road_act: RoadAct,
+    /// Does not hear the street (headphones, a call): derived from the run seed and the
+    /// id (`perceive::is_deaf`), not drawn, so no stream moves.
+    pub deaf: bool,
+    /// The hash seed of its glances.
+    pub gaze_seed: u64,
 }
 
 impl Walker {
@@ -780,6 +785,12 @@ impl StreetRun {
                 recent: Vec::new(),
                 hit_until: None,
                 road_act: RoadAct::Free,
+                deaf: super::perceive::is_deaf(
+                    self.seed,
+                    d.id.0,
+                    d.archetype.name == "hurried walker",
+                ),
+                gaze_seed: super::perceive::gaze_seed(self.seed, d.id.0),
             });
         }
         self.next_walker += size as i32;

@@ -34,6 +34,7 @@ use super::events::{
     Cause, CauseKind, ConflictKind, Grade, Outcome, PEDESTRIAN_SEVERITY, StreetEvent, draw_outcome,
     rounded, rounded_point,
 };
+use super::perceive;
 use super::walker::Walker;
 use super::yielding::project;
 use super::{CRASH_BLOCK_S, EndReason, PET_LIGHT_S, PET_SERIOUS_S, StreetRun, mix};
@@ -43,6 +44,8 @@ use crate::street::ids::AgentId;
 /// A vehicle and a walker further apart than this (beyond half the vehicle's length)
 /// are not tested, metres.
 const MEET_REACH: f32 = 2.0;
+/// A walker who could not be seen this long before a meeting (1 s) was a surprise.
+const SURPRISE_BEFORE_TICKS: usize = 20;
 /// The band of a vehicle route through a road area: this far each side of its line,
 /// beyond the walker's body, metres (half a car width).
 pub(super) const BAND_HALF_WIDTH: f32 = 0.9;
@@ -130,6 +133,7 @@ impl StreetRun {
                 );
             }
         }
+        self.perception_causes(car, walker, &mut causes);
         let route = &self.routes[car.route];
         let limit = self.street.lanes[&route.lanes[route.lane_index(car.d)]].speed_limit;
         if car.speed > super::conflicts::SPEEDING_FACTOR * limit {
@@ -163,6 +167,126 @@ impl StreetRun {
             );
         }
         causes
+    }
+
+    /// What perception adds to the cause chain of a meeting (`perceive`): the driver's gaze,
+    /// blind spot and surprise, and what the walker saw and heard of the car.
+    fn perception_causes(&self, car: &Agent, walker: &Walker, causes: &mut Vec<Cause>) {
+        let back = ((car.traits.reaction_s / DT).round() as usize)
+            .max(1)
+            .min(self.history.len());
+        let snapshot = &self.history[self.history.len() - back];
+        let (Some(c), Some(w)) = (
+            snapshot.seen.iter().find(|s| s.id == car.id),
+            snapshot.walkers.iter().find(|w| w.id == walker.id),
+        ) else {
+            return;
+        };
+        let eye = c.pos + c.dir * (c.length as f32 * 0.5);
+        let to = w.pos - eye;
+        let hidden_from_car = self
+            .sight
+            .hider(eye, w.pos, &snapshot.seen, Some(car.id))
+            .is_some();
+        if !hidden_from_car {
+            let looker = perceive::Looker {
+                mode: car.mode,
+                eye,
+                dir: c.dir,
+                table: perceive::driver_table(car.gaze_task),
+                seed: car.gaze_seed,
+                fov: perceive::useful_fov(car.traits.attention, car.traits.risk),
+                alternate: false,
+            };
+            // A glance at a kerb or an exit is a glance at the place the walker is.
+            let place = |_: perceive::Focus, _: u64| to;
+            if perceive::in_blind_spot(car.mode, c.dir, to) {
+                push_unique(
+                    causes,
+                    Cause {
+                        agent: car.id,
+                        what: CauseKind::InBlindSpot { walker: walker.id },
+                    },
+                );
+            } else if looker
+                .notices(walker.id.0 as u64, w.pos, self.tick, place)
+                .is_none()
+            {
+                let index = perceive::glance_index(car.gaze_seed, self.tick);
+                push_unique(
+                    causes,
+                    Cause {
+                        agent: car.id,
+                        what: CauseKind::LookedElsewhere {
+                            at: walker.id,
+                            focus: looker.gaze(index, place).1,
+                        },
+                    },
+                );
+            }
+        }
+        // A surprise: a second before, the driver could not have seen the walker.
+        let before = self.history.len().saturating_sub(1 + SURPRISE_BEFORE_TICKS);
+        if let Some(old) = self.history.get(before)
+            && let Some(ow) = old.walkers.iter().find(|x| x.id == walker.id)
+            && self
+                .sight
+                .hider(eye, ow.pos, &old.seen, Some(car.id))
+                .is_some()
+        {
+            push_unique(
+                causes,
+                Cause {
+                    agent: car.id,
+                    what: CauseKind::Surprise {
+                        reaction_s: rounded(
+                            perceive::reaction_s(car.traits.reaction_s, true),
+                            10.0,
+                        ),
+                    },
+                },
+            );
+        }
+        // What the walker saw and heard of the car.
+        let nose = eye;
+        let hidden = self
+            .sight
+            .hider(walker.pos, nose, &snapshot.seen, Some(car.id));
+        let ahead = walker.pos + walker.vel;
+        if !self.walker_notices(
+            walker,
+            c,
+            nose,
+            hidden.is_some(),
+            snapshot,
+            walker.pos,
+            ahead,
+        ) {
+            if let Some(by) = hidden {
+                push_unique(
+                    causes,
+                    Cause {
+                        agent: walker.id,
+                        what: CauseKind::HiddenVehicle {
+                            vehicle: car.id,
+                            by,
+                        },
+                    },
+                );
+            }
+            push_unique(
+                causes,
+                Cause {
+                    agent: walker.id,
+                    what: CauseKind::NotHeard {
+                        vehicle: car.id,
+                        kmh: rounded(car.speed * 3.6, 1.0),
+                        electric: car.electric,
+                        deaf: walker.deaf,
+                    },
+                },
+            );
+        }
     }
 
     /// Contacts between vehicles and walkers (after the vehicle contacts of the tick).

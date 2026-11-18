@@ -384,7 +384,7 @@ fn walker_injuries_follow_the_severity_curves() {
 /// A death ends the run, with the death as its reason, and nothing happens after it.
 #[test]
 fn a_death_ends_the_run() {
-    let flows = flow("Pedestrian", "north", "south", 1800)
+    let flows = flow("Pedestrian", "north", "south", 3600)
         + &flow("Car", "west", "east", 900)
         + &flow("Car", "east", "west", 900);
     let level = street(50.0, false, "", &flows, 300.0);
