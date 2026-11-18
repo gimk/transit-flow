@@ -1118,6 +1118,44 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     decision
 }
 
+/// Does `other` stand at its line (for the priority rules and the ring check)? Without
+/// cyclists: within `AT_LINE` of it. With cyclists: within `RING_REACH`, and only the head
+/// of a queue (a follower cannot go before the one ahead, so it holds nobody and does not
+/// count in a ring; its long wait must not outrank the head's).
+fn stands_at_line(other: &Seen, snapshot: &Snapshot) -> bool {
+    if !snapshot.seen.iter().any(|s| s.bike) {
+        return -other.s_on_movement < AT_LINE;
+    }
+    -other.s_on_movement < RING_REACH
+        && !snapshot.seen.iter().any(|ahead| {
+            ahead.id != other.id
+                && ahead.lane == other.lane
+                && ahead.speed < STOPPED_SPEED
+                && ahead.s > other.s
+                && ahead.s - other.s < RING_REACH + 2.0
+                && in_front_of(ahead, other)
+        })
+}
+
+/// Is `other` in a queue behind a vehicle that stands or crawls (`QUEUE_CRAWL`) close
+/// ahead of it in its lane? It cannot reach the junction before that one.
+fn queued_behind(other: &Seen, snapshot: &Snapshot) -> bool {
+    snapshot.seen.iter().any(|ahead| {
+        ahead.id != other.id
+            && ahead.lane == other.lane
+            && ahead.speed < QUEUE_CRAWL
+            && ahead.s > other.s
+            && ahead.s - other.s < QUEUE_REACH
+            && in_front_of(ahead, other)
+    })
+}
+
+/// Is `ahead` in the way of `other` (their bodies overlap sideways, plus a little room)?
+/// One that stands level beside it, in the same lane, is not ahead of it.
+fn in_front_of(ahead: &Seen, other: &Seen) -> bool {
+    (ahead.lateral - other.lateral).abs() < (ahead.width + other.width) * 0.5 + 0.3
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,42 +1226,4 @@ mod tests {
         // 16 m of ramp (4 s), then 8 m at 8 m/s.
         assert!((travel_time(24.0, 0.0, 8.0) - 5.0).abs() < 1e-9);
     }
-}
-
-/// Does `other` stand at its line (for the priority rules and the ring check)? Without
-/// cyclists: within `AT_LINE` of it. With cyclists: within `RING_REACH`, and only the head
-/// of a queue (a follower cannot go before the one ahead, so it holds nobody and does not
-/// count in a ring; its long wait must not outrank the head's).
-fn stands_at_line(other: &Seen, snapshot: &Snapshot) -> bool {
-    if !snapshot.seen.iter().any(|s| s.bike) {
-        return -other.s_on_movement < AT_LINE;
-    }
-    -other.s_on_movement < RING_REACH
-        && !snapshot.seen.iter().any(|ahead| {
-            ahead.id != other.id
-                && ahead.lane == other.lane
-                && ahead.speed < STOPPED_SPEED
-                && ahead.s > other.s
-                && ahead.s - other.s < RING_REACH + 2.0
-                && in_front_of(ahead, other)
-        })
-}
-
-/// Is `other` in a queue behind a vehicle that stands or crawls (`QUEUE_CRAWL`) close
-/// ahead of it in its lane? It cannot reach the junction before that one.
-fn queued_behind(other: &Seen, snapshot: &Snapshot) -> bool {
-    snapshot.seen.iter().any(|ahead| {
-        ahead.id != other.id
-            && ahead.lane == other.lane
-            && ahead.speed < QUEUE_CRAWL
-            && ahead.s > other.s
-            && ahead.s - other.s < QUEUE_REACH
-            && in_front_of(ahead, other)
-    })
-}
-
-/// Is `ahead` in the way of `other` (their bodies overlap sideways, plus a little room)?
-/// One that stands level beside it, in the same lane, is not ahead of it.
-fn in_front_of(ahead: &Seen, other: &Seen) -> bool {
-    (ahead.lateral - other.lateral).abs() < (ahead.width + other.width) * 0.5 + 0.3
 }

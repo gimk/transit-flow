@@ -225,7 +225,8 @@ impl StreetRun {
                 let impact_kmh = f64::from((a.velocity() - b.velocity()).length()) * 3.6;
                 let position = (a.pos + b.pos) * 0.5;
                 let mut causes = self.causes_between(Some(a), Some(b));
-                if causes.is_empty() {
+                // Only for contacts with a cyclist: the vehicle-only logs stay as they were.
+                if causes.is_empty() && (a.mode == Mode::Bicycle || b.mode == Mode::Bicycle) {
                     // No hard brake and no rule broken (one that follows too close and brakes
                     // late and gently): the faster one could not stop in time.
                     let striker = if b.speed > a.speed { b } else { a };

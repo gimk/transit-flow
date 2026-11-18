@@ -568,9 +568,24 @@ impl StreetRun {
                             unseen.push(*segment);
                         }
                     }
+                    // The line where the agent waits: the end of the road lane before the
+                    // junction, less the depth of a bicycle box for motor vehicles (cyclists
+                    // wait at the crossing line, in front of the cars).
+                    let line_d = match j.checked_sub(1) {
+                        Some(before) => {
+                            let lane = route.lanes[before];
+                            let stop = if agent.bike.is_some() {
+                                self.street.bicycle_stop_distance(lane)
+                            } else {
+                                self.street.car_stop_distance(lane)
+                            };
+                            route.offsets[j] - (self.street.lanes[&lane].length - stop)
+                        }
+                        None => route.offsets[j],
+                    };
                     agent.approach = Some(Approach {
                         movement,
-                        line_d: route.offsets[j],
+                        line_d,
                         end_d: route.lane_end(j),
                         obeys_signal,
                         yields,

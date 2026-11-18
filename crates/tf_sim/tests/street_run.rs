@@ -253,11 +253,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 // Moved on purpose with the soft-brake and walker-intent fixes (WP14) on top of the local
 // street speed (WP15); before WP14 (WP15 only): 78644365565bbb77, b7b403445c80ff10,
 // 6bbbe6eb028714d6, 5c53ad09f84cb7ca.
+// Moved on purpose in Phase 6 W1 (2026-11-18): the bicycle flows of the level are now
+// simulated (cyclists, their side position, passing, junction rules). Before: 5cfe9cc14a6fd06a,
+// f299f8c34180579a, 69a86433e41e329b, ba8bd3e81ff39825.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x5cfe_9cc1_4a6f_d06a),
-    (2, Population::Mixed, 1.0, 0xf299_f8c3_4180_579a),
-    (1, Population::Careless, 4.0, 0x69a8_6433_e41e_329b),
-    (2, Population::Careless, 4.0, 0xba8b_d3e8_1ff3_9825),
+    (1, Population::Mixed, 1.0, 0xf876_1302_1c88_7e85),
+    (2, Population::Mixed, 1.0, 0xef91_8fbe_bac3_bd8b),
+    (1, Population::Careless, 4.0, 0x771f_e811_580d_89fb),
+    (2, Population::Careless, 4.0, 0x1d87_024f_7d23_6615),
 ];
 
 #[test]

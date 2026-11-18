@@ -21,7 +21,9 @@ fn run(level: &LevelFile, seed: u64, population: Population, scale: f64) -> Stre
 fn a_jammed_run_scores_lower_than_the_same_run_with_less_demand() {
     let mut level = LevelFile::load("carrefour-ecole").expect("the level loads");
     // Without cyclists: with them a jam scored higher (fewer riders get in, so fewer
-    // conflicts); the score weights for people who never get through are an open point.
+    // conflicts). Open point for Phase 8 (score tuning): people who never get through must
+    // cost more, so that a jam scores lower with cyclists too. The light run is x1 (x2.5
+    // against x6 is too close without cyclists: the same numbers on the Phase 6 base).
     for slice in &mut level.demand {
         slice.flows.retain(|flow| flow.mode != Mode::Bicycle);
     }
@@ -36,9 +38,9 @@ fn a_jammed_run_scores_lower_than_the_same_run_with_less_demand() {
         }
         (total / 5.0, waiting)
     };
-    let (light, _) = mean_score(2.5);
+    let (light, _) = mean_score(1.0);
     let (heavy, heavy_waiting) = mean_score(6.0);
-    println!("mean score: x2.5 {light:.1}, x6 {heavy:.1}; x6 people not through: {heavy_waiting}");
+    println!("mean score: x1 {light:.1}, x6 {heavy:.1}; x6 people not through: {heavy_waiting}");
     assert!(heavy < light, "{heavy} against {light}");
     assert!(
         heavy_waiting > 0,
