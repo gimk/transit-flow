@@ -159,6 +159,7 @@ fn a_hidden_pedestrian_can_be_hit_by_an_inattentive_driver() {
                         | CauseKind::Distracted
                         | CauseKind::TooFastForSight { .. }
                         | CauseKind::DidNotYieldToWalker { .. }
+                        | CauseKind::InBlindSpot { .. }
                 )),
                 "seed {seed}: a contact names neither the hidden walker nor the look: \
                  {causes:?}"
