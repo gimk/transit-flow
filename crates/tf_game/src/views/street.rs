@@ -98,6 +98,12 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
             );
         }
     }
+    for bicycle_box in street.bicycle_boxes.values() {
+        let (areas, _) = bicycle_box_shapes(street, bicycle_box.node, bicycle_box.segment);
+        for area in areas {
+            surfaces.polygon(&points(&area), palette::BIKE_BOX);
+        }
+    }
     for plaza in &street.plazas {
         surfaces.polygon(&points(&plaza.points), SIDEWALK_COLOR);
     }
@@ -135,6 +141,13 @@ pub fn build_layers(street: &Street) -> [(ShapeBuilder, f32); 4] {
     }
     for bar in &bars {
         markings.polygon(&points(bar), PAINT_COLOR);
+    }
+    // The car stop line of a bicycle box: across the motor lanes, at the back of the box.
+    for bicycle_box in street.bicycle_boxes.values() {
+        let (_, lines) = bicycle_box_shapes(street, bicycle_box.node, bicycle_box.segment);
+        for line in lines {
+            markings.polyline(&points(&line), STOP_LINE_WIDTH_M * PX_PER_M, PAINT_COLOR);
+        }
     }
     for junction in street.junctions.values() {
         for movement in street.movements(junction.node) {
@@ -227,6 +240,44 @@ pub fn crossing_bars(street: &Street, crossing: &Crossing) -> Vec<Vec<Vec2>> {
     }
     bars
 }
+
+/// The flat area of the bicycle box on approach `segment` of junction `node`, and the car
+/// stop line, in street metres (y down). The area is one polygon per motor lane of the
+/// approach, from `depth` metres before the lane's end to its end; the stop line is one
+/// short line per lane at the back of the box (the lines touch, so they read as one). Empty
+/// when the approach has no box.
+pub fn bicycle_box_shapes(
+    street: &Street,
+    node: i32,
+    segment: i32,
+) -> (Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
+    let (mut areas, mut lines) = (Vec::new(), Vec::new());
+    if street.bicycle_box(node, segment).is_none() {
+        return (areas, lines);
+    }
+    for lane in street.segment_lanes(segment) {
+        if lane.to_node != node || !lane.access.intersects(tf_sim::street::space::Access::MOTOR) {
+            continue;
+        }
+        let back = street.car_stop_distance(lane.id);
+        let middle = polylines::sub_polyline(&lane.polyline(), back, lane.length);
+        if middle.len() < 2 {
+            continue;
+        }
+        let half = f64::from(lane.width) * 0.5;
+        let left = polylines::offset_polyline(&middle, -half);
+        let mut right = polylines::offset_polyline(&middle, half);
+        lines.push(vec![left[0], right[0]]);
+        right.reverse();
+        let mut area = left;
+        area.extend(right);
+        areas.push(area);
+    }
+    (areas, lines)
+}
+
+/// Width of the car stop line of a bicycle box, metres.
+pub const STOP_LINE_WIDTH_M: f32 = 0.4;
 
 /// The span of a profile's carriageway, as offsets from its centerline: from the kerb of
 /// the leftmost strip that is not a foot strip to the kerb of the rightmost one. A level's
