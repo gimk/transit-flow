@@ -19,7 +19,9 @@ use crate::rng::SimRng;
 use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::level::Mode;
 
-/// Speeding is told when an agent drives this much faster than the limit.
+/// Speeding is told when an agent drives this much faster than the limit. A rider may ride
+/// up to this factor over a low limit (`drive::BIKE_LIMIT_TOLERANCE` is this constant), so
+/// a rider at its allowed top speed is not speeding.
 pub(super) const SPEEDING_FACTOR: f64 = 1.15;
 /// "Could not stop" is blamed on agents who braked hard this recently.
 const HARD_BRAKE_MEMORY_S: f64 = 3.0;
@@ -128,15 +130,7 @@ impl StreetRun {
             );
             return;
         }
-        let looker = perceive::Looker {
-            mode: driver.mode,
-            eye,
-            dir: driver.dir,
-            table: perceive::driver_table(driver.gaze_task),
-            seed: driver.gaze_seed,
-            fov: perceive::useful_fov(driver.traits.attention, driver.traits.risk),
-            alternate: false,
-        };
+        let looker = perceive::Looker::for_agent(driver, eye, driver.dir);
         let place = |_: perceive::Focus, _: u64| Vec2::ZERO;
         if looker
             .notices(rider.id.0 as u64, rider.pos, self.tick, place)
