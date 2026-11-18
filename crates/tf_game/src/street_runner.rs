@@ -58,6 +58,9 @@ pub struct AgentPose {
     pub prev_dir: Vec2,
     pub length: f32,
     pub width: f32,
+    /// Metres from the middle of its lane, to the right of its direction of travel
+    /// (`Agent::lateral`). `pos` already holds it; the inspector card reads it.
+    pub lateral: f32,
     pub speed: f32,
     pub frustration: f32,
     /// Stopped for others: at its own line, or held by people on foot.
@@ -111,6 +114,21 @@ pub struct CarInfo {
     pub reaction_s: f64,
     pub risk: f64,
     pub courtesy: f64,
+    /// Riders only: their own habits.
+    pub bike: Option<BikeInfo>,
+}
+
+/// The habits of a rider, fixed at spawn (`BikeHabits`): where it rides, and how likely it
+/// is to break a rule. The `*_u` numbers are the rider's fixed draw: the rule is broken
+/// when the draw is under the chance of the situation, so a low number means a rider that
+/// breaks it easily.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BikeInfo {
+    /// Metres from the right edge of a car lane.
+    pub edge_m: f64,
+    pub red_u: f64,
+    pub sidewalk_u: f64,
+    pub filter_u: f64,
 }
 
 /// The same for a pedestrian.
@@ -178,6 +196,7 @@ impl StreetSnapshot {
                 prev_dir: agent.prev_dir,
                 length: agent.length as f32,
                 width: agent.width as f32,
+                lateral: agent.lateral as f32,
                 speed: agent.speed as f32,
                 frustration: agent.frustration as f32,
                 waiting: agent.wait_ticks > 0 || agent.held_by_walkers,
@@ -245,6 +264,12 @@ impl StreetSnapshot {
                             reaction_s: car.traits.reaction_s,
                             risk: car.traits.risk,
                             courtesy: car.traits.courtesy,
+                            bike: car.bike.as_ref().map(|habits| BikeInfo {
+                                edge_m: habits.edge_m,
+                                red_u: habits.red_u,
+                                sidewalk_u: habits.sidewalk_u,
+                                filter_u: habits.filter_u,
+                            }),
                         }));
                     }
                 }
@@ -307,6 +332,17 @@ pub struct ApproachLight {
     pub node: i32,
     pub segment: i32,
     pub color: SignalColor,
+    /// The light of the bicycle lane (`SignalPlan::bicycle_light`): the same as `color`,
+    /// but green first when the plan has a leading green.
+    pub bicycle: SignalColor,
+}
+
+fn signal_color(light: Light) -> SignalColor {
+    match light {
+        Light::Green(_) => SignalColor::Green,
+        Light::Amber(_) => SignalColor::Amber,
+        Light::Red(_) => SignalColor::Red,
+    }
 }
 
 /// The lights of every signalled junction at the run's time: a few entries, cheap to
@@ -319,15 +355,11 @@ fn approach_lights(run: &StreetRun) -> Vec<ApproachLight> {
             continue;
         };
         for segment in &junction.segment_ids {
-            let color = match plan.light(*segment, time_s) {
-                Light::Green(_) => SignalColor::Green,
-                Light::Amber(_) => SignalColor::Amber,
-                Light::Red(_) => SignalColor::Red,
-            };
             lights.push(ApproachLight {
                 node: *node,
                 segment: *segment,
-                color,
+                color: signal_color(plan.light(*segment, time_s)),
+                bicycle: signal_color(plan.bicycle_light(*segment, time_s)),
             });
         }
     }

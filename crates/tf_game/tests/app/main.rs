@@ -10,5 +10,6 @@ mod common;
 mod bicycle_tools;
 mod camera_input;
 mod play;
+mod riders;
 mod street_runner;
 mod street_view;

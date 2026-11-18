@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use tf_sim::street::Street;
 use tf_sim::street::ids::AgentId;
+use tf_sim::street::level::Mode;
 
 use super::pick;
 use super::ui::{PlayFont, text_bundle};
@@ -112,11 +113,16 @@ pub fn limit_at(street: &Street, pos: Vec2) -> Option<f32> {
     pick::segment_at(street, pos).map(|hit| street.segments[&hit.segment].speed_limit_kmh)
 }
 
-/// The card of a car: who, how fast against the limit, its traits, its state.
+/// The card of a vehicle: who, how fast against the limit, its traits, its state. A rider
+/// (`Mode::Bicycle`) is named as one and shows its own habits (`BikeInfo`).
 pub fn car_card(pose: &AgentPose, info: Option<&CarInfo>, limit_kmh: Option<f32>) -> String {
+    let rider = pose.mode == Mode::Bicycle;
     let mut text = format!(
-        "Vehicle #{} - {:?}, {}\n",
-        pose.id.0, pose.mode, pose.archetype
+        "{} #{} - {:?}, {}\n",
+        if rider { "Rider" } else { "Vehicle" },
+        pose.id.0,
+        pose.mode,
+        pose.archetype
     );
     text += &match limit_kmh {
         Some(limit) => format!("Speed {:.0} km/h (limit {limit:.0})\n", kmh(pose.speed)),
@@ -138,12 +144,19 @@ pub fn car_card(pose: &AgentPose, info: Option<&CarInfo>, limit_kmh: Option<f32>
             "Frustration {:.2}  Patience {:.0} s\n",
             pose.frustration, info.patience_s
         );
+        if let Some(bike) = &info.bike {
+            text += &format!(
+                "Rides {:.1} m from the right edge, {:.1} m off the lane middle\n\
+                 Rule draws: red {:.2}  sidewalk {:.2}  filter {:.2}\n",
+                bike.edge_m, pose.lateral, bike.red_u, bike.sidewalk_u, bike.filter_u
+            );
+        }
     }
     text += &format!("State: {}", car_state(pose));
     text
 }
 
-/// A car's state in words, the most telling first.
+/// A vehicle's state in words, the most telling first.
 pub fn car_state(pose: &AgentPose) -> &'static str {
     if pose.crashed {
         "crashed"
@@ -153,6 +166,8 @@ pub fn car_state(pose: &AgentPose) -> &'static str {
         "distracted"
     } else if pose.waiting {
         "waiting"
+    } else if pose.mode == Mode::Bicycle {
+        "riding"
     } else {
         "driving"
     }
@@ -428,6 +443,7 @@ impl Plugin for InspectPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::street_runner::BikeInfo;
 
     fn car(id: i32, pos: Vec2) -> AgentPose {
         AgentPose {
@@ -440,6 +456,7 @@ mod tests {
             prev_dir: Vec2::X,
             length: 4.3,
             width: 1.8,
+            lateral: 0.0,
             speed: 8.0,
             frustration: 0.0,
             waiting: false,
@@ -537,5 +554,43 @@ mod tests {
             text.contains("off a crossing") && text.contains("free"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_rider_card_names_the_rider_and_its_habits() {
+        let mut pose = car(9, Vec2::ZERO);
+        pose.mode = Mode::Bicycle;
+        pose.archetype = "bike commuter";
+        pose.length = 1.8;
+        pose.width = 0.6;
+        pose.lateral = 0.9;
+        let info = CarInfo {
+            id: AgentId(9),
+            mode: Mode::Bicycle,
+            archetype: "bike commuter",
+            speed_factor: 6.0,
+            patience_s: 30.0,
+            compliance: 0.7,
+            attention: 0.9,
+            reaction_s: 0.8,
+            risk: 0.5,
+            courtesy: 0.5,
+            bike: Some(BikeInfo {
+                edge_m: 0.9,
+                red_u: 0.32,
+                sidewalk_u: 0.71,
+                filter_u: 0.44,
+            }),
+        };
+        let text = car_card(&pose, Some(&info), Some(30.0));
+        assert!(text.contains("Rider #9"), "{text}");
+        assert!(text.contains("bike commuter"), "{text}");
+        assert!(text.contains("Rides 0.9 m from the right edge"), "{text}");
+        assert!(text.contains("red 0.32"), "{text}");
+        assert!(text.contains("State: riding"), "{text}");
+        // A car keeps its own words and shows no rider habits.
+        let plain = car_card(&car(7, Vec2::ZERO), None, Some(30.0));
+        assert!(plain.contains("Vehicle #7"), "{plain}");
+        assert!(!plain.contains("Rides"), "{plain}");
     }
 }

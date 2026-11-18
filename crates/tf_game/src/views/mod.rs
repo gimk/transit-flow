@@ -1,7 +1,7 @@
 //! The views: the street level and its run drawn as flat shapes. Static things (ground,
 //! strips, markings, signs) are built from `level::LoadedLevel`; moving things (cars,
-//! walkers) are one batched mesh each, rewritten every frame from the street runner's
-//! snapshots. All draw with the same helpers:
+//! riders, walkers) are one batched mesh each, rewritten every frame from the street
+//! runner's snapshots. All draw with the same helpers:
 //!
 //! - `draw::ShapeBuilder` makes a mesh from any mix of polylines, polygons, rectangles and
 //!   circles, each with its own colour; `spawn_shape` puts one on screen with the shared

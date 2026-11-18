@@ -7,7 +7,8 @@
 use bevy::prelude::*;
 use bevy::text::{Font, FontSource};
 use bevy::window::PrimaryWindow;
-use tf_sim::street::run::{TICK_RATE, WalkSummary};
+use tf_sim::street::level::Mode;
+use tf_sim::street::run::{CyclistSummary, TICK_RATE, WalkSummary};
 use tf_sim::street::score::{FailReason, Incident, StageReport};
 
 use super::{PlayPhase, PlayState, PlayTool, ReportData, end_text};
@@ -136,6 +137,11 @@ pub fn check_text(state: &PlayState) -> String {
 pub fn run_text(state: &PlayState, runner: &StreetRunner) -> String {
     let tally = runner.tally();
     let view = runner.view_to();
+    let riders = view
+        .agents
+        .iter()
+        .filter(|pose| pose.mode == Mode::Bicycle)
+        .count();
     let traffic = state
         .level
         .stages
@@ -144,7 +150,7 @@ pub fn run_text(state: &PlayState, runner: &StreetRunner) -> String {
             format!(", traffic x{:.1}", def.demand_scale)
         });
     format!(
-        "RUN - stage {}/{}{traffic}\n{} - {}\nSpeed {}\nStars won by this design: {}/{}\n\nOn the street: {} vehicles, {} on foot\nArrived: {} vehicles, {} on foot\nGave up: {}\nConflicts: {} ({} serious)\nInjuries: {}   Deaths: {}\n\nPress Enter to stop the run.",
+        "RUN - stage {}/{}{traffic}\n{} - {}\nSpeed {}\nStars won by this design: {}/{}\n\nOn the street: {} vehicles ({} riders), {} on foot\nArrived: {} vehicles, {} on foot\nGave up: {}\nConflicts: {} ({} serious)\nInjuries: {}   Deaths: {}\n\nPress Enter to stop the run.",
         state.stage,
         state.stage_count(),
         tally.slice.as_deref().unwrap_or("-"),
@@ -153,6 +159,7 @@ pub fn run_text(state: &PlayState, runner: &StreetRunner) -> String {
         state.stars,
         state.stage_count(),
         view.agents.len(),
+        riders,
         view.walkers.len(),
         tally.arrived,
         tally.walkers_arrived,
@@ -177,6 +184,29 @@ fn walkers_text(w: &WalkSummary) -> String {
         w.light_injuries,
         w.serious_injuries,
         w.deaths,
+    )
+}
+
+/// The riders of the run, in the same shape as the walkers' line: their trips, their near
+/// misses by the other party, the close passes of motor vehicles, and their contacts.
+fn cyclists_text(c: &CyclistSummary) -> String {
+    format!(
+        "Riders: {} came, {} arrived, {} gave up, {} unfinished\n  mean delay {:.1} s, near misses {} ({} with cars, {} with walkers, {} with riders), close passes {}, hard brakes {}\n  contacts {} ({} light, {} serious injuries, {} deaths)",
+        c.spawned,
+        c.arrived,
+        c.gave_up,
+        c.unfinished,
+        c.mean_delay_s,
+        c.pet_with_cars + c.pet_with_walkers + c.pet_with_cyclists,
+        c.pet_with_cars,
+        c.pet_with_walkers,
+        c.pet_with_cyclists,
+        c.close_passes,
+        c.hard_brakes,
+        c.contacts_with_cars + c.contacts_with_walkers + c.contacts_with_cyclists,
+        c.light_injuries,
+        c.serious_injuries,
+        c.deaths,
     )
 }
 
@@ -285,6 +315,10 @@ pub fn report_tail_text(state: &PlayState, report: &ReportData) -> String {
             s.contacts,
             walkers_text(&s.walkers),
         );
+        // A level without bicycle flows has no riders to report.
+        if s.cyclists.spawned > 0 {
+            text += &format!("{}\n", cyclists_text(&s.cyclists));
+        }
     }
     for line in &report.extra {
         text += &format!("\n{line}");
@@ -646,7 +680,31 @@ mod tests {
         );
         assert!(text.contains("the day is over") && text.contains("Score: 42"));
         assert!(text.contains("Vehicles:") && text.contains("On foot:"));
+        // Level 1 has bicycle flows: the riders get their own line.
+        assert!(text.contains("Riders:"), "{text}");
+        assert!(text.contains("close passes"), "{text}");
         assert!(text.contains("STAGE 1") && text.contains(verdict), "{text}");
         assert!(text.contains("Stage 1/3: traffic x1.0") && text.contains("Stars won"));
+    }
+
+    #[test]
+    fn a_level_without_riders_has_no_rider_line() {
+        let level = LevelFile::load("carrefour-ecole").expect("loads");
+        let run = tf_sim::street::run::StreetRun::new(
+            &level,
+            &tf_sim::street::Design::new(&level.id),
+            tf_sim::street::run::RunOptions::for_level(&level),
+        )
+        .expect("builds");
+        let mut summary = run.summary();
+        summary.cyclists = CyclistSummary::default();
+        let report = ReportData {
+            summary: Some(summary),
+            stage: tf_sim::street::score::stage_report(&run, &level, 1),
+            extra: Vec::new(),
+        };
+        let state = PlayState::new(level);
+        let text = report_tail_text(&state, &report);
+        assert!(!text.contains("Riders:"), "{text}");
     }
 }
