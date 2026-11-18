@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::level::{CrossingDef, JunctionControl, Sign, TurnBan};
-use super::space::{Direction, StripUse};
+use super::space::{Direction, Separator, StripUse};
 
 /// A side of a segment, looking along it from its `from` node to its `to` node; the same
 /// convention as the profile, whose strips run from the left building line.
@@ -56,6 +56,14 @@ pub enum DesignCommand {
         boundary: usize,
         delta: f32,
     },
+    /// Sets the separator on the boundary between strips `boundary - 1` and `boundary`
+    /// (both sides of the line, so the two strips agree). A bicycle track next to a car or
+    /// bus lane keeps a physical separator (kerb, bollards or planter).
+    SetSeparator {
+        segment: i32,
+        boundary: usize,
+        separator: Separator,
+    },
     SetSpeedLimit {
         segment: i32,
         kmh: f32,
@@ -103,6 +111,25 @@ pub enum DesignCommand {
         control: JunctionControl,
         #[serde(default)]
         template: Option<SignalTemplate>,
+    },
+    /// A bicycle box (*sas vélo*) on the approach `segment` of the signalled junction
+    /// `node`: cyclists wait in a box `depth` metres deep at the crossing, and the car stop
+    /// line moves back by `depth`.
+    AddBicycleBox {
+        node: i32,
+        segment: i32,
+        depth: f32,
+    },
+    RemoveBicycleBox {
+        node: i32,
+        segment: i32,
+    },
+    /// A leading bicycle green: at the start of each phase the bicycles of its approaches
+    /// have green `lead_s` seconds before the cars do. 0 takes it away. Needs a signal
+    /// plan from a template.
+    SetBicycleLead {
+        node: i32,
+        lead_s: f32,
     },
 }
 

@@ -10,7 +10,10 @@ use bevy::prelude::Vec2;
 use tf_sim::street::design::{Side, SignalTemplate};
 use tf_sim::street::level::{CrossingDef, CrossingKind, DEFAULT_CROSSING_WIDTH, JunctionControl};
 use tf_sim::street::model::{Junction, SPEED_LIMITS_KMH};
-use tf_sim::street::signals::{DEFAULT_GREEN_S, MAX_GREEN_S, MIN_GREEN_S};
+use tf_sim::street::signals::{
+    DEFAULT_BICYCLE_LEAD_S, DEFAULT_GREEN_S, MAX_BICYCLE_LEAD_S, MAX_GREEN_S, MIN_GREEN_S,
+};
+use tf_sim::street::space::Separator;
 use tf_sim::street::{DesignCommand, Street};
 
 use crate::views::street::carriageway;
@@ -332,6 +335,150 @@ pub fn green_command(street: &Street, p: Vec2, steps: i32) -> Option<DesignComma
     })
 }
 
+/// How near a boundary line a click must be to pick it, metres.
+pub const BOUNDARY_HIT_M: f32 = 0.5;
+
+/// A boundary between two strips of a segment, found under a point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoundaryHit {
+    pub segment: i32,
+    /// The boundary between strips `boundary - 1` and `boundary`.
+    pub boundary: usize,
+    /// Its offset to the right of the centerline, metres.
+    pub offset: f32,
+    /// Metres along the centerline.
+    pub along: f32,
+}
+
+/// The strip boundary (not a building line) nearest to `p`, within `BOUNDARY_HIT_M`.
+pub fn boundary_at(street: &Street, p: Vec2) -> Option<BoundaryHit> {
+    let hit = segment_at(street, p)?;
+    let profile = &street.segments[&hit.segment].profile;
+    (1..profile.strips.len())
+        .map(|boundary| (boundary, profile.strip_span(boundary).0))
+        .filter(|(_, offset)| (hit.offset - offset).abs() <= BOUNDARY_HIT_M)
+        .min_by(|a, b| {
+            (hit.offset - a.1)
+                .abs()
+                .total_cmp(&(hit.offset - b.1).abs())
+        })
+        .map(|(boundary, offset)| BoundaryHit {
+            segment: hit.segment,
+            boundary,
+            offset,
+            along: hit.along,
+        })
+}
+
+/// The separator after `separator` when a click cycles: none, paint, kerb, bollards,
+/// planter, none.
+pub fn next_separator(separator: Separator) -> Separator {
+    match separator {
+        Separator::None => Separator::Paint,
+        Separator::Paint => Separator::Kerb,
+        Separator::Kerb => Separator::Bollards,
+        Separator::Bollards => Separator::Planter,
+        Separator::Planter => Separator::None,
+    }
+}
+
+/// The separator on a boundary now (the right edge of the strip before it).
+pub fn separator_on(street: &Street, hit: &BoundaryHit) -> Separator {
+    street.segments[&hit.segment].profile.strips[hit.boundary - 1].right
+}
+
+/// The separator tool's click: the boundary under the point gets the next separator.
+pub fn separator_command(street: &Street, p: Vec2) -> Option<DesignCommand> {
+    let hit = boundary_at(street, p)?;
+    Some(DesignCommand::SetSeparator {
+        segment: hit.segment,
+        boundary: hit.boundary,
+        separator: next_separator(separator_on(street, &hit)),
+    })
+}
+
+/// Depth of a bicycle box the tool places, metres (inside 3 to 5 m).
+pub const DEFAULT_BOX_DEPTH_M: f32 = 4.0;
+
+/// The approach a point belongs to: the segment under it and its end node that is nearer.
+/// Inside a junction area: the nearest approach of that junction.
+pub fn approach_at(street: &Street, p: Vec2) -> Option<(i32, i32)> {
+    if let Some(hit) = segment_at(street, p) {
+        let segment = &street.segments[&hit.segment];
+        let length = tf_sim::geom::lanes::polyline_length(&segment.centerline) as f32;
+        let node = if hit.along * 2.0 < length {
+            segment.from
+        } else {
+            segment.to
+        };
+        return Some((node, hit.segment));
+    }
+    let node = junction_at(street, p)?;
+    street.nodes[&node]
+        .segment_ids
+        .iter()
+        .copied()
+        .min_by(|a, b| {
+            let d = |id: &i32| {
+                let segment = &street.segments[id];
+                let end = if segment.to == node {
+                    segment.centerline.last()
+                } else {
+                    segment.centerline.first()
+                };
+                end.map_or(f32::MAX, |end| end.distance(p))
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .map(|segment| (node, segment))
+}
+
+/// The bicycle box tool's click: a box on the approach is removed, else one is added.
+pub fn box_command(street: &Street, p: Vec2) -> Option<DesignCommand> {
+    let (node, segment) = approach_at(street, p)?;
+    Some(if street.bicycle_box(node, segment).is_some() {
+        DesignCommand::RemoveBicycleBox { node, segment }
+    } else {
+        DesignCommand::AddBicycleBox {
+            node,
+            segment,
+            depth: DEFAULT_BOX_DEPTH_M,
+        }
+    })
+}
+
+/// One step of the wheel or +/- on the leading bicycle green, seconds.
+pub const LEAD_STEP_S: f32 = 1.0;
+
+/// The leading bicycle green of a junction's plan now, seconds (0 without a plan).
+pub fn lead_of(junction: &Junction) -> f32 {
+    junction
+        .signal_plan
+        .as_ref()
+        .map_or(0.0, |plan| plan.bicycle_lead_s)
+}
+
+/// The lead tool's click on a junction: no lead becomes `DEFAULT_BICYCLE_LEAD_S`, any
+/// lead becomes none. A junction without signals is refused by the street, with its reason.
+pub fn lead_click_command(street: &Street, p: Vec2) -> Option<DesignCommand> {
+    let node = junction_at(street, p)?;
+    let lead_s = if lead_of(&street.junctions[&node]) > 0.0 {
+        0.0
+    } else {
+        DEFAULT_BICYCLE_LEAD_S
+    };
+    Some(DesignCommand::SetBicycleLead { node, lead_s })
+}
+
+/// Wheel or +/- over a signalled junction with the lead tool: the lead moves `steps`
+/// seconds, held to 0..6 s. `None` if nothing changes.
+pub fn lead_step_command(street: &Street, p: Vec2, steps: i32) -> Option<DesignCommand> {
+    let node = signalled_junction_at(street, p)?;
+    let now = lead_of(&street.junctions[&node]);
+    let lead_s = (now + steps as f32 * LEAD_STEP_S).clamp(0.0, MAX_BICYCLE_LEAD_S);
+    ((lead_s - now).abs() > 1e-3).then_some(DesignCommand::SetBicycleLead { node, lead_s })
+}
+
 /// Where the signal mark of one approach of a signalled junction goes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ApproachMark {
@@ -340,6 +487,9 @@ pub struct ApproachMark {
     pub segment: i32,
     /// Street metres.
     pub position: Vec2,
+    /// The leading bicycle green of the junction's plan, seconds (0: none). The mark shows
+    /// a second, small light for the bicycles when it is above 0.
+    pub bicycle_lead_s: f32,
 }
 
 /// A mark per approach of every junction under signals: just before the junction edge, on
@@ -369,6 +519,7 @@ pub fn approach_marks(street: &Street) -> Vec<ApproachMark> {
                 node: junction.node,
                 segment: *id,
                 position: point_at(&segment.centerline, along, offset),
+                bicycle_lead_s: lead_of(junction),
             });
         }
     }

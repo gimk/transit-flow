@@ -21,6 +21,13 @@ pub const HOUSING_COLOR: Color = Color::srgb(0.08, 0.08, 0.1);
 pub const DISC_RADIUS_M: f32 = 0.7;
 pub const HOUSING_RADIUS_M: f32 = 0.95;
 
+/// The small light of a leading bicycle green: its colour is fixed (it does not follow the
+/// run's lights, which are the cars'), its place is under the car light.
+pub const BIKE_LIGHT_COLOR: Color = Color::srgb(0.2, 0.7, 0.55);
+pub const BIKE_DISC_RADIUS_M: f32 = 0.4;
+pub const BIKE_HOUSING_RADIUS_M: f32 = 0.6;
+pub const BIKE_LIGHT_OFFSET_M: f32 = 1.7;
+
 /// The one entity that holds every mark.
 #[derive(Component)]
 pub struct SignalMarks;
@@ -41,6 +48,13 @@ pub fn build_marks(marks: &[(ApproachMark, Option<SignalColor>)]) -> ShapeBuilde
         let center = sim_to_bevy(level_to_world(mark.position));
         shape.circle(center, HOUSING_RADIUS_M * PX_PER_M, 16, HOUSING_COLOR);
         shape.circle(center, DISC_RADIUS_M * PX_PER_M, 16, color_of(*light));
+        // A junction with a leading bicycle green: a small second light under the first
+        // (street y is down, Bevy y is up), the bicycles' own, green before the cars'.
+        if mark.bicycle_lead_s > 0.0 {
+            let bike = center - Vec2::new(0.0, BIKE_LIGHT_OFFSET_M * PX_PER_M);
+            shape.circle(bike, BIKE_HOUSING_RADIUS_M * PX_PER_M, 12, HOUSING_COLOR);
+            shape.circle(bike, BIKE_DISC_RADIUS_M * PX_PER_M, 12, BIKE_LIGHT_COLOR);
+        }
     }
     shape
 }

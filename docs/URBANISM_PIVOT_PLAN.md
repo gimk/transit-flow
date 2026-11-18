@@ -8,6 +8,18 @@
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
 
+### 2026-11-17 (evening): Phase 6 started, stopped for a break
+
+**State.** `main` holds Phases 4 and 5 (`04fcf65`; `scripts/check.sh` passed). Branch `pivot-phase-6` = `main` + this note. Three Phase 6 work packages were started in parallel in git worktrees and stopped mid-task; their work is saved as one **WIP commit per branch** (not built or tested as a whole; do not merge as is):
+- `p6-bike` (W1, cyclist core: agents, side position, following, passing, filtering, archetypes): new `street/run/bike.rs`, `tests/street_bike.rs`, edits in `run/{agent,conflicts,drive,events,meet,mod,route,spawn}.rs`, `score.rs`.
+- `p6-infra` (W2, bicycle design: strips, separators, contraflow, bicycle box, bicycle signals): edits in `design.rs`, `model.rs`, `signals.rs`, `space.rs`, `run/mod.rs`, new `tests/street_bicycle.rs`; its report is `WIP-REPORT.md` in the branch (remove it before a merge).
+- `p6-sense` (W3, perception: field of view, gaze, blind spots, surprise, hearing): new `run/perceive.rs`, `tests/street_perceive.rs`, edits in `run/{agent,drive,events,kerb,meet,mod,spawn,walker,yielding}.rs`, `score.rs`.
+The briefs are in sections 5.7 and 8 (Phase 6 work packages). W1 and W3 both edit `agent.rs`, `drive.rs`, `events.rs`, `meet.rs`, `spawn.rs`, `score.rs`: expect merge conflicts; merge W2 first, then W1, then W3 (W3 must give its perception API an agent kind, so cyclists use it).
+
+**To resume:** for each branch, `git worktree add ../tf-p6-<name> p6-<name>`, build with a warm `CARGO_TARGET_DIR` (`tf-target-1/2/3`), finish the brief (tests, replay hashes, measure), drop the WIP commit message with a real one. Then packages 4 (classic conflicts), 5 (swerving), 6 (views).
+
+**Small open points from the Phase 4 measures** (fix after W1 and W3 are merged, same files): one serious car-walker PET event still has no cause text (slow design, x4, seed 10, tick 3103); check that a PET of 0.0 s (two cars in the same cell at once) is right to grade as serious. For Phase 8: cars that never enter cost less than their delay, so a design can score higher at x4 than at stage 3 (with the jam rule decision); 20 km/h gives as many conflicts as 30 km/h on level 1 and no injuries in either, so its benefit (severity) must be checked against real accident data.
+
 ### 2026-11-17: Phase 5 done
 
 **State.** Branch `pivot-phase-5` (from `main`, which holds Phase 4). The old city builder is deleted from `tf_sim` and `tf_game`, with its tests, its goldens and `migration/` (plan 2.3: retired in the same commit as their code). Lines of Rust 56 500 → 26 100. The street replay hashes did not change. Kept helpers moved to the street side: `geom::lanes` (lane offset and connector curves), `street::lanes::Turn`, `street::astar`. `cargo play` opens level 1. Bevy features `bevy_gizmos` and `bevy_gizmos_render` and the dependencies `indexmap` (tf_game), `approx`, `smallvec` are removed. `tf_game/src/bench.rs` is deleted; `cargo run -p tf_sim --release --bin street_benchmark` measures the sim cost per demand scale (scale 8 on level 1: 0.6 ms per tick, 85x real time). `scripts/check.sh` passes (17 min on a cold build). `cargo clean --profile dev` freed 39.6 GB.

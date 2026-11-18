@@ -15,10 +15,10 @@ use super::level::{
     ObstacleKind, Shape, Sign, TurnBan,
 };
 use super::signals::{
-    DEFAULT_ALL_RED_S, DEFAULT_AMBER_S, MAX_GREEN_S, MIN_GREEN_S, SignalPhase, SignalPlan,
-    pair_opposite_arms,
+    DEFAULT_ALL_RED_S, DEFAULT_AMBER_S, MAX_BICYCLE_LEAD_S, MAX_GREEN_S, MIN_GREEN_S, SignalPhase,
+    SignalPlan, pair_opposite_arms,
 };
-use super::space::{Access, Direction, Profile, StripUse};
+use super::space::{Access, Crossability, Direction, Profile, Separator, StripUse};
 use crate::geom::lanes as polylines;
 use crate::geom::{Circle, Polygon};
 
@@ -27,6 +27,29 @@ pub const MIN_STRIP_WIDTH: f32 = 0.5;
 /// The speed limits the player may set (km/h): "zone de rencontre", Paris default, and
 /// the old urban limit.
 pub const SPEED_LIMITS_KMH: [f32; 3] = [20.0, 30.0, 50.0];
+
+/// The narrowest painted bicycle lane the player may make or leave (metres; start value,
+/// the usual one-way lane width in French guidance).
+pub const MIN_BIKE_LANE_WIDTH: f32 = 1.5;
+/// The narrowest one-way bicycle track (metres; start value: a lane plus room for the
+/// separator and for passing).
+pub const MIN_BIKE_TRACK_WIDTH: f32 = 2.0;
+/// A bicycle strip against the traffic of a one-way street needs a limit of at most this
+/// (km/h; French "double-sens cyclable" practice, decree 2008-754: not checked against the
+/// text here).
+pub const MAX_CONTRAFLOW_LIMIT_KMH: f32 = 30.0;
+/// The depth of a bicycle box (*sas vélo*), metres: 3 to 5 m (start values).
+pub const MIN_BOX_DEPTH: f32 = 3.0;
+pub const MAX_BOX_DEPTH: f32 = 5.0;
+
+/// A bicycle box on one approach of a signalled junction. Cyclists stop at the crossing
+/// (the end of the road lane); cars stop `depth` metres before it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BicycleBox {
+    pub node: i32,
+    pub segment: i32,
+    pub depth: f32,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreetNode {
@@ -181,6 +204,8 @@ pub struct Street {
     pub obstacles: IndexMap<i32, Obstacle>,
     pub crossings: IndexMap<i32, Crossing>,
     pub bollard_rows: IndexMap<i32, BollardRow>,
+    /// Keyed by (junction node, approach segment).
+    pub bicycle_boxes: IndexMap<(i32, i32), BicycleBox>,
     pub areas: IndexMap<i32, Area>,
     pub constraints: Vec<Constraint>,
     /// Bumped by every successful edit.
@@ -205,6 +230,7 @@ impl Street {
             obstacles: IndexMap::new(),
             crossings: IndexMap::new(),
             bollard_rows: IndexMap::new(),
+            bicycle_boxes: IndexMap::new(),
             areas: IndexMap::new(),
             constraints: level.constraints.clone(),
             version: 0,
@@ -334,17 +360,20 @@ impl Street {
                         "a travel strip needs a direction, other strips none".into(),
                     ));
                 }
+                let backup = self.edit_backup(segment);
                 let target = self.unlocked_strip(segment, strip)?;
                 target.use_ = use_;
                 target.direction = direction;
                 target.access = None;
-                self.segment_changed(segment)
+                self.default_bicycle_separators(segment, strip);
+                self.finish_profile_edit(segment, backup)?
             }
             DesignCommand::SetStripDirection {
                 segment,
                 strip,
                 direction,
             } => {
+                let backup = self.edit_backup(segment);
                 let target = self.unlocked_strip(segment, strip)?;
                 if !target.use_.is_travel() || direction == Direction::None {
                     return Err(EditError::Invalid(
@@ -352,7 +381,7 @@ impl Street {
                     ));
                 }
                 target.direction = direction;
-                self.segment_changed(segment)
+                self.finish_profile_edit(segment, backup)?
             }
             DesignCommand::MoveBoundary {
                 segment,
@@ -369,20 +398,47 @@ impl Street {
                         "a strip cannot be narrower than {MIN_STRIP_WIDTH} m"
                     )));
                 }
+                let backup = self.edit_backup(segment);
                 let strips = &mut self.segments[&segment].profile.strips;
                 strips[boundary - 1].width = left;
                 strips[boundary].width = right;
-                self.segment_changed(segment)
+                self.finish_profile_edit(segment, backup)?
+            }
+            DesignCommand::SetSeparator {
+                segment,
+                boundary,
+                separator,
+            } => {
+                let count = self
+                    .segments
+                    .get(&segment)
+                    .ok_or(EditError::UnknownSegment(segment))?
+                    .profile
+                    .strips
+                    .len();
+                if boundary == 0 || boundary >= count {
+                    return Err(EditError::Invalid(
+                        "a separator goes between two strips, not on a building line".into(),
+                    ));
+                }
+                self.unlocked_strip(segment, boundary - 1)?;
+                self.unlocked_strip(segment, boundary)?;
+                let backup = self.edit_backup(segment);
+                let strips = &mut self.segments[&segment].profile.strips;
+                strips[boundary - 1].right = separator;
+                strips[boundary].left = separator;
+                self.finish_profile_edit(segment, backup)?
             }
             DesignCommand::SetSpeedLimit { segment, kmh } => {
                 if !SPEED_LIMITS_KMH.contains(&kmh) {
                     return Err(EditError::Invalid(format!("no {kmh} km/h speed limit")));
                 }
+                let backup = self.edit_backup(segment);
                 self.segments
                     .get_mut(&segment)
                     .ok_or(EditError::UnknownSegment(segment))?
                     .speed_limit_kmh = kmh;
-                self.segment_changed(segment)
+                self.finish_profile_edit(segment, backup)?
             }
             DesignCommand::BanTurn { node, ban } => {
                 self.check_arms(node, &ban)?;
@@ -453,6 +509,13 @@ impl Street {
                 if !self.junctions.contains_key(&node) {
                     return Err(EditError::UnknownJunction(node));
                 }
+                if control == JunctionControl::PriorityToRight
+                    && self.bicycle_boxes.keys().any(|(n, _)| *n == node)
+                {
+                    return Err(EditError::Invalid(
+                        "a bicycle box needs signals: remove the box first".into(),
+                    ));
+                }
                 let plan = match (control, template) {
                     (JunctionControl::PriorityToRight, Some(_)) => {
                         return Err(EditError::Invalid(
@@ -470,6 +533,61 @@ impl Street {
                 junction.control = control;
                 junction.signal_plan = plan;
                 self.junction_changed(node)
+            }
+            DesignCommand::AddBicycleBox {
+                node,
+                segment,
+                depth,
+            } => {
+                self.add_bicycle_box(node, segment, depth)?;
+                StreetChange {
+                    node_ids: vec![node],
+                    segment_ids: vec![segment],
+                }
+            }
+            DesignCommand::RemoveBicycleBox { node, segment } => {
+                self.bicycle_boxes
+                    .shift_remove(&(node, segment))
+                    .ok_or_else(|| {
+                        EditError::Invalid(format!(
+                            "no bicycle box on segment {segment} at junction {node}"
+                        ))
+                    })?;
+                StreetChange {
+                    node_ids: vec![node],
+                    segment_ids: vec![segment],
+                }
+            }
+            DesignCommand::SetBicycleLead { node, lead_s } => {
+                if !self.junctions.contains_key(&node) {
+                    return Err(EditError::UnknownJunction(node));
+                }
+                let Some(plan) = self.junctions[&node].signal_plan.as_mut() else {
+                    return Err(EditError::Invalid(
+                        "a leading bicycle green needs a signal plan: pick a signal template \
+                         first"
+                            .into(),
+                    ));
+                };
+                let shortest = plan
+                    .phases
+                    .iter()
+                    .map(|phase| phase.green_s)
+                    .fold(f32::INFINITY, f32::min);
+                if !lead_s.is_finite()
+                    || !(0.0..=MAX_BICYCLE_LEAD_S).contains(&lead_s)
+                    || lead_s >= shortest
+                {
+                    return Err(EditError::Invalid(format!(
+                        "a leading bicycle green lasts 0 to {MAX_BICYCLE_LEAD_S} s and less \
+                         than every green of the plan, not {lead_s} s"
+                    )));
+                }
+                plan.bicycle_lead_s = lead_s;
+                StreetChange {
+                    node_ids: vec![node],
+                    segment_ids: Vec::new(),
+                }
             }
             DesignCommand::SetSign {
                 node,
@@ -675,6 +793,7 @@ impl Street {
             phases,
             amber_s: DEFAULT_AMBER_S,
             all_red_s: DEFAULT_ALL_RED_S,
+            bicycle_lead_s: 0.0,
         })
     }
 
@@ -968,5 +1087,319 @@ impl Street {
                 feeder.segment_id == Some(from_segment) && out.segment_id == Some(to_segment)
             })
             .fold(Access::NONE, |all, m| all | m.access)
+    }
+}
+
+/// Why `profile` is not a valid street with its bicycle strips, if it is not. `before` is
+/// the profile before the edit: a strip that was already too narrow is tolerated as long
+/// as the edit does not make it narrower.
+///
+/// The rules (start values and French practice, see the constants):
+/// - a painted lane is at least `MIN_BIKE_LANE_WIDTH` wide, a track `MIN_BIKE_TRACK_WIDTH`;
+/// - cyclists keep to the right of their own direction: a bicycle strip lies on the right
+///   of the car and bus lanes that run the other way (so in a two-way street it is on the
+///   side of the traffic it rides with, and a contraflow lane lies on the left of the
+///   one-way carriageway);
+/// - a strip against the traffic of a one-way street needs a limit of at most
+///   `MAX_CONTRAFLOW_LIMIT_KMH`;
+/// - a track next to a car or bus lane has a kerb, bollards or a planter between them.
+fn check_bicycle_strips(
+    profile: &Profile,
+    speed_limit_kmh: f32,
+    before: Option<&Profile>,
+) -> Result<(), String> {
+    let strips = &profile.strips;
+    let motor: Vec<(usize, Direction)> = strips
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            matches!(s.use_, StripUse::CarLane | StripUse::BusLane)
+                && s.direction != Direction::None
+        })
+        .map(|(i, s)| (i, s.direction))
+        .collect();
+    let one_way = motor
+        .first()
+        .map(|(_, d)| *d)
+        .filter(|d| motor.iter().all(|(_, other)| other == d));
+    for (i, strip) in strips.iter().enumerate() {
+        let (name, minimum) = match strip.use_ {
+            StripUse::BikeLane => ("bicycle lane", MIN_BIKE_LANE_WIDTH),
+            StripUse::BikeTrack => ("bicycle track", MIN_BIKE_TRACK_WIDTH),
+            _ => continue,
+        };
+        let tolerated = before.is_some_and(|b| {
+            b.strips
+                .get(i)
+                .is_some_and(|old| old.use_ == strip.use_ && old.width <= strip.width + 1e-4)
+        });
+        if strip.width < minimum - 1e-4 && !tolerated {
+            return Err(format!(
+                "a {name} needs at least {minimum} m, this strip is {} m",
+                strip.width
+            ));
+        }
+        for &(j, d) in &motor {
+            let wrong_side = match strip.direction {
+                Direction::Backward => d == Direction::Forward && i > j,
+                Direction::Forward => d == Direction::Backward && i < j,
+                Direction::None => false,
+            };
+            if wrong_side {
+                return Err(format!(
+                    "a {name} must lie on the right of the car lanes that run the other way, \
+                     so that cyclists keep to the right of their own direction"
+                ));
+            }
+        }
+        if let Some(flow) = one_way
+            && flow != strip.direction
+            && speed_limit_kmh > MAX_CONTRAFLOW_LIMIT_KMH
+        {
+            return Err(format!(
+                "a {name} against the traffic is only allowed on a one-way street limited to \
+                 {MAX_CONTRAFLOW_LIMIT_KMH} km/h or less (the limit here is {speed_limit_kmh} km/h)"
+            ));
+        }
+        if strip.use_ == StripUse::BikeTrack {
+            for (neighbour, own, before_us) in [
+                (i.checked_sub(1), strip.left, true),
+                (Some(i + 1), strip.right, false),
+            ] {
+                let Some(other) = neighbour.and_then(|n| strips.get(n)) else {
+                    continue;
+                };
+                if !matches!(other.use_, StripUse::CarLane | StripUse::BusLane) {
+                    continue;
+                }
+                let theirs = if before_us { other.right } else { other.left };
+                if !own.is_physical() && !theirs.is_physical() {
+                    return Err(
+                        "a bicycle track next to a car lane needs a kerb, bollards or a \
+                         planter between them"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl Street {
+    fn edit_backup(&self, segment: i32) -> Option<(Profile, f32)> {
+        self.segments
+            .get(&segment)
+            .map(|s| (s.profile.clone(), s.speed_limit_kmh))
+    }
+
+    /// Ends a profile or speed edit: checks the bicycle rules on the result and, if they
+    /// fail, puts the old profile and limit back, so that an error changes nothing.
+    fn finish_profile_edit(
+        &mut self,
+        segment: i32,
+        backup: Option<(Profile, f32)>,
+    ) -> Result<StreetChange, EditError> {
+        let target = &self.segments[&segment];
+        let before = backup.as_ref().map(|(profile, _)| profile);
+        if let Err(message) = check_bicycle_strips(&target.profile, target.speed_limit_kmh, before)
+        {
+            if let Some((profile, limit)) = backup {
+                let target = &mut self.segments[&segment];
+                target.profile = profile;
+                target.speed_limit_kmh = limit;
+            }
+            return Err(EditError::Invalid(message));
+        }
+        Ok(self.segment_changed(segment))
+    }
+
+    /// Gives a new bicycle strip the separators its use needs next to car lanes: paint
+    /// for a lane (next to parking too), a kerb for a track. A separator that is already
+    /// there stays (a track keeps any physical one); a locked neighbour is left alone.
+    fn default_bicycle_separators(&mut self, segment: i32, strip: usize) {
+        let strips = &mut self.segments[&segment].profile.strips;
+        let track = match strips[strip].use_ {
+            StripUse::BikeLane => false,
+            StripUse::BikeTrack => true,
+            _ => return,
+        };
+        for neighbour in [strip.checked_sub(1), Some(strip + 1)]
+            .into_iter()
+            .flatten()
+        {
+            let Some(other) = strips.get(neighbour) else {
+                continue;
+            };
+            if other.locked {
+                continue;
+            }
+            let want = match (other.use_, track) {
+                (StripUse::CarLane | StripUse::BusLane, true) => Separator::Kerb,
+                (StripUse::CarLane | StripUse::BusLane, false)
+                | (StripUse::Parking | StripUse::DeliveryBay, false) => Separator::Paint,
+                _ => continue,
+            };
+            let (own_side, other_side) = if neighbour < strip {
+                (strips[strip].left, strips[neighbour].right)
+            } else {
+                (strips[strip].right, strips[neighbour].left)
+            };
+            let keep = if track {
+                own_side.is_physical() || other_side.is_physical()
+            } else {
+                own_side != Separator::None || other_side != Separator::None
+            };
+            if keep {
+                continue;
+            }
+            if neighbour < strip {
+                strips[strip].left = want;
+                strips[neighbour].right = want;
+            } else {
+                strips[strip].right = want;
+                strips[neighbour].left = want;
+            }
+        }
+    }
+
+    /// Places a bicycle box on an approach of a signalled junction. On an error nothing
+    /// changed.
+    fn add_bicycle_box(&mut self, node: i32, segment: i32, depth: f32) -> Result<(), EditError> {
+        self.check_arm(node, segment)?;
+        if !depth.is_finite() || !(MIN_BOX_DEPTH..=MAX_BOX_DEPTH).contains(&depth) {
+            return Err(EditError::Invalid(format!(
+                "a bicycle box is {MIN_BOX_DEPTH} to {MAX_BOX_DEPTH} m deep, not {depth} m"
+            )));
+        }
+        let junction = &self.junctions[&node];
+        if junction.control != JunctionControl::Signals {
+            return Err(EditError::Invalid(
+                "a bicycle box goes on a signalled approach: put signals on the junction first"
+                    .into(),
+            ));
+        }
+        if let Some(plan) = &junction.signal_plan
+            && !plan.phases.iter().any(|p| p.green.contains(&segment))
+        {
+            return Err(EditError::Invalid(format!(
+                "segment {segment} has no green in the signal plan of junction {node}"
+            )));
+        }
+        if self.bicycle_boxes.contains_key(&(node, segment)) {
+            return Err(EditError::Invalid(
+                "this approach already has a bicycle box".into(),
+            ));
+        }
+        let incoming: Vec<&StreetLane> = self
+            .segment_lanes(segment)
+            .filter(|lane| lane.to_node == node)
+            .collect();
+        let bicycles = incoming
+            .iter()
+            .any(|l| l.access.intersects(Access::BICYCLE));
+        let motor = incoming.iter().any(|l| l.access.intersects(Access::MOTOR));
+        if !bicycles || !motor {
+            return Err(EditError::Invalid(
+                "a bicycle box needs lanes for bicycles and for cars on the approach".into(),
+            ));
+        }
+        let shortest = incoming
+            .iter()
+            .map(|l| l.length)
+            .fold(f64::INFINITY, f64::min);
+        if f64::from(depth) + 1.0 > shortest {
+            return Err(EditError::Invalid(
+                "the approach is too short for this bicycle box".into(),
+            ));
+        }
+        self.bicycle_boxes.insert(
+            (node, segment),
+            BicycleBox {
+                node,
+                segment,
+                depth,
+            },
+        );
+        Ok(())
+    }
+
+    /// The bicycle box on approach `segment` of junction `node`, if any.
+    pub fn bicycle_box(&self, node: i32, segment: i32) -> Option<&BicycleBox> {
+        self.bicycle_boxes.get(&(node, segment))
+    }
+
+    /// Where cars stop on a road lane, as a distance from its start. This is the end of
+    /// the lane (the crossing line), less the depth of the bicycle box of its approach,
+    /// for lanes that motor vehicles use. Movements and unknown lanes give their length.
+    pub fn car_stop_distance(&self, lane: StreetLaneId) -> f64 {
+        let Some(lane) = self.lanes.get(&lane) else {
+            return 0.0;
+        };
+        let depth = lane
+            .segment_id
+            .filter(|_| lane.access.intersects(Access::MOTOR))
+            .and_then(|segment| self.bicycle_box(lane.to_node, segment))
+            .map_or(0.0, |b| f64::from(b.depth));
+        (lane.length - depth).max(0.0)
+    }
+
+    /// Where cyclists stop on a road lane: always the crossing line, the end of the lane,
+    /// so that with a bicycle box they wait in front of the cars.
+    pub fn bicycle_stop_distance(&self, lane: StreetLaneId) -> f64 {
+        self.lanes.get(&lane).map_or(0.0, |lane| lane.length)
+    }
+
+    /// How hard it is for `mode` to cross boundary `boundary` of `segment` (between strips
+    /// `boundary - 1` and `boundary`): the hardest of the two separators on that line, see
+    /// `Separator::crossability`. The building lines (0 and the last) and unknown
+    /// boundaries are `Blocked`. The drive code reads this: `Paint` is what a careless
+    /// driver may cross to park, stop or pass; `Blocked` nobody crosses.
+    pub fn boundary_crossability(
+        &self,
+        segment: i32,
+        boundary: usize,
+        mode: Access,
+    ) -> Crossability {
+        let Some(segment) = self.segments.get(&segment) else {
+            return Crossability::Blocked;
+        };
+        let strips = &segment.profile.strips;
+        if boundary == 0 || boundary >= strips.len() {
+            return Crossability::Blocked;
+        }
+        strips[boundary - 1]
+            .right
+            .crossability(mode)
+            .max(strips[boundary].left.crossability(mode))
+    }
+
+    /// Can `mode` physically cross boundary `boundary` of `segment`? (`Free` or `Paint`;
+    /// whether it is allowed to is `boundary_crossability`.)
+    pub fn crossable_by(&self, segment: i32, boundary: usize, mode: Access) -> bool {
+        self.boundary_crossability(segment, boundary, mode) != Crossability::Blocked
+    }
+
+    /// Can `mode` get from strip `from_strip` to strip `to_strip` of `segment` without a
+    /// barrier: no `Blocked` boundary in between, and for wheeled classes no strip in
+    /// between that blocks wheels (planting, median, sidewalk, terrace: the buffer strips).
+    pub fn crossable_between(
+        &self,
+        segment: i32,
+        from_strip: usize,
+        to_strip: usize,
+        mode: Access,
+    ) -> bool {
+        let Some(found) = self.segments.get(&segment) else {
+            return false;
+        };
+        let strips = &found.profile.strips;
+        let (low, high) = (from_strip.min(to_strip), from_strip.max(to_strip));
+        if high >= strips.len() {
+            return false;
+        }
+        let wheeled = mode.intersects(Access::BICYCLE | Access::MOTOR);
+        (low + 1..=high).all(|b| self.crossable_by(segment, b, mode))
+            && (low + 1..high).all(|i| !(wheeled && strips[i].use_.blocks_wheels()))
     }
 }

@@ -8,6 +8,9 @@
 //! - Bollards: the start dot on the nearest kerb; while dragging, the whole row at the real
 //!   spacing; on an existing row, red rings (a click removes it).
 //! - Signals: the junction lit, and the next mode in the info panel.
+//! - Separator: the boundary line lit, the next separator in the info panel.
+//! - Bicycle box: the ghost box on the approach (a box there: red, a click removes it).
+//! - Bicycle lead: the junction lit, the lead a click brings in the info panel.
 //!
 //! A click the street would refuse is drawn red and the reason goes to the info panel
 //! (`PlayState::hover_note`). The check is `Street::apply` on a clone, run only when the
@@ -27,7 +30,7 @@ use crate::draw::ShapeBuilder;
 use crate::input::Pointer;
 use crate::level::{LoadedLevel, PX_PER_M};
 use crate::views::speed_signs::{HiddenSegmentSigns, segment_signs, sign_shape};
-use crate::views::street::{carriageway, crossing_bars, points, to_bevy};
+use crate::views::street::{bicycle_box_shapes, carriageway, crossing_bars, points, to_bevy};
 use crate::views::{ViewMaterial, palette, spawn_shape, z};
 
 /// Where the button went down for a drag tool (the bollards).
@@ -298,6 +301,105 @@ fn signals_plan(street: &Street, at: Vec2) -> Option<PreviewPlan> {
     })
 }
 
+/// The boundary line under the pointer lit, and the separator a click brings.
+fn separator_plan(street: &Street, at: Vec2) -> Option<PreviewPlan> {
+    let hit = pick::boundary_at(street, at)?;
+    let command = pick::separator_command(street, at)?;
+    let DesignCommand::SetSeparator { separator, .. } = &command else {
+        return None;
+    };
+    let segment = &street.segments[&hit.segment];
+    let length = polylines::polyline_length(&segment.centerline);
+    let edge = polylines::offset_polyline(&segment.centerline, f64::from(hit.offset));
+    let edge = polylines::sub_polyline(
+        &edge,
+        f64::from(segment.start_trim),
+        length - f64::from(segment.end_trim),
+    );
+    let refused = refusal(street, &command);
+    let mut shape = ShapeBuilder::new();
+    shape.polyline(
+        &points(&edge),
+        LINE_M * 3.0 * PX_PER_M,
+        line(refused.is_none()),
+    );
+    let note = refused.unwrap_or_else(|| {
+        format!(
+            "Click: separator {:?} -> {separator:?}.",
+            pick::separator_on(street, &hit)
+        )
+    });
+    Some(PreviewPlan {
+        shape,
+        note: Some(note),
+    })
+}
+
+/// The box tool: the ghost of the box a click adds (red if refused, with the reason), or
+/// the box a click removes (red).
+fn box_plan(street: &Street, at: Vec2) -> Option<PreviewPlan> {
+    let command = pick::box_command(street, at)?;
+    let mut shape = ShapeBuilder::new();
+    let (node, segment) = pick::approach_at(street, at)?;
+    let outline = |shape: &mut ShapeBuilder, street: &Street, ok: bool| {
+        let (areas, lines) = bicycle_box_shapes(street, node, segment);
+        for area in areas {
+            shape.polygon(&points(&area), fill(ok));
+        }
+        for stop in lines {
+            shape.polyline(&points(&stop), 0.4 * PX_PER_M, line(ok));
+        }
+    };
+    let note = match &command {
+        DesignCommand::RemoveBicycleBox { .. } => {
+            outline(&mut shape, street, false);
+            Some("Click to remove this bicycle box.".to_string())
+        }
+        _ => {
+            let mut trial = street.clone();
+            match trial.apply(&command) {
+                Ok(_) => {
+                    outline(&mut shape, &trial, true);
+                    None
+                }
+                Err(error) => {
+                    // No box to draw: light the approach's strips red instead.
+                    let seg = &street.segments[&segment];
+                    for index in 0..seg.profile.strips.len() {
+                        shape.polygon(
+                            &points(&seg.strip_polygon(index)),
+                            fill(false).with_alpha(0.2),
+                        );
+                    }
+                    Some(format!("Not possible here: {error}."))
+                }
+            }
+        }
+    };
+    Some(PreviewPlan { shape, note })
+}
+
+/// The lead tool: the junction lit, and the lead a click brings.
+fn lead_plan(street: &Street, at: Vec2) -> Option<PreviewPlan> {
+    let node = pick::junction_at(street, at)?;
+    let command = pick::lead_click_command(street, at)?;
+    let refused = refusal(street, &command);
+    let outline = points(&street.junctions[&node].polygon.points);
+    let mut shape = ShapeBuilder::new();
+    shape.polygon(&outline, fill(refused.is_none()).with_alpha(0.25));
+    shape.closed_polyline(&outline, LINE_M * 2.0 * PX_PER_M, line(refused.is_none()));
+    let note = refused.unwrap_or_else(|| match command {
+        DesignCommand::SetBicycleLead { lead_s, .. } if lead_s > 0.0 => {
+            format!("-> Bicycles get green {lead_s:.0} s before the cars")
+        }
+        _ => "-> No leading bicycle green".into(),
+    });
+    Some(PreviewPlan {
+        shape,
+        note: Some(note),
+    })
+}
+
 /// The ghost of what `tool` would do at `at` (street metres), or `None` when a click would
 /// find nothing there. `drag` is where the button went down, for a drag tool.
 pub fn build_preview(
@@ -311,6 +413,9 @@ pub fn build_preview(
         PlayTool::SpeedLimit => speed_plan(street, at),
         PlayTool::Bollards => bollards_plan(street, at, drag),
         PlayTool::Signals => signals_plan(street, at),
+        PlayTool::Separator => separator_plan(street, at),
+        PlayTool::BicycleBox => box_plan(street, at),
+        PlayTool::BicycleLead => lead_plan(street, at),
     }
 }
 

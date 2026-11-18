@@ -116,6 +116,81 @@ pub enum Separator {
     Planter,
 }
 
+/// What it takes to cross a separator for one class of agent. The drive code reads it: a
+/// careful agent never crosses `Paint`, a careless one may (to park, stop or pass);
+/// nobody crosses `Blocked`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Crossability {
+    /// Nothing in the way and no marking.
+    Free,
+    /// A painted line: physically possible, against the rules for vehicles.
+    Paint,
+    /// A physical barrier: the class cannot cross.
+    Blocked,
+}
+
+impl Separator {
+    /// How hard this separator is to cross for `mode` (one or more `Access` classes; with
+    /// several, the hardest one counts, so `Free` means every class crosses freely).
+    ///
+    /// - `None`: free for all.
+    /// - `Paint`: vehicles (bicycle, car, bus, delivery) cross it only by breaking the
+    ///   rule; a pedestrian walks over it.
+    /// - `Kerb`: blocks every vehicle, bicycles too (a cyclist does not hop a kerb);
+    ///   pedestrians step over it.
+    /// - `Bollards`: block motor vehicles only. The gaps (a row of thin posts) let
+    ///   bicycles and pedestrians through, so a cyclist can leave a track at a gap.
+    /// - `Planter`: a continuous box that blocks everyone.
+    pub fn crossability(self, mode: Access) -> Crossability {
+        let mut hardest = Crossability::Free;
+        for class in [
+            Access::PEDESTRIAN,
+            Access::BICYCLE,
+            Access::CAR,
+            Access::BUS,
+            Access::DELIVERY,
+        ] {
+            if !mode.intersects(class) {
+                continue;
+            }
+            let wheeled = class != Access::PEDESTRIAN;
+            let motor = Access::MOTOR.intersects(class);
+            let here = match self {
+                Separator::None => Crossability::Free,
+                Separator::Paint if wheeled => Crossability::Paint,
+                Separator::Paint => Crossability::Free,
+                Separator::Kerb if wheeled => Crossability::Blocked,
+                Separator::Kerb => Crossability::Free,
+                Separator::Bollards if motor => Crossability::Blocked,
+                Separator::Bollards => Crossability::Free,
+                Separator::Planter => Crossability::Blocked,
+            };
+            hardest = hardest.max(here);
+        }
+        hardest
+    }
+
+    /// Kerb, bollards and planter: what makes a bicycle track a track.
+    pub fn is_physical(self) -> bool {
+        matches!(
+            self,
+            Separator::Kerb | Separator::Bollards | Separator::Planter
+        )
+    }
+}
+
+impl StripUse {
+    /// A strip that wheeled traffic cannot drive over to reach the strips behind it (see
+    /// `Street::crossable_between`). Free parking spots and delivery bays can be driven
+    /// over; sidewalks, terraces, planting and medians cannot.
+    pub fn blocks_wheels(self) -> bool {
+        matches!(
+            self,
+            StripUse::Sidewalk | StripUse::Terrace | StripUse::Planting | StripUse::Median
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Strip {
     #[serde(rename = "use")]
@@ -192,6 +267,29 @@ mod tests {
         assert_eq!(profile.total_width(), 11.0);
         assert_eq!(profile.strip_span(0), (-5.5, -2.5));
         assert_eq!(profile.strip_span(3), (3.5, 5.5));
+    }
+
+    #[test]
+    fn separators_decide_who_can_cross() {
+        use Crossability::*;
+        let cases = [
+            (Separator::None, [Free, Free, Free]),
+            (Separator::Paint, [Free, Paint, Paint]),
+            (Separator::Kerb, [Free, Blocked, Blocked]),
+            (Separator::Bollards, [Free, Free, Blocked]),
+            (Separator::Planter, [Blocked, Blocked, Blocked]),
+        ];
+        for (separator, [walk, bike, car]) in cases {
+            assert_eq!(separator.crossability(Access::PEDESTRIAN), walk);
+            assert_eq!(separator.crossability(Access::BICYCLE), bike);
+            assert_eq!(separator.crossability(Access::CAR), car);
+        }
+        assert_eq!(
+            Separator::Bollards.crossability(Access::BICYCLE | Access::CAR),
+            Blocked
+        );
+        assert_eq!(Separator::Paint.crossability(Access::NONE), Free);
+        assert!(Separator::Kerb.is_physical() && !Separator::Paint.is_physical());
     }
 
     #[test]
