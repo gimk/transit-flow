@@ -14,6 +14,7 @@
 //! and the two never touch (Phase 3 stage C).
 
 pub mod agent;
+pub mod bike;
 mod conflicts;
 pub mod crowd;
 pub mod detect;
@@ -132,6 +133,34 @@ pub struct Summary {
     pub ended: Option<EndReason>,
     /// The pedestrians (the fields above count vehicles only).
     pub walkers: WalkSummary,
+    /// The cyclists: they are vehicles, so the fields above count them too; this is the part
+    /// that concerns them.
+    pub cyclists: CyclistSummary,
+}
+
+/// What the cyclists of a run add up to: their trips, and every conflict and contact that
+/// has a cyclist on one side (by who is on the other).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct CyclistSummary {
+    pub spawned: u32,
+    pub arrived: u32,
+    pub gave_up: u32,
+    pub unfinished: u32,
+    pub not_entered: u32,
+    pub mean_delay_s: f64,
+    /// Near misses, by the kind and by the other party.
+    pub pet_with_cars: u32,
+    pub pet_with_walkers: u32,
+    pub pet_with_cyclists: u32,
+    pub hard_brakes: u32,
+    pub conflicts_serious: u32,
+    /// Contacts by the other party.
+    pub contacts_with_cars: u32,
+    pub contacts_with_walkers: u32,
+    pub contacts_with_cyclists: u32,
+    pub light_injuries: u32,
+    pub serious_injuries: u32,
+    pub deaths: u32,
 }
 
 /// What the pedestrians of a run add up to.
@@ -539,9 +568,24 @@ impl StreetRun {
                             unseen.push(*segment);
                         }
                     }
+                    // The line where the agent waits: the end of the road lane before the
+                    // junction, less the depth of a bicycle box for motor vehicles (cyclists
+                    // wait at the crossing line, in front of the cars).
+                    let line_d = match j.checked_sub(1) {
+                        Some(before) => {
+                            let lane = route.lanes[before];
+                            let stop = if agent.bike.is_some() {
+                                self.street.bicycle_stop_distance(lane)
+                            } else {
+                                self.street.car_stop_distance(lane)
+                            };
+                            route.offsets[j] - (self.street.lanes[&lane].length - stop)
+                        }
+                        None => route.offsets[j],
+                    };
                     agent.approach = Some(Approach {
                         movement,
-                        line_d: route.offsets[j],
+                        line_d,
                         end_d: route.lane_end(j),
                         obeys_signal,
                         yields,
@@ -685,9 +729,20 @@ impl StreetRun {
                 agent.last_hard_brake = Some(tick);
                 brakes.push((agent.id, other, rate));
             }
+            agent.lateral_target = decision.lateral_target;
+            agent.passing = decision.passing;
             agent.accel = drive::brake_build_up(agent.accel, decision.accel, agent.max_brake);
             agent.speed = (agent.speed + agent.accel * DT).max(0.0);
             agent.d += agent.speed * DT;
+            // The side position eases towards where the agent wants to ride; a car that is
+            // standing does not swing out.
+            if agent.bike.is_some()
+                || agent.speed > STOPPED_SPEED
+                || agent.lateral_target.abs() < agent.lateral.abs()
+            {
+                let step = bike::LATERAL_SPEED * DT;
+                agent.lateral += (agent.lateral_target - agent.lateral).clamp(-step, step);
+            }
             agent.prev_pos = agent.pos;
             agent.prev_dir = agent.dir;
             (agent.pos, agent.dir) = spawn::pose(
@@ -696,6 +751,7 @@ impl StreetRun {
                 agent.d,
                 agent.length,
                 agent.dir,
+                agent.lateral,
             );
             if agent.speed < STOPPED_SPEED {
                 agent.wait_ticks += 1;
@@ -707,7 +763,7 @@ impl StreetRun {
         }
         for (braker, other, rate) in brakes {
             let position = self.agents[&braker].pos;
-            let grade = Self::brake_grade(rate);
+            let grade = Self::brake_grade(self.agents[&braker].mode, rate);
             self.log_conflict(
                 ConflictKind::HardBrake,
                 grade,
@@ -781,6 +837,8 @@ impl StreetRun {
                 in_junction,
                 wait_ticks: agent.wait_ticks,
                 crashed: agent.crashed(),
+                lateral: agent.lateral,
+                bike: agent.bike.is_some(),
                 hides: matches!(agent.mode, Mode::Van | Mode::Bus),
                 held_by_walkers: agent.held_by_walkers,
             });
@@ -895,6 +953,89 @@ impl StreetRun {
         hash
     }
 
+    /// The part of the log that concerns cyclists.
+    fn cyclist_summary(&self, modes: &mut IndexMap<AgentId, Mode>) -> CyclistSummary {
+        let mut c = CyclistSummary::default();
+        let mut delay = 0.0;
+        let is_cyclist =
+            |modes: &IndexMap<AgentId, Mode>, id: AgentId| modes.get(&id) == Some(&Mode::Bicycle);
+        // The other party of a cyclist: a walker, a cyclist or a motor vehicle.
+        enum Other {
+            Car,
+            Walker,
+            Cyclist,
+        }
+        let other = |modes: &IndexMap<AgentId, Mode>, a: AgentId, b: AgentId| {
+            let (me, you) = if is_cyclist(modes, a) { (a, b) } else { (b, a) };
+            let _ = me;
+            if is_walker(you) {
+                Other::Walker
+            } else if is_cyclist(modes, you) {
+                Other::Cyclist
+            } else {
+                Other::Car
+            }
+        };
+        for logged in &self.log {
+            match &logged.event {
+                StreetEvent::Spawned { agent, mode, .. } => {
+                    modes.insert(*agent, *mode);
+                    c.spawned += u32::from(*mode == Mode::Bicycle);
+                }
+                StreetEvent::TripEnded { agent, delay_s, .. } if is_cyclist(modes, *agent) => {
+                    c.arrived += 1;
+                    delay += delay_s;
+                }
+                StreetEvent::GaveUp { agent, .. } if is_cyclist(modes, *agent) => c.gave_up += 1,
+                StreetEvent::Unfinished {
+                    mode: Mode::Bicycle,
+                    entered,
+                    ..
+                } => {
+                    if *entered {
+                        c.unfinished += 1;
+                    } else {
+                        c.not_entered += 1;
+                    }
+                }
+                StreetEvent::Conflict {
+                    kind, grade, a, b, ..
+                } if is_cyclist(modes, *a) || is_cyclist(modes, *b) => {
+                    if *kind == ConflictKind::HardBrake {
+                        c.hard_brakes += 1;
+                    } else {
+                        match other(modes, *a, *b) {
+                            Other::Car => c.pet_with_cars += 1,
+                            Other::Walker => c.pet_with_walkers += 1,
+                            Other::Cyclist => c.pet_with_cyclists += 1,
+                        }
+                    }
+                    c.conflicts_serious += u32::from(*grade == Grade::Serious);
+                }
+                StreetEvent::Contact { a, b, outcome, .. }
+                    if is_cyclist(modes, *a) || is_cyclist(modes, *b) =>
+                {
+                    match other(modes, *a, *b) {
+                        Other::Car => c.contacts_with_cars += 1,
+                        Other::Walker => c.contacts_with_walkers += 1,
+                        Other::Cyclist => c.contacts_with_cyclists += 1,
+                    }
+                    match outcome {
+                        Outcome::LightInjury => c.light_injuries += 1,
+                        Outcome::SeriousInjury => c.serious_injuries += 1,
+                        Outcome::Death => c.deaths += 1,
+                        Outcome::NoInjury => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        if c.arrived > 0 {
+            c.mean_delay_s = delay / f64::from(c.arrived);
+        }
+        c
+    }
+
     pub fn summary(&self) -> Summary {
         let mut s = Summary {
             spawned: 0,
@@ -913,7 +1054,9 @@ impl StreetRun {
             ticks: self.tick,
             ended: self.ended,
             walkers: WalkSummary::default(),
+            cyclists: CyclistSummary::default(),
         };
+        let mut modes: IndexMap<AgentId, Mode> = IndexMap::new();
         let mut delay = 0.0;
         let (mut walk_delay, mut walk_crowded, mut kerb_wait) = (0.0, 0.0, 0.0);
         s.walkers.still_walking = self.walkers.len() as u32;
@@ -987,6 +1130,7 @@ impl StreetRun {
                 _ => {}
             }
         }
+        s.cyclists = self.cyclist_summary(&mut modes);
         if s.arrived > 0 {
             s.mean_delay_s = delay / f64::from(s.arrived);
         }

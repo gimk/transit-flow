@@ -85,7 +85,21 @@ pub fn gate_node(street: &Street, gate: &Gate) -> i32 {
     }
 }
 
-/// The shortest chain of lanes open to `class` from gate `from` to gate `to`, or `None`
+/// A cyclist counts a metre in a lane shared with motor traffic as this many metres on a
+/// bicycle strip, so it takes a bicycle lane or track when its route has one (start
+/// value; the detour a rider accepts for a protected lane is a Phase 8 calibration).
+pub const SHARED_LANE_COST: f64 = 1.3;
+
+fn lane_cost(street: &Street, id: StreetLaneId, class: Access) -> f64 {
+    let lane = &street.lanes[&id];
+    if class == Access::BICYCLE && lane.access.intersects(Access::MOTOR) {
+        lane.length * SHARED_LANE_COST
+    } else {
+        lane.length
+    }
+}
+
+/// The cheapest chain of lanes open to `class` from gate `from` to gate `to`, or `None`
 /// when the design leaves no way.
 pub fn find_route(
     street: &Street,
@@ -100,7 +114,7 @@ pub fn find_route(
     let mut done: Vec<StreetLaneId> = Vec::new();
     for lane in street.segment_lanes(from.segment) {
         if lane.from_node == from_node && lane.access.contains(class) {
-            best.insert(lane.id, (lane.length, None));
+            best.insert(lane.id, (lane_cost(street, lane.id, class), None));
         }
     }
     loop {
@@ -129,7 +143,7 @@ pub fn find_route(
             if !out.access.contains(class) {
                 continue;
             }
-            let through = distance + out.length;
+            let through = distance + lane_cost(street, *out_id, class);
             if best.get(out_id).is_none_or(|(d, _)| through < *d) {
                 best.insert(*out_id, (through, Some(id)));
             }

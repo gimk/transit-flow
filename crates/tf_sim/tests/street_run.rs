@@ -91,6 +91,15 @@ fn body(agent: &tf_sim::street::run::Agent) -> Body {
 /// among themselves run without walkers. Cars and walkers together are covered by the
 /// stage C tests in `street_meet.rs` (`careful_drivers_and_walkers_never_touch`: no
 /// contact, and a stated bound on those who give up).
+/// The level with no cyclists: for the tests about how the junction control treats cars
+/// (cyclists change the flow and are tested in `street_bike.rs`).
+fn without_bicycles(mut level: LevelFile) -> LevelFile {
+    for slice in &mut level.demand {
+        slice.flows.retain(|flow| flow.mode != Mode::Bicycle);
+    }
+    level
+}
+
 fn without_walkers(mut level: LevelFile) -> LevelFile {
     for slice in &mut level.demand {
         slice.flows.retain(|flow| flow.mode != Mode::Pedestrian);
@@ -244,11 +253,14 @@ fn the_same_inputs_give_the_same_log_hash() {
 // Moved on purpose with the soft-brake and walker-intent fixes (WP14) on top of the local
 // street speed (WP15); before WP14 (WP15 only): 78644365565bbb77, b7b403445c80ff10,
 // 6bbbe6eb028714d6, 5c53ad09f84cb7ca.
+// Moved on purpose in Phase 6 W1 (2026-11-18): the bicycle flows of the level are now
+// simulated (cyclists, their side position, passing, junction rules). Before: 5cfe9cc14a6fd06a,
+// f299f8c34180579a, 69a86433e41e329b, ba8bd3e81ff39825.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0x5cfe_9cc1_4a6f_d06a),
-    (2, Population::Mixed, 1.0, 0xf299_f8c3_4180_579a),
-    (1, Population::Careless, 4.0, 0x69a8_6433_e41e_329b),
-    (2, Population::Careless, 4.0, 0xba8b_d3e8_1ff3_9825),
+    (1, Population::Mixed, 1.0, 0xf876_1302_1c88_7e85),
+    (2, Population::Mixed, 1.0, 0xef91_8fbe_bac3_bd8b),
+    (1, Population::Careless, 4.0, 0x771f_e811_580d_89fb),
+    (2, Population::Careless, 4.0, 0x1d87_024f_7d23_6615),
 ];
 
 #[test]
@@ -300,7 +312,8 @@ fn careful_drivers_keep_to_the_speed_limit() {
         let mut run = new_run(&level, &design, seed, Population::Careful, 3.0);
         while !run.finished() {
             run.step();
-            for agent in run.agents.values() {
+            // Riders may go a little over a low limit (`BIKE_LIMIT_TOLERANCE`).
+            for agent in run.agents.values().filter(|a| a.mode != Mode::Bicycle) {
                 let limit = run.limit_for(agent);
                 assert!(
                     agent.speed <= limit + 0.01,
@@ -426,8 +439,8 @@ fn signals_cost_more_time_than_priority_to_the_right() {
         }
         total / arrived
     };
-    let priority = mean_delay(&level());
-    let signals = mean_delay(&signal_level());
+    let priority = mean_delay(&without_bicycles(level()));
+    let signals = mean_delay(&without_bicycles(signal_level()));
     assert!(
         signals > priority,
         "mean delay: signals {signals:.2} s, priority to the right {priority:.2} s"
