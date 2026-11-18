@@ -350,6 +350,13 @@ pub struct Agent {
     pub last_held: Option<u64>,
     /// The zebra coming up on its route, and how it means to behave there.
     pub crossing: Option<super::yielding::CrossingApproach>,
+    /// An electric car: almost silent at low speed (`perceive::sound_level`). Derived
+    /// from the run seed and the id, not drawn, so no stream moves.
+    pub electric: bool,
+    /// The hash seed of its glances (`perceive::gaze_seed`).
+    pub gaze_seed: u64,
+    /// What it was doing at its last decision, which sets its gaze.
+    pub gaze_task: super::perceive::DriverTask,
     /// Metres from the middle of its lane, to the right of its direction of travel (negative
     /// is left). Real state: the body is placed and tested at this offset, and the others
     /// see it (`Seen::lateral`). Cars keep 0 except when they pass a cyclist.

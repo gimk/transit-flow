@@ -237,8 +237,43 @@ fn cause_text(modes: &IndexMap<AgentId, Mode>, cause: &Cause) -> String {
             format!("{who} passed {} with too little room", other(to))
         }
         CauseKind::RodeOnSidewalk => format!("{who} rode on the sidewalk"),
+        CauseKind::EnteredWithoutGap => {
+            format!("{who} went into the junction although it had decided to stop")
+        }
         CauseKind::KeptPaceOnRoad => {
             format!("{who} kept its pace on the road, expecting the car to stop")
+        }
+        CauseKind::LookedElsewhere { at, focus } => {
+            format!("{who} {} and did not look at {}", focus.words(), other(at))
+        }
+        CauseKind::InBlindSpot { walker } => {
+            format!("{who} could not see {}: in the blind spot", other(walker))
+        }
+        CauseKind::Surprise { reaction_s } => {
+            format!("{who} was surprised and reacted in {reaction_s:.1} s")
+        }
+        CauseKind::HiddenVehicle { vehicle, by } => {
+            let hider = match by {
+                Hider::Obstacle(id) => format!("obstacle {id}"),
+                Hider::Vehicle(id) => other(id),
+            };
+            format!("{who} could not see {}: hidden by {hider}", other(vehicle))
+        }
+        CauseKind::NotHeard {
+            vehicle,
+            kmh,
+            electric,
+            deaf,
+        } => {
+            let why = if deaf {
+                "could not hear the street".to_string()
+            } else {
+                format!(
+                    "did not hear it: {}{kmh:.0} km/h",
+                    if electric { "electric, " } else { "" }
+                )
+            };
+            format!("{who} did not see {} and {why}", other(vehicle))
         }
     }
 }

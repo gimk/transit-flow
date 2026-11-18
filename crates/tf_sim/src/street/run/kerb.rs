@@ -44,6 +44,7 @@ use indexmap::IndexMap;
 
 use super::drive::{BRAKE_RISE_S, COMFORT_BRAKE, DT, travel_time};
 use super::meet::BAND_HALF_WIDTH;
+use super::perceive;
 use super::route::RoutePath;
 use super::walk::{AreaKind, CUT_M, WalkPath, WalkSpace};
 use super::walker::{DECISION_RANGE_M, KerbDraw, RoadAct, Walker, jaywalk_chance};
@@ -51,6 +52,7 @@ use super::{MoveInfo, StreetRun};
 use crate::geom::segment::closest_point_to_segment;
 use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::lanes::Turn;
+use crate::street::level::Mode;
 use crate::street::model::Street;
 
 /// A walker this close to a kerb (beyond its body) is at it, metres (start value).
@@ -705,6 +707,76 @@ impl StreetRun {
             .collect()
     }
 
+    /// Does the walker take in `vehicle` (at `nose`)? By sight: not hidden, and in the zone
+    /// of one of its last glances (left and right at a kerb or on the road: `perceive`).
+    /// Or by hearing: a vehicle louder than the street by the margin is heard from any
+    /// direction, hidden or behind the walker, unless the walker does not hear the street
+    /// (headphones, a call). A quiet one (electric at low speed, a bicycle) is heard only
+    /// when it is close.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn walker_notices(
+        &self,
+        walker: &Walker,
+        vehicle: &super::drive::Seen,
+        nose: Vec2,
+        hidden: bool,
+        snapshot: &super::drive::Snapshot,
+        from: Vec2,
+        far: Vec2,
+    ) -> bool {
+        if self.heard_by(walker, vehicle, snapshot) {
+            return true;
+        }
+        if hidden {
+            return false;
+        }
+        // A standing vehicle in plain view is part of the scene: it is known, not found by
+        // a glance (else the walker would flip between waiting and going at each glance).
+        if vehicle.speed <= ROAD_MOVING_SPEED {
+            return true;
+        }
+        let task = if walker.kerb_since.is_some() || from == walker.pos {
+            perceive::WalkerTask::Kerb
+        } else {
+            perceive::WalkerTask::Road
+        };
+        let across = (far - from).normalize_or_zero();
+        let across = if across == Vec2::ZERO {
+            walker.vel.normalize_or_zero()
+        } else {
+            across
+        };
+        let looker = perceive::Looker {
+            mode: Mode::Pedestrian,
+            eye: walker.pos,
+            dir: across,
+            table: perceive::walker_table(task),
+            seed: walker.gaze_seed,
+            fov: perceive::useful_fov(walker.traits.attention, walker.traits.risk),
+            alternate: true,
+        };
+        looker
+            .notices(vehicle.id.0 as u64, nose, self.tick, |_, _| Vec2::ZERO)
+            .is_some()
+    }
+
+    /// Does the walker hear `vehicle` over the noise of the street?
+    pub(super) fn heard_by(
+        &self,
+        walker: &Walker,
+        vehicle: &super::drive::Seen,
+        snapshot: &super::drive::Snapshot,
+    ) -> bool {
+        // A standing vehicle is no threat, and a walker does not wait for one it cannot see.
+        !walker.deaf
+            && vehicle.speed > ROAD_MOVING_SPEED
+            && perceive::hears(
+                vehicle.level,
+                f64::from(walker.pos.distance(vehicle.pos)),
+                snapshot.noise,
+            )
+    }
+
     /// `vehicles_ahead` with where along `from`-`far` each vehicle meets the line, and
     /// whether it is slowing down.
     fn vehicles_meeting(
@@ -730,11 +802,10 @@ impl StreetRun {
                 continue;
             };
             let nose = seen.pos + seen.dir * (seen.length as f32 * 0.5);
-            if self
+            let hidden = self
                 .sight
-                .hider(walker.pos, nose, &snapshot.seen, Some(seen.id))
-                .is_some()
-            {
+                .hider(walker.pos, nose, &snapshot.seen, Some(seen.id));
+            if !self.walker_notices(walker, seen, nose, hidden.is_some(), snapshot, from, far) {
                 continue;
             }
             let route = &self.routes[agent.route];
