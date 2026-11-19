@@ -329,6 +329,7 @@ fn corridor_clear(
     snapshot: &Snapshot,
 ) -> bool {
     let half = agent.width * 0.5;
+    let tight = agent.bike.is_none() && squeezes(agent);
     let shift = (target - agent.lateral) as f32;
     let perp = agent.dir.perp();
     // Others are seen as they were one reaction time ago: that much is added.
@@ -344,7 +345,15 @@ fn corridor_clear(
         if other.id == agent.id || passed.iter().any(|p| p.id == other.id) {
             continue;
         }
-        let reach = (half + other.width * 0.5 + CORRIDOR_MARGIN_M) as f32;
+        // What comes the other way is given the margin of the rule, unless this driver is one
+        // that squeezes: it takes a tight gap there too, with the traits that let it squeeze.
+        let oncoming = other.dir.dot(agent.dir) < -0.5;
+        let margin = if oncoming && tight {
+            CORRIDOR_MARGIN_M * SQUEEZE_ROOM_FACTOR
+        } else {
+            CORRIDOR_MARGIN_M
+        };
+        let reach = (half + other.width * 0.5 + margin) as f32;
         let half_length = (other.length * 0.5 - other.width * 0.5).max(0.0) as f32;
         for k in [0.0, 0.5, 1.0] {
             let pace = if other.dir.dot(agent.dir) < -0.5 {

@@ -192,6 +192,7 @@ impl StreetRun {
     /// `CLOSE_PASS_SERIOUS_SPEED` (user, 2026-11-18).
     pub(super) fn close_pass_stage(&mut self) {
         let mut found: Vec<(AgentId, AgentId, Vec2, f64, Grade)> = Vec::new();
+        let mut found_oncoming: Vec<(AgentId, AgentId, Vec2, f64, Grade)> = Vec::new();
         let lane_of = |a: &Agent| {
             let route = &self.routes[a.route];
             route.lanes[route.lane_index(a.d)]
@@ -230,6 +231,52 @@ impl StreetRun {
                 };
                 found.push((car.id, rider.id, rider.pos, room.max(0.0), grade));
             }
+        }
+        // A tight pass against oncoming traffic: a driver that squeezes past a rider pulls into
+        // the lane of the other way and meets a vehicle there with little room (Phase 6 W4b).
+        // The one that is off its own side position is `a`.
+        let ids: Vec<AgentId> = self.agents.keys().copied().collect();
+        for (i, first) in ids.iter().enumerate() {
+            let one = &self.agents[first];
+            if !matches!(one.mode, Mode::Car | Mode::Van | Mode::Bus)
+                || one.speed <= CLOSE_PASS_MIN_SPEED
+            {
+                continue;
+            }
+            for second in &ids[i + 1..] {
+                let other = &self.agents[second];
+                if !matches!(other.mode, Mode::Car | Mode::Van | Mode::Bus)
+                    || other.speed <= CLOSE_PASS_MIN_SPEED
+                    || one.dir.dot(other.dir) > -0.9
+                {
+                    continue;
+                }
+                let to = other.pos - one.pos;
+                if f64::from(to.dot(one.dir)).abs() > (one.length + other.length) * 0.5 + 0.5 {
+                    continue;
+                }
+                let room =
+                    f64::from(to.dot(one.dir.perp()).abs()) - (one.width + other.width) * 0.5;
+                if room >= CLOSE_PASS_LIGHT_M {
+                    continue;
+                }
+                let grade = if room < CLOSE_PASS_SERIOUS_M
+                    && one.speed + other.speed > 2.0 * CLOSE_PASS_SERIOUS_SPEED
+                {
+                    Grade::Serious
+                } else {
+                    Grade::Light
+                };
+                let (a, b) = if one.lateral.abs() >= other.lateral.abs() {
+                    (one.id, other.id)
+                } else {
+                    (other.id, one.id)
+                };
+                found_oncoming.push((a, b, one.pos.midpoint(other.pos), room.max(0.0), grade));
+            }
+        }
+        for (a, b, at, room, grade) in found_oncoming {
+            self.log_conflict(ConflictKind::ClosePass, grade, (a, b), at, room);
         }
         for (car, rider, at, room, grade) in found {
             self.log_conflict(ConflictKind::ClosePass, grade, (car, rider), at, room);

@@ -146,6 +146,7 @@ impl StreetRun {
         // speed behind a slower one would brake hard on its first tick).
         let mut leader: Option<(f64, f64)> = None; // (rear of the leader, its speed)
         let first_segment = self.street.lanes[&first].segment_id;
+        let first_node = self.street.lanes[&first].from_node;
         // The speed the newcomer would come in at, at most: the limit of its first lane.
         let v_spawn = self.street.lanes[&first].speed_limit;
         for other in self.agents.values() {
@@ -154,14 +155,13 @@ impl StreetRun {
                 // that swerves into the car lane in the first metres): the newcomer could not
                 // stop for it, and it does not see it, so it waits at the gate.
                 let other_first = self.routes[other.route].lanes[0];
+                // Same segment and same way (same entry node): not the traffic of the other gate.
                 if first_segment.is_some()
                     && self.street.lanes[&other_first].segment_id == first_segment
+                    && self.street.lanes[&other_first].from_node == first_node
                     && other.speed < v_spawn
                     && other.d - other.length
-                        < length
-                            + MIN_GAP
-                            + 1.0
-                            + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
+                        < length + MIN_GAP + 1.0 + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
                 {
                     return Attempt::Blocked;
                 }

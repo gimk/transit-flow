@@ -355,3 +355,48 @@ fn walkers_crossing_a_bicycle_lane_meet_riders() {
         "no conflict between a rider and a walker"
     );
 }
+
+/// Head-on close passes: a driver that squeezes past a rider into the lane of the oncoming
+/// traffic and meets a vehicle there with little room (two motor vehicles in the event).
+fn oncoming_close_passes(run: &StreetRun) -> u32 {
+    let mut mode_of = std::collections::HashMap::new();
+    for e in run.events() {
+        if let StreetEvent::Spawned { agent, mode, .. } = &e.event {
+            mode_of.insert(*agent, *mode);
+        }
+    }
+    let motor = |id| matches!(mode_of.get(id), Some(Mode::Car | Mode::Van));
+    run.events()
+        .iter()
+        .filter(|e| {
+            matches!(&e.event, StreetEvent::Conflict { kind: ConflictKind::ClosePass, a, b, .. }
+                if motor(a) && motor(b))
+        })
+        .count() as u32
+}
+
+/// Option (b) of the squeeze: a driver that squeezes past a rider also accepts a tight gap to
+/// the oncoming traffic, so a shared lane is not safer than it looks. It shows as a close
+/// pass between the two vehicles. A careful driver keeps the full rule and never does.
+#[test]
+fn an_impatient_driver_squeezes_past_a_rider_against_oncoming_traffic() {
+    let flows = format!(
+        "{}{}{}",
+        flow("Car", "west", "east", 300),
+        flow("Car", "east", "west", 300),
+        flow("Bicycle", "west", "east", 200)
+    );
+    let level = street(NO_FACILITY, "", &flows, 90.0);
+    let (mut careful, mut careless) = (0, 0);
+    for seed in 1..=12 {
+        let mut a = run(&level, seed, Population::Careful);
+        a.run_to_end();
+        careful += oncoming_close_passes(&a);
+        let mut b = run(&level, seed, Population::Careless);
+        b.run_to_end();
+        careless += oncoming_close_passes(&b);
+    }
+    println!("oncoming close passes: careful {careful}, careless {careless}");
+    assert_eq!(careful, 0);
+    assert!(careless > 0);
+}

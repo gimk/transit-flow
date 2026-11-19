@@ -294,10 +294,13 @@ fn a_track_gives_fewer_serious_conflicts_than_a_lane_and_a_lane_fewer_than_none(
     // brake hard, and the ones that pass them do it in the lane, with less than the metre
     // of R414-4.
     assert!(none.serious > 0 && none.close_passes > 0, "{none:?}");
-    // A painted lane separates them, so the riders are not passed in their lane; but it
-    // lets a van stop in it (item 3), and the riders meet the vans.
+    // A painted lane separates them, so the riders are not passed in their lane.
     assert!(lane.close_passes < none.close_passes, "{lane:?} {none:?}");
-    assert!(lane.contacts > 0, "{lane:?}");
+    // Contacts follow the same order: track <= painted lane <= no facility.
+    assert!(
+        lane.contacts <= none.contacts,
+        "lane {lane:?} against none {none:?}"
+    );
     // A kerb keeps the vans out and the riders in: nothing meets anything.
     assert!(track.contacts == 0 && track.close_passes == 0, "{track:?}");
     assert!(
