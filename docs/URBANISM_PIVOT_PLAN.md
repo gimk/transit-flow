@@ -1,12 +1,41 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). Phase 4 measure fixes merged. **Phase 6 (cyclists) in progress on `pivot-phase-6`: W1, W2, W3, W4a, W6a merged; W4b, W6b stopped as WIP branches; then W5. See the progress note of 2026-11-18.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). Phase 4 measure fixes merged. **Phase 6 (cyclists) in progress on `pivot-phase-6`: W1, W2, W3, W4a, W6a, W6b merged; W4b done on branch `p6-conflicts` but not merged (fixes owed, user decision of 2026-11-19); then W5. See the progress note of 2026-11-19.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
 ## Progress notes
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
+
+### 2026-11-19: Phase 6 on the Mac, W6b merged, W4b waits for fixes
+
+**State.** `scripts/check.sh` passed on `pivot-phase-6` at 834849d (exit 0, replay hashes unchanged): the `opt-level = 3` change for `tf_sim` is checked. The run took 24 min 44 s on the MacBook Air with a cold build and two agents building at the same time; later runs are faster.
+
+**W6b (views) merged** into `pivot-phase-6` (fast-forward to 05914e8; the WIP commit is replaced). Riders are drawn at their side position, the small bicycle light follows the run (leading green), the report has a `Riders:` block, the inspector names a rider and its habits. `cargo test -p tf_game` passed (51 unit, 60 app). A read-only review (Gemini Hydrogen) found no defects: [phase6/tf-p6-views2-REVIEW.md](phase6/tf-p6-views2-REVIEW.md). Report: [phase6/tf-p6-views2-REPORT.md](phase6/tf-p6-views2-REPORT.md). Small open point: the HUD says "(1 riders)". The remote branch `p6-views2` still holds the old WIP commit; it is not needed any more (the work is in `pivot-phase-6`). `check.sh` was not run again after the merge: `tf_sim` did not change, and the agent ran fmt, clippy and the `tf_game` tests on the same tree.
+
+**W4b (classic conflicts) done on branch `p6-conflicts`** (3 commits on 834849d, pushed, **not merged**). Report: [phase6/tf-p6-conflicts-REPORT.md](phase6/tf-p6-conflicts-REPORT.md). Items 1 to 7 of the brief work with tests (`cross.rs`: the separator decides who may cross; `door.rs`: doors of parked cars; vans and careless cars stop in a painted lane; squeeze past; early right turn; walker against rider); item 8: `held_by_walkers` fixed for a rider on a zebra. The 4 replay hashes moved on purpose. `cargo test -p tf_sim`, clippy and `cargo check -p tf_game` passed in the agent's run. The "done when" test passes, but the numbers are not credible yet (24 seeds, serious conflicts / close passes / contacts):
+
+| Facility | Serious | Close passes | Contacts |
+| --- | --- | --- | --- |
+| Protected track | 0 | 0 | 0 |
+| Painted lane | 4 | 0 | 7 |
+| No facility | 2 | 3 | 0 |
+
+The 7 contacts are riders against vans that stand in the painted lane for 20 s: a rider should see a van that stands still and brake or go round it, so this looks like a defect. And in a shared lane, a driver never squeezes past a rider when oncoming traffic comes (the corridor check stops it), so "no facility" looks safer than it is.
+
+**Decision of the user (2026-11-19), in this order:**
+1. Find and fix the cause of the rider–van contacts (a read-only review was started and stopped before it reported; start it again).
+2. Option (b): a driver who squeezes past a rider may also accept a tight gap to the oncoming traffic (the classic danger of a shared street). Not (c): delay is annoyance, for the score (Phase 8), not a safety conflict.
+3. The "done when" test also checks contacts (track < painted lane < no facility for contacts too, or a clear reason why not).
+4. Measure again; then merge `p6-conflicts` into `pivot-phase-6` and run `check.sh`.
+
+**To resume:**
+1. `git fetch`; check out `pivot-phase-6` (W6b is in it) and `p6-conflicts` in a worktree (`git worktree add ../tf-p6-conflicts p6-conflicts`).
+2. Review W4b read-only first (priority: the cause chain of the van contacts, with a seed), then brief one implementer with points 1 to 3 above.
+3. Then the rest of the 2026-11-18 list: W5 (swerving), the rider behaviour package from the review (F3, F5, F6, F7), the `drive.rs` splits, close Phase 6.
+
+**How the agents ran (herdr `hc`):** implementers `vibe-deepseek-flash`, reviewers of another family (`gemini-hydrogen`; `vibe-mistral-large` when nobody can answer the Gemini folder-trust dialog). A Vibe agent can add a `Co-Authored-By: Mistral Vibe` line to a commit: say the rule in the brief and check each message.
 
 ### 2026-11-18 (evening): Phase 6 half done, stopped for a break
 
