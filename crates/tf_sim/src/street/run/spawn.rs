@@ -7,7 +7,10 @@
 
 use glam::Vec2;
 
-use super::agent::{Agent, BikeHabits, CARGO_BIKE_SIZE, Traits, body_size, chance, vehicle_class};
+use super::agent::{
+    Agent, BikeHabits, CARGO_BIKE_SIZE, DeliveryStop, Traits, body_size, chance, vehicle_class,
+};
+use super::cross;
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::kerb;
@@ -159,6 +162,30 @@ impl StreetRun {
         if flow.mode == Mode::Bicycle && archetype.name == "cargo bike" {
             (length, width) = CARGO_BIKE_SIZE;
         }
+        // A delivery stop: a van, or a careless car, pulls over into the painted bicycle
+        // lane beside its lane and stands there (Phase 6 W4b). One draw for every motor
+        // vehicle, so a rider's stream does not move.
+        let stop = if flow.mode == Mode::Bicycle {
+            None
+        } else {
+            let draw = f64::from(rng.randf());
+            let chance = match flow.mode {
+                Mode::Van => cross::VAN_STOP_CHANCE,
+                Mode::Car => cross::CAR_STOP_CHANCE * (1.0 - traits.compliance),
+                _ => 0.0,
+            };
+            if draw < chance {
+                cross::delivery_stop_place(&self.street, &self.routes[route_index], class).map(
+                    |(at_d, lateral)| DeliveryStop {
+                        at_d,
+                        until: self.tick + (cross::STOP_DURATION_S / DT).round() as u64,
+                        lateral,
+                    },
+                )
+            } else {
+                None
+            }
+        };
         let mut agent = Agent {
             id,
             mode: flow.mode,
@@ -196,6 +223,7 @@ impl StreetRun {
             lateral_target: 0.0,
             passing: false,
             bike,
+            stop,
         };
         let route = &self.routes[route_index];
         let world = World {
@@ -206,6 +234,7 @@ impl StreetRun {
             street_speeds: &self.street_speeds,
             time_s: self.tick as f64 * DT,
             peds: None,
+            doors: &self.doors,
         };
         let wanted = drive::desired_speed_at(&agent, first, 0.0, &world);
         // The newcomer decides from the world one reaction time ago, where the leader was

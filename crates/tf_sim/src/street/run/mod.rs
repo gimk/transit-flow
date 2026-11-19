@@ -16,8 +16,10 @@
 pub mod agent;
 pub mod bike;
 mod conflicts;
+pub mod cross;
 pub mod crowd;
 pub mod detect;
+pub mod door;
 pub mod drive;
 pub mod events;
 pub mod grid;
@@ -236,6 +238,8 @@ pub struct StreetRun {
     walk_signals: IndexMap<usize, (i32, Vec<i32>)>,
     /// What blocks sight, and the kerb points of each zebra (`yielding`).
     sight: sight::SightBlockers,
+    /// The doors of the parked cars (`door`).
+    doors: door::Doors,
     kerb_points: IndexMap<usize, Vec<Vec2>>,
     /// (class bits, from gate, to gate) -> index into `routes`; `None` when no way exists.
     route_cache: IndexMap<(u8, String, String), Option<usize>>,
@@ -412,6 +416,7 @@ impl StreetRun {
         let walk_space = WalkSpace::new(&street, &level.gates);
         let walk_signals = kerb::walk_signal_table(&walk_space, &street, &moves);
         let sight = sight::SightBlockers::new(&street);
+        let doors = door::Doors::new(&street, options.seed);
         let kerb_points = yielding::kerb_points(&walk_space);
         Ok(StreetRun {
             tick: 0,
@@ -437,6 +442,7 @@ impl StreetRun {
             route_areas: Vec::new(),
             walk_signals,
             sight,
+            doors,
             kerb_points,
             route_cache: IndexMap::new(),
             next_agent: 1,
@@ -469,6 +475,11 @@ impl StreetRun {
 
     pub fn events(&self) -> &[LoggedEvent] {
         &self.log
+    }
+
+    /// The doors of the parked cars that are open now (`door`). For tests and views.
+    pub fn open_doors(&self) -> &[door::Door] {
+        self.doors.open()
     }
 
     /// The light the agent's next junction movement shows now (this tick's time); `None`
@@ -545,6 +556,7 @@ impl StreetRun {
     /// means to behave there), distraction, and the old blame forgotten.
     fn prepare_stage(&mut self) {
         let tick = self.tick;
+        self.doors.step(&self.street, tick, &self.agents);
         for agent in self.agents.values_mut() {
             let route = &self.routes[agent.route];
             let rear = agent.d - agent.length;
@@ -680,6 +692,7 @@ impl StreetRun {
             street_speeds: &self.street_speeds,
             time_s: self.tick as f64 * DT,
             peds: Some(&peds),
+            doors: &self.doors,
         };
         self.agents
             .values()

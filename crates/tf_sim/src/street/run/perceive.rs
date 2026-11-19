@@ -179,6 +179,12 @@ pub enum DriverTask {
     /// Going straight on through a junction: the cross traffic from the right (priority to
     /// the right) and from the left, and the way ahead.
     Junction,
+    /// Moving to its right, into the strip beside it (a delivery stop, a queue passed in
+    /// the painted bicycle lane): a glance over the right shoulder first.
+    PullIn,
+    /// Moving to its left, out of its lane (a rider that goes round a van stopped in the
+    /// bicycle lane): a look back over the left shoulder first.
+    PullOut,
 }
 
 /// What a walker is doing.
@@ -224,6 +230,12 @@ pub fn driver_table(task: DriverTask) -> &'static [(Focus, f64)] {
             (Focus::Shoulder, 0.15),
             (Focus::CrossRight, 0.1),
         ],
+        DriverTask::PullIn => &[
+            (Focus::Shoulder, 0.5),
+            (Focus::Ahead, 0.35),
+            (Focus::Roadside, 0.15),
+        ],
+        DriverTask::PullOut => &[(Focus::Left, 0.5), (Focus::Ahead, 0.5)],
     }
 }
 

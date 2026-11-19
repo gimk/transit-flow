@@ -192,13 +192,25 @@ impl StreetRun {
     /// `CLOSE_PASS_SERIOUS_SPEED` (user, 2026-11-18).
     pub(super) fn close_pass_stage(&mut self) {
         let mut found: Vec<(AgentId, AgentId, Vec2, f64, Grade)> = Vec::new();
+        let lane_of = |a: &Agent| {
+            let route = &self.routes[a.route];
+            route.lanes[route.lane_index(a.d)]
+        };
         for rider in self.agents.values().filter(|a| a.mode == Mode::Bicycle) {
+            let rider_lane = lane_of(rider);
             for car in self.agents.values() {
                 if !matches!(car.mode, Mode::Car | Mode::Van | Mode::Bus)
                     || car.speed <= CLOSE_PASS_MIN_SPEED
                     || car.speed <= rider.speed + 1.0
                     || car.dir.dot(rider.dir) < 0.9
                 {
+                    continue;
+                }
+                // An overtake in the lane the rider is in. A car that keeps to its own lane
+                // beside a bicycle lane or a track does not overtake the rider: the room
+                // between them is the width the design gave the two strips, not the room the
+                // driver left (Phase 6 W4b).
+                if lane_of(car) != rider_lane {
                     continue;
                 }
                 let to = rider.pos - car.pos;

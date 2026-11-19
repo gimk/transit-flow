@@ -23,11 +23,14 @@
 use glam::Vec2;
 
 use super::agent::Agent;
-use super::drive::{Seen, Snapshot, World, desired_speed_at};
+use super::cross;
+use super::drive::{SIDE_MARGIN, Seen, Snapshot, World, desired_speed_at};
+use super::perceive;
 use crate::street::ids::{AgentId, StreetLaneId};
-use crate::street::lanes::StreetLane;
+use crate::street::lanes::{StreetLane, Turn};
 use crate::street::model::Street;
-use crate::street::space::{Access, Direction, Separator, StripUse};
+use crate::street::signals::Light;
+use crate::street::space::{Access, Direction, StripUse};
 
 /// How fast the side position changes, metres per second (start value).
 pub const LATERAL_SPEED: f64 = 1.0;
@@ -40,6 +43,12 @@ pub const PASS_CLEARANCE_TOWN_M: f64 = 1.0;
 /// A cyclist's side room when it passes a slower cyclist or a queue (start values).
 pub const BIKE_PASS_CLEARANCE_M: f64 = 0.5;
 pub const BIKE_QUEUE_CLEARANCE_M: f64 = 0.4;
+/// The share of the rule a driver keeps when it squeezes past instead of waiting (start
+/// value: 0.4 m for a car, 0.2 m for a rider).
+pub const SQUEEZE_ROOM_FACTOR: f64 = 0.4;
+/// Room a driver adds to the rule when it passes as the rule asks, so that the room it
+/// keeps stays above the rule while it eases sideways (start value, metres).
+pub const PASS_MARGIN_M: f64 = 0.3;
 /// Room kept on the right of a queue when a rider squeezes by on that side, metres.
 const RIGHT_SQUEEZE_M: f64 = 0.15;
 /// A pass is started when the gap to what is passed is under this, metres (start values).
@@ -108,25 +117,30 @@ pub fn side_of(street: &Street, lane: &StreetLane) -> Side {
     };
     let strips = &street.segments[&segment].profile.strips;
     let forward = strips[strip].direction == Direction::Forward;
-    let at = |k: isize| -> Option<&crate::street::space::Strip> {
+    let at = |k: isize| -> Option<(usize, &crate::street::space::Strip)> {
         let step = if forward { k } else { -k };
         usize::try_from(strip as isize + step)
             .ok()
-            .and_then(|i| strips.get(i))
+            .and_then(|i| strips.get(i).map(|s| (i, s)))
     };
-    let left_separator = if forward {
-        strips[strip].left
-    } else {
-        strips[strip].right
-    };
-    let left_room = match (at(-1), left_separator) {
-        (Some(next), Separator::Paint) if next.use_.is_travel() => f64::from(next.width),
+    // The next travel strip on the left, when the separator lets a car cross into it: a car
+    // passing a cyclist uses it (Phase 6 W4b: paint lets it, a kerb, bollards or a planter
+    // do not). A bicycle strip is not a lane for a car to pass in.
+    let left_room = match at(-1) {
+        Some((index, next)) if next.use_.is_travel() && next.access().intersects(Access::MOTOR) => {
+            let boundary = strip.max(index);
+            if street.crossable_by(segment, boundary, Access::CAR) {
+                f64::from(next.width)
+            } else {
+                0.0
+            }
+        }
         _ => 0.0,
     };
     let mut sidewalk = None;
     let mut distance = half;
     let mut k = 1;
-    while let Some(next) = at(k) {
+    while let Some((_, next)) = at(k) {
         if next.use_ == StripUse::Sidewalk {
             sidewalk = Some(distance + f64::from(next.width) * 0.5);
             break;
@@ -136,7 +150,7 @@ pub fn side_of(street: &Street, lane: &StreetLane) -> Side {
     }
     Side {
         half,
-        right_use: at(1).map(|s| s.use_),
+        right_use: at(1).map(|(_, s)| s.use_),
         left_room,
         sidewalk,
     }
@@ -246,16 +260,52 @@ pub fn cross_traffic_empty(
     !snapshot.seen.iter().any(threat)
 }
 
-/// The room a driver of this agent leaves what it passes: the rule, less for those who
-/// bend it (compliance 1 keeps the whole `PASS_CLEARANCE_TOWN_M`).
-pub fn pass_clearance(agent: &Agent, other: &Seen) -> f64 {
-    let keeps = 0.4 + 0.6 * agent.traits.compliance;
+/// The side room the rule asks when `agent` passes `other`, metres: 1 m in town for a car
+/// passing a rider (R414-4); a rider keeps less (start values).
+pub fn rule_clearance(agent: &Agent, other: &Seen) -> f64 {
     if agent.bike.is_none() {
-        PASS_CLEARANCE_TOWN_M * keeps
+        PASS_CLEARANCE_TOWN_M
     } else if other.bike {
-        BIKE_PASS_CLEARANCE_M * keeps
+        BIKE_PASS_CLEARANCE_M
     } else {
-        BIKE_QUEUE_CLEARANCE_M * keeps
+        BIKE_QUEUE_CLEARANCE_M
+    }
+}
+
+/// The chance that a driver squeezes past a rider with less room than the rule asks
+/// instead of waiting: its lack of compliance, its risk, its frustration and how much it
+/// is in a hurry (start values). A careful driver never does (compliance 1, no risk, no
+/// hurry), so it waits or passes with the whole metre.
+pub fn squeeze_chance(agent: &Agent) -> f64 {
+    // `speed_factor` is a factor of the limit for a motor vehicle and a speed in m/s for a
+    // rider: only a driver can be in a hurry.
+    let hurry = if agent.bike.is_some() {
+        0.0
+    } else {
+        (agent.traits.speed_factor - 1.0).max(0.0)
+    };
+    ((1.0 - agent.traits.compliance) * (0.5 + 0.5 * agent.frustration)
+        + 0.5 * agent.traits.risk
+        + 0.5 * hurry)
+        .min(1.0)
+}
+
+/// Does this driver squeeze past now? One draw fixed per agent and per rule, so no stream
+/// shifts and the same driver squeezes the same way all run.
+pub fn squeezes(agent: &Agent) -> bool {
+    perceive::roll(agent.gaze_seed, agent.id.0 as u64, cross::SQUEEZE_STREAM)
+        < squeeze_chance(agent)
+}
+
+/// The room this driver leaves what it passes: the rule and a little more, or
+/// `SQUEEZE_ROOM_FACTOR` of the rule for one that squeezes past. The margin keeps the room
+/// the rule asks while the body eases sideways into the pass (start value).
+pub fn pass_clearance(agent: &Agent, other: &Seen) -> f64 {
+    let rule = rule_clearance(agent, other);
+    if squeezes(agent) {
+        rule * SQUEEZE_ROOM_FACTOR
+    } else {
+        rule + PASS_MARGIN_M
     }
 }
 
@@ -361,6 +411,27 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
         CAR_PASS_TRIGGER_M
     };
 
+    // A driver that cuts the corner: it turns right across the painted bicycle lane before
+    // the corner instead of at it (Phase 6 W4b). A kerb track forces the turn at the corner.
+    if !is_bike && let Some(target) = cut_corner(agent, world, lane) {
+        return Plan {
+            target,
+            passing: false,
+            too_close: None,
+        };
+    }
+
+    // A rider whose lane is blocked (a van stopped in it, an open door) leaves it for the
+    // lane beside, when the separator lets a bicycle cross and the way is free; else it
+    // brakes for the obstacle (`nearest_obstacle`). A kerb track keeps it in: it waits.
+    if is_bike && let Some(target) = leave_lane(agent, snapshot, world, lane) {
+        return Plan {
+            target,
+            passing: true,
+            too_close: None,
+        };
+    }
+
     // What is in the way and would be passed.
     let mut passed: Vec<&Seen> = Vec::new();
     for other in &snapshot.seen {
@@ -383,12 +454,15 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
         // Once started, a pass goes on past whatever it began with, even if that has
         // stopped meanwhile (a car swinging back in beside a cyclist who has just stopped
         // would touch it).
+        // A car may use the painted bicycle lane on its right to pass a queue (Phase 6
+        // W4b): a kerb, bollards or a planter keep it out.
+        let queue_pass = !is_bike && queue && cross::bends(agent, cross::QUEUE_STREAM);
         let qualifies = if agent.passing {
             other.bike || (filters && queue)
         } else if is_bike {
             (other.bike && slow) || (filters && queue)
         } else {
-            other.bike && slow
+            (other.bike && slow) || queue_pass
         };
         if qualifies {
             passed.push(other);
@@ -407,12 +481,7 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
     let mut all_queue = true;
     for other in &passed {
         let clearance = pass_clearance(agent, other);
-        let full = if is_bike {
-            clearance
-        } else {
-            PASS_CLEARANCE_TOWN_M
-        };
-        if clearance < full - 1e-9 && reduced.is_none() {
+        if clearance < rule_clearance(agent, other) - 1e-9 && reduced.is_none() {
             reduced = Some(other.id);
         }
         left = left.min(other.lateral - other.width * 0.5 - clearance - half);
@@ -427,7 +496,28 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
     let left_ok = target_left >= -side.half - left_room + half;
     let target_right = right.max(rest);
     let right_ok = filters && all_queue && target_right + half <= side.half;
-    let target = if right_ok {
+    // A car that passes a queue in the painted bicycle lane beside it.
+    let bike_lane_pass = if !is_bike && all_queue {
+        cross::neighbour(world.street, lane, true)
+            .filter(|n| n.use_ == StripUse::BikeLane && n.lane.is_some())
+            .filter(|n| {
+                lane.segment_id.is_some_and(|segment| {
+                    cross::may_cross(
+                        world.street,
+                        segment,
+                        n,
+                        Access::CAR,
+                        cross::bends(agent, cross::QUEUE_STREAM),
+                    )
+                })
+            })
+            .map(|n| n.offset)
+    } else {
+        None
+    };
+    let target = if let Some(target) = bike_lane_pass {
+        target
+    } else if right_ok {
         target_right
     } else if left_ok {
         target_left
@@ -476,6 +566,155 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
         passing: true,
         too_close: if agent.passing { None } else { reduced },
     }
+}
+
+/// How far before its line a driver may start to cut a corner, metres (start value).
+const CUT_REACH_M: f64 = 25.0;
+
+/// Where a driver that cuts a corner goes: the middle of the painted bicycle lane on its
+/// right, when it turns right and the separator lets it cross. `None` otherwise, and for a
+/// careful driver (it turns at the corner).
+fn cut_corner(agent: &Agent, world: &World, lane: &StreetLane) -> Option<f64> {
+    let approach = agent.approach.as_ref()?;
+    let info = world.moves.get(&approach.movement)?;
+    if info.turn != Turn::Right {
+        return None;
+    }
+    let to_line = approach.line_d - agent.d;
+    if !(0.0..CUT_REACH_M).contains(&to_line) {
+        return None;
+    }
+    // A driver that waits at its line does not cut the corner: it cuts while it comes up
+    // to the turn, on a green or without signals.
+    if agent.speed < super::drive::STOPPED_SPEED {
+        return None;
+    }
+    if info.signals
+        && world.plans.get(&info.node).is_some_and(|plan| {
+            matches!(plan.light(info.from_segment, world.time_s), Light::Red(_))
+        })
+    {
+        return None;
+    }
+    let segment = lane.segment_id?;
+    let side = cross::neighbour(world.street, lane, true)?;
+    if side.use_ != StripUse::BikeLane || side.lane.is_none() {
+        return None;
+    }
+    if !cross::may_cross(
+        world.street,
+        segment,
+        &side,
+        Access::CAR,
+        cross::bends(agent, cross::CUT_STREAM),
+    ) {
+        return None;
+    }
+    Some(side.offset)
+}
+
+/// A vehicle that moves over waits for what comes up behind it in the strip it enters,
+/// metres (start value: it does not pull in front of a rider).
+const PULL_IN_CLEAR_M: f64 = 20.0;
+
+/// The side position kept out of the bodies beside it and behind it: a vehicle that moves
+/// over does not sweep into a rider that is alongside, and does not pull in front of one
+/// that comes up behind it in the strip it enters (Phase 6 W4b). A van that pulls over into
+/// the bicycle lane waits for the rider behind it to pass, and stops short of the one
+/// beside it, instead of pushing it off the street.
+pub fn lateral_limit(agent: &Agent, snapshot: &Snapshot, target: f64, pull_in: bool) -> f64 {
+    if (target - agent.lateral).abs() < 1e-9 {
+        return target;
+    }
+    let perp = agent.dir.perp();
+    let mut limit = target;
+    for other in &snapshot.seen {
+        if other.id == agent.id {
+            continue;
+        }
+        let rel = other.pos - agent.pos;
+        let along = f64::from(rel.dot(agent.dir));
+        let side = f64::from(rel.dot(perp));
+        let room = (agent.width + other.width) * 0.5 + SIDE_MARGIN;
+        // Alongside: its body overlaps ours, with a margin.
+        let beside = along.abs() <= (agent.length + other.length) * 0.5 + SIDE_MARGIN;
+        // In the strip we mean to enter, near enough to reach: behind and not falling back,
+        // or ahead and slower, so that we would cut it off. Only away from a junction: at
+        // the line the turn tables and the corridor check say what is safe.
+        let near = pull_in
+            && along.abs() < PULL_IN_CLEAR_M
+            && if along < 0.0 {
+                other.speed + 1.0 >= agent.speed
+            } else {
+                other.speed + 1.0 < agent.speed
+            };
+        if target > agent.lateral {
+            if side > 0.0 && (beside || near) && side - room < limit {
+                limit = (side - room).max(agent.lateral);
+            }
+        } else if side < 0.0 && (beside || near) && side + room > limit {
+            limit = (side + room).min(agent.lateral);
+        }
+    }
+    limit
+}
+
+/// How far ahead a rider looks for an obstacle that blocks its lane, metres (start value).
+const LEAVE_REACH_M: f64 = 25.0;
+/// The stretch beside and ahead that must be free before a rider leaves its lane, metres
+/// (start value: it must be able to come back into its lane after the obstacle).
+const LEAVE_SPAN_M: f64 = 20.0;
+
+/// Where a rider goes round an obstacle that blocks its lane (a van stopped in the bicycle
+/// lane, an open door): the middle of the travel strip beside it, when the separator lets a
+/// bicycle cross and the way is free. `None` when it must brake instead (a kerb track, or a
+/// body in the way).
+fn leave_lane(agent: &Agent, snapshot: &Snapshot, world: &World, lane: &StreetLane) -> Option<f64> {
+    // A motor vehicle that stands in the lane (a van at a delivery stop) or an open door:
+    // a rider that stands ahead is a queue, which the rider waits behind or filters past.
+    // The body is taken where it is, not by its lane: a van that pulled over into the
+    // bicycle lane still has the lane of the car lane under its wheels.
+    let perp = agent.dir.perp();
+    let blocked = snapshot.seen.iter().any(|other| {
+        if other.id == agent.id || other.bike || other.speed >= QUEUE_SPEED {
+            return false;
+        }
+        let rel = other.pos - agent.pos;
+        let along = f64::from(rel.dot(agent.dir));
+        let side = f64::from(rel.dot(perp));
+        along > -agent.length
+            && along - other.length < LEAVE_REACH_M
+            && side.abs() < (other.width + agent.width) * 0.5 + SIDE_MARGIN
+    }) || world.doors.ahead(agent, world, LEAVE_REACH_M).is_some();
+    if !blocked {
+        return None;
+    }
+    let segment = lane.segment_id?;
+    for right in [false, true] {
+        let Some(side) = cross::neighbour(world.street, lane, right) else {
+            continue;
+        };
+        let Some(beside) = side.lane else {
+            continue;
+        };
+        if !world.street.lanes[&beside].access.contains(Access::BICYCLE) {
+            continue;
+        }
+        // Never into the lane of the oncoming traffic: a rider there meets a car head on.
+        if !cross::same_direction(world.street, lane, &side) {
+            continue;
+        }
+        // Going round an obstacle in its own lane is not bending a rule: paint is enough,
+        // a kerb, bollards or a planter are not.
+        if !cross::may_cross(world.street, segment, &side, Access::BICYCLE, true) {
+            continue;
+        }
+        let target = side.offset.clamp(-side.width * 0.5, side.width * 0.5);
+        if corridor_clear(agent, target, &[], LEAVE_SPAN_M, snapshot) {
+            return Some(target);
+        }
+    }
+    None
 }
 
 /// The ground a body covers while it gains `relative` metres on one that rides at

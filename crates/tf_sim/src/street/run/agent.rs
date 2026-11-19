@@ -280,6 +280,19 @@ pub fn vehicle_class(mode: Mode) -> Option<Access> {
     }
 }
 
+/// A delivery stop (Phase 6 W4b): a van, or a careless car, pulls over into the painted
+/// bicycle lane beside its own lane and stands there for a while. Riders behind must leave
+/// the lane to go round it, or wait.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeliveryStop {
+    /// Route distance of the front where it stops.
+    pub at_d: f64,
+    /// The tick it pulls away again.
+    pub until: u64,
+    /// The side position of the bicycle lane it stops in.
+    pub lateral: f64,
+}
+
 /// What an agent decided for the junction movement ahead of it. The draws are made once,
 /// when the movement comes up, so a personality acts the same way through one junction.
 #[derive(Clone, Debug, PartialEq)]
@@ -371,6 +384,8 @@ pub struct Agent {
     pub passing: bool,
     /// Cyclists only.
     pub bike: Option<BikeHabits>,
+    /// A delivery stop on this trip, if it makes one (`cross::delivery_stop_place`).
+    pub stop: Option<DeliveryStop>,
 }
 
 impl Agent {

@@ -202,6 +202,8 @@ pub struct World<'a> {
     pub time_s: f64,
     /// The walkers' world, for drivers who decide (`None` where only speeds are asked).
     pub peds: Option<&'a PedWorld<'a>>,
+    /// The doors of the parked cars (`door`).
+    pub doors: &'a super::door::Doors,
 }
 
 /// Why a driver does not enter the junction.
@@ -1053,6 +1055,22 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
     let plan = super::bike::lateral_plan(agent, snapshot, world);
     decision.lateral_target = plan.target;
     decision.passing = plan.passing;
+    // A delivery stop: pull over into the bicycle lane and stand there (Phase 6 W4b). It
+    // pulls over only near its place, not for the whole street.
+    let stopping = agent.stop.filter(|stop| tick < stop.until);
+    if let Some(stop) = stopping
+        && stop.at_d - agent.d < super::cross::STOP_APPROACH_M
+    {
+        decision.lateral_target = stop.lateral;
+    }
+    // A vehicle that moves over does not sweep into a body beside it, and away from a
+    // junction it does not pull in front of one that comes up behind it (Phase 6 W4b).
+    let far_from_line = agent
+        .approach
+        .as_ref()
+        .is_none_or(|a| agent.d < a.line_d - TURN_LOOK_M);
+    decision.lateral_target =
+        super::bike::lateral_limit(agent, snapshot, decision.lateral_target, far_from_line);
     if let Some(to) = plan.too_close {
         decision.causes.push(CauseKind::PassedTooClose { to });
     }
@@ -1220,22 +1238,30 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         }
     }
 
+    // An open door in the path (Phase 6 W4b): brake for it, or leave the lane (the side
+    // plan does that when the way is free). A door is not a body: it is a hazard of the
+    // parking strip, and the rider in the door zone is the one it reaches.
+    if let Some((gap, _)) = world.doors.ahead(agent, world, lookahead)
+        && stopping_at.is_none_or(|to_line| gap <= to_line)
+    {
+        let min_gap = min_gap_of(agent) * (1.0 - 0.5 * agent.traits.risk);
+        let safe = safe_speed(gap - min_gap, 0.0, tau);
+        need = need.max(needed_brake(v, 0.0, gap));
+        if safe < target {
+            target = safe;
+        }
+    }
+
     // People on foot: in the path, at a zebra, behind a hidden kerb.
     if let Some(peds) = world.peds {
         let task = driver_task(agent, world, peds, leader);
         decision.task = task;
         let view = yielding::walker_view(agent, snapshot, peds, false, tau, task);
-        // Standing at its line for people on the zebra before it (they hold it, even when
-        // the line holds it too): the drivers who give way to it do not wait for it
-        // (stage C review, finding 4).
-        if view.blocker.is_some()
-            && view.target <= target
-            && v < STOPPED_SPEED
-            && agent.approach.as_ref().is_some_and(|approach| {
-                let (stop_d, margin) = yielding::stop_point(agent, approach.line_d, world.peds);
-                !approach.committed && at_line(stop_d - margin - agent.d)
-            })
-        {
+        // Standing for people on foot, at its line or at a zebra anywhere on its route
+        // (they hold it, even when the line holds it too): the drivers who give way to it
+        // do not wait for it (stage C review, finding 4). A rider that stands for walkers
+        // on a zebra holds nobody either (W1 open point, Phase 6 W4b).
+        if view.blocker.is_some() && view.target <= target && v < STOPPED_SPEED {
             decision.held_by_walkers = true;
         }
         view_need = view.need;
@@ -1269,6 +1295,17 @@ pub fn decide(agent: &Agent, snapshot: &Snapshot, world: &World, tick: u64) -> D
         }
     }
 
+    // A delivery stop: come up to the place and stand there until the stop is over.
+    if let Some(stop) = stopping {
+        let to_stop = stop.at_d - agent.d;
+        if to_stop > 0.0 {
+            target = target.min(safe_speed(to_stop - STOP_MARGIN, 0.0, tau));
+            need = need.max(needed_brake(v, 0.0, to_stop));
+        } else if to_stop > -agent.length {
+            target = 0.0;
+        }
+    }
+
     // Reaching the target: gently on the way up. Above it, the driver brakes with what the
     // stop (or the slower speed) asks for over the distance left, never softer than the
     // comfortable rate that keeps it on the safe-speed curve, and never harder than the
@@ -1297,6 +1334,9 @@ const TURN_LOOK_M: f64 = 30.0;
 const EXIT_LOOK_M: f64 = 20.0;
 /// A driver this close behind a car that is slow looks at it (a queue), metres.
 const QUEUE_GAP_M: f64 = 8.0;
+/// A driver that moves this much to its right looks over its right shoulder first, metres
+/// (start value: a glance into the blind spot before it enters the strip beside it).
+const PULL_IN_LOOK_M: f64 = 0.4;
 
 /// What a driver is doing, which sets where it looks (`perceive::DriverTask`): a turn
 /// looks at the oncoming cars or at the traffic that has priority and only later at the
@@ -1347,6 +1387,22 @@ fn driver_task(
     }
     if leader.is_some_and(|(gap, speed)| gap < QUEUE_GAP_M && speed < 3.0) && agent.speed < 3.0 {
         return DriverTask::Queue;
+    }
+    // A driver that moves to its right (into the strip beside it, to stop or to pass a
+    // queue) looks over its right shoulder first, unless it is at a junction, where the
+    // turn tables already say where it looks (Phase 6 W4b).
+    let far_from_line = agent
+        .approach
+        .as_ref()
+        .is_none_or(|a| agent.d < a.line_d - TURN_LOOK_M);
+    if far_from_line {
+        if agent.bike.is_none() && agent.lateral_target - agent.lateral > PULL_IN_LOOK_M {
+            return DriverTask::PullIn;
+        }
+        // A rider that moves out of its lane looks back over its left shoulder first.
+        if agent.bike.is_some() && agent.lateral - agent.lateral_target > PULL_IN_LOOK_M {
+            return DriverTask::PullOut;
+        }
     }
     DriverTask::Cruise
 }
