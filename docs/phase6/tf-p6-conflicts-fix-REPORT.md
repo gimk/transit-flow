@@ -72,3 +72,66 @@ The 7 contacts did not vanish: most became hard brakes (serious). Cause chains o
 > 9 serious conflicts, mostly hard brakes for standing vans and for riders that swerve in
 > front of a car. No facility gives 2 serious conflicts and 3 close passes. The ordering
 > "lane better than none" is not yet met on serious conflicts.
+
+---
+
+# Update 2: look-back by traits (user decision via t13)
+
+Status: **stopped again, on contacts.** Serious conflicts now follow the order. One contact
+breaks `lane.contacts <= none.contacts`. I did not change the assertion.
+
+## What changed
+
+1. `bike.rs`: `looks_back(agent)` = a fixed hash draw (`cross::LOOK_BACK_STREAM`, same method
+   as `squeezes`, no draw from the agent's `rng`) below the rider's `attention`. Careful riders
+   have attention 1: they always look.
+2. `bike.rs`: `follower_too_close(agent, target, snapshot)`: a motor vehicle behind the rider,
+   in the place it moves to, faster than the rider, that could not stop (others moved forward by
+   one reaction time; `FOLLOWER_BRAKE`, `FOLLOWER_MARGIN_S`, `FOLLOWER_ROOM_M` reused). Used in
+   `leave_lane` (the rider then brakes for the obstacle) and when a rider starts a pass.
+3. `spawn.rs` (Fix B again): the look-back alone did not change any of the 5 events. Cause:
+   in seeds 5, 6, 8 the rider is already in the car lane when the car **spawns** 9 to 12 m
+   behind it, 2.5 to 3 m/s faster. The first guard was 0.02 m short (seed 6, tick 2590). The
+   gap now adds the braking distance (`ENTRY_BRAKE` = 3 m/s², start value) and a 2.0 s headway
+   (`ENTRY_GAP_HEADWAY_S`, was 1.2; reaction 0.8 s + 1.2 s margin). Both constants are mine and
+   documented.
+4. Test `careful_riders_never_move_out_in_front_of_a_close_car` (no car or van hard brake
+   for a rider, no contact, careful population, 24 seeds).
+
+## Tables (24 seeds, Mixed)
+
+| Facility | Serious | Close passes | Contacts |
+| --- | --- | --- | --- |
+| Track | 0 | 0 | 0 |
+| Painted lane | 2 (was 9) | 0 | 1 |
+| No facility | 2 | 3 | 0 |
+
+Conflicts (serious + close passes): track 0, lane 2, none 5. W4a: priority 41 serious / 66
+any / 23 contacts; signals 10 / 21 / 5; box and lead 3 / 22 / 1. The replay hashes did not move.
+
+## The 5 move-out events
+
+Gone: seeds 5, 6, 8, 13, 20 move-out events no longer appear. Cause was the spawn gap, not the
+rider (the look-back alone left them unchanged). Remaining lane events: a car hard brake at the
+gate (seed 18, t2388, rider in car lane) and a van pull-in behind a rider (careful seeds 1, 23
+before the spawn change; see below).
+
+## The one contact (seed 1, tick 2722)
+
+Van 39 stands in the painted lane at x = 29 for its delivery stop. Rider 41 is
+"Distracted" and rides into it at 17.9 km/h; the van's cause is "LookedElsewhere". The rider
+braked hard at tick 2718 (serious) and did not leave the lane in time. So this is a rider hitting
+a **standing** van in a painted lane: the original W4b premise, now real. The other contacts
+of the run are car/van against car/van (not counted).
+
+## Open point (decision for the user)
+
+The lane has 1 contact, none has 0. Options: (a) a rider that is Distracted still notices a standing van sooner (perception work, not a constant); (b) the test reads contacts per rider instead of as a count. I did not change the assertion. Your call.
+
+## Text for the plan (replaces the one above)
+
+> ... On the test street the protected track gives 0 serious conflicts and 0 contacts; the
+> painted lane gives 2 serious conflicts and 1 contact (a distracted rider against a van
+> standing in the lane); no facility gives 2 serious conflicts, 3 close passes and 0 contacts.
+> A rider looks back before it moves out, by its attention, and a car does not enter the street
+> behind a slower body of its own gate that it could not stop for.

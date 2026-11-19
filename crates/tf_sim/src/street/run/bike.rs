@@ -569,6 +569,10 @@ fn plan_inner(agent: &Agent, snapshot: &Snapshot, world: &World) -> Plan {
         if !corridor_clear(agent, target, &passed, span.max(relative), snapshot) {
             return stay;
         }
+        // A rider that starts to pass looks back too (as before leaving its lane).
+        if is_bike && looks_back(agent) && follower_too_close(agent, target, snapshot) {
+            return stay;
+        }
     }
     Plan {
         target,
@@ -672,6 +676,42 @@ pub fn lateral_limit(agent: &Agent, snapshot: &Snapshot, target: f64, pull_in: b
     limit
 }
 
+/// Does this rider look back before it moves out? Its attention is the chance (a careful rider
+/// has 1 and always does). One fixed draw per agent, so no stream shifts.
+pub fn looks_back(agent: &Agent) -> bool {
+    perceive::roll(agent.gaze_seed, agent.id.0 as u64, cross::LOOK_BACK_STREAM)
+        < agent.traits.attention
+}
+
+/// Is a vehicle coming up behind the agent, in the place the agent would move to, that could
+/// not stop for it? Others are moved forward by one reaction time, as in `lateral_limit`;
+/// the follower is taken to brake at `FOLLOWER_BRAKE` and to react in the agent's own
+/// reaction time plus `FOLLOWER_MARGIN_S`.
+fn follower_too_close(agent: &Agent, target: f64, snapshot: &Snapshot) -> bool {
+    let perp = agent.dir.perp();
+    snapshot.seen.iter().any(|other| {
+        if other.id == agent.id || other.bike || other.dir.dot(agent.dir) < 0.7 {
+            return false;
+        }
+        let centre = other.pos + other.dir * (other.speed * agent.traits.reaction_s) as f32;
+        let rel = centre - agent.pos;
+        let along = f64::from(rel.dot(agent.dir));
+        if along >= 0.0 || other.speed <= agent.speed {
+            return false;
+        }
+        // Where the agent will be, sideways, against where the follower is.
+        let side = f64::from(rel.dot(perp)) - (target - agent.lateral);
+        if side.abs() >= (agent.width + other.width) * 0.5 + SIDE_MARGIN {
+            return false;
+        }
+        let behind = -along - (agent.length + other.length) * 0.5;
+        let stop = other.speed * other.speed / (2.0 * FOLLOWER_BRAKE)
+            + other.speed * (agent.traits.reaction_s + FOLLOWER_MARGIN_S)
+            + FOLLOWER_ROOM_M;
+        behind < stop
+    })
+}
+
 /// How far ahead a rider looks for an obstacle that blocks its lane, metres (start value).
 const LEAVE_REACH_M: f64 = 25.0;
 /// The stretch beside and ahead that must be free before a rider leaves its lane, metres
@@ -723,6 +763,11 @@ fn leave_lane(agent: &Agent, snapshot: &Snapshot, world: &World, lane: &StreetLa
             continue;
         }
         let target = side.offset.clamp(-side.width * 0.5, side.width * 0.5);
+        // A rider looks back before it moves out: a vehicle that comes up in the lane it enters
+        // and could not stop for it makes it wait (it brakes for the obstacle instead).
+        if looks_back(agent) && follower_too_close(agent, target, snapshot) {
+            continue;
+        }
         if corridor_clear(agent, target, &[], LEAVE_SPAN_M, snapshot) {
             return Some(target);
         }

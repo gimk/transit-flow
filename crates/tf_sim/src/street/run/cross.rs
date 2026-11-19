@@ -121,6 +121,8 @@ pub const STOP_STREAM: u64 = 0x53_54_4F;
 pub const QUEUE_STREAM: u64 = 0x51_55_45;
 pub const CUT_STREAM: u64 = 0x43_55_54;
 pub const SQUEEZE_STREAM: u64 = 0x53_51_5A;
+/// The fixed draw of a rider that decides if it looks back before it moves out.
+pub const LOOK_BACK_STREAM: u64 = 0x4C_4F_4B;
 
 /// Chance that a van makes a delivery stop on its trip (start value: one van in four).
 pub const VAN_STOP_CHANCE: f64 = 0.25;

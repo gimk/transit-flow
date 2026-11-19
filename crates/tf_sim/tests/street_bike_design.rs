@@ -394,3 +394,52 @@ fn a_car_does_not_come_in_behind_a_rider_that_swerves_at_the_gate() {
         .collect();
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// A rider looks back before it moves out of its lane (by its attention: 1 for a careful
+/// one): careful riders never move out in front of a car that could not stop, so no car
+/// brakes hard for a rider in the car lane. Mixed riders may forget.
+#[test]
+fn careful_riders_never_move_out_in_front_of_a_close_car() {
+    let level = facility_level(400, 120, 400);
+    let mut design = Design::new(&level.id);
+    design.commands = lane_on_both_arms();
+    let mut moved_out = 0;
+    for seed in SEEDS {
+        let options = RunOptions {
+            seed,
+            population: Population::Careful,
+            demand_scale: 1.0,
+        };
+        let mut run = StreetRun::new(&level, &design, options).expect("builds");
+        run.run_to_end();
+        let mut mode_of = std::collections::HashMap::new();
+        for e in run.events() {
+            if let StreetEvent::Spawned { agent, mode, .. } = &e.event {
+                mode_of.insert(*agent, *mode);
+            }
+        }
+        for e in run.events() {
+            if let StreetEvent::Conflict {
+                kind: tf_sim::street::run::events::ConflictKind::HardBrake,
+                a,
+                b,
+                ..
+            } = &e.event
+                && matches!(mode_of.get(a), Some(Mode::Car | Mode::Van))
+                && mode_of.get(b) == Some(&Mode::Bicycle)
+            {
+                moved_out += 1;
+            }
+            assert!(
+                !matches!(&e.event, StreetEvent::Contact { a, b, .. }
+                if matches!(
+                    (mode_of.get(a), mode_of.get(b)),
+                    (Some(Mode::Car | Mode::Van), Some(Mode::Bicycle))
+                        | (Some(Mode::Bicycle), Some(Mode::Car | Mode::Van))
+                )),
+                "seed {seed}: a contact"
+            );
+        }
+    }
+    assert_eq!(moved_out, 0);
+}

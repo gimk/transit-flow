@@ -25,9 +25,12 @@ use crate::street::model::Street;
 use crate::street::space::Access;
 
 /// The headway a newcomer keeps to a slower body from its own gate in another lane, seconds
-/// (start value: the car-following headway of about 1.2 s, applied to the speed it would
+/// (start value: a driver reaction of about 0.8 s plus a 1.2 s margin, applied to the speed it would
 /// gain on that body).
-const ENTRY_GAP_HEADWAY_S: f64 = 1.2;
+const ENTRY_GAP_HEADWAY_S: f64 = 2.0;
+/// The braking a newcomer is assumed to use for a slower body of its gate, m/s² (start value: a
+/// comfortable brake, below the hard-brake threshold).
+const ENTRY_BRAKE: f64 = 3.0;
 
 enum Attempt {
     Spawned,
@@ -161,7 +164,11 @@ impl StreetRun {
                     && self.street.lanes[&other_first].from_node == first_node
                     && other.speed < v_spawn
                     && other.d - other.length
-                        < length + MIN_GAP + 1.0 + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
+                        < length
+                            + MIN_GAP
+                            + 1.0
+                            + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
+                            + (v_spawn - other.speed).powi(2) / (2.0 * ENTRY_BRAKE)
                 {
                     return Attempt::Blocked;
                 }
