@@ -162,6 +162,15 @@ impl StreetRun {
                 if first_segment.is_some()
                     && self.street.lanes[&other_first].segment_id == first_segment
                     && self.street.lanes[&other_first].from_node == first_node
+                    // Only a body whose edge is in the newcomer's lane, or that is moving into it:
+                    // a rider that stays in its own painted lane does not hold the entry.
+                    && {
+                        let own = &self.street.lanes[&other_first];
+                        let mine = &self.street.lanes[&first];
+                        let side = f64::from(own.lateral - mine.lateral)
+                            + other.lateral.min(other.lateral_target);
+                        other.passing || side - other.width * 0.5 < f64::from(mine.width) * 0.5
+                    }
                     && other.speed < v_spawn
                     && other.d - other.length
                         < length
@@ -362,10 +371,13 @@ mod tests {
             run.routes[run.agents[&rider].route].lanes[0], car_lane,
             "the rider and the car must start in different lanes"
         );
-        // The rider crawls near the gate: the car is held back.
+        // The rider crawls near the gate, moving into the car lane: the car is held back.
         {
             let rider = run.agents.get_mut(&rider).expect("the rider");
             rider.speed = 1.0;
+            rider.passing = true;
+            rider.lateral = -1.5;
+            rider.lateral_target = -1.5;
             rider.d = rider.length + 3.0;
         }
         assert!(matches!(run.try_spawn(&car), Attempt::Blocked));

@@ -203,6 +203,8 @@ struct Facility {
     serious: u32,
     close_passes: u32,
     contacts: u32,
+    /// Cars and vans that entered the street: the comparison is fair only if it is the same.
+    cars: u32,
 }
 
 impl Facility {
@@ -233,6 +235,9 @@ fn measure_facility(
         for e in run.events() {
             if let StreetEvent::Spawned { agent, mode, .. } = &e.event {
                 mode_of.insert(*agent, *mode);
+                if matches!(mode, Mode::Car | Mode::Van) {
+                    total.cars += 1;
+                }
             }
         }
         let car_rider = |a: &tf_sim::street::ids::AgentId, b: &tf_sim::street::ids::AgentId| {
@@ -442,4 +447,22 @@ fn careful_riders_never_move_out_in_front_of_a_close_car() {
         }
     }
     assert_eq!(moved_out, 0);
+}
+
+/// Riders that stay in their own painted lane do not hold the cars back at the gate: the
+/// same cars enter the street with and without them.
+#[test]
+fn riders_in_their_own_lane_do_not_cut_the_car_flow() {
+    let with_riders = facility_level(400, 120, 400);
+    let without = facility_level(400, 120, 0);
+    let lane = lane_on_both_arms();
+    // A rider flow of 0 is a flow that never spawns; the car streams are their own.
+    let a = measure_facility(&with_riders, &lane, SEEDS);
+    let b = measure_facility(&without, &lane, SEEDS);
+    println!("cars entered: with riders {}, without {}", a.cars, b.cars);
+    // Within one car per seed (a car that is still waiting at the end of the slice).
+    assert!(
+        a.cars.abs_diff(b.cars) <= SEEDS.end as u32 - SEEDS.start as u32,
+        "{a:?} {b:?}"
+    );
 }

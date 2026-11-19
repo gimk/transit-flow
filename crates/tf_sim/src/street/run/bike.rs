@@ -24,7 +24,7 @@ use glam::Vec2;
 
 use super::agent::Agent;
 use super::cross;
-use super::drive::{SIDE_MARGIN, Seen, Snapshot, World, desired_speed_at};
+use super::drive::{MIN_GAP, SIDE_MARGIN, Seen, Snapshot, World, desired_speed_at};
 use super::perceive;
 use crate::street::ids::{AgentId, StreetLaneId};
 use crate::street::lanes::{StreetLane, Turn};
@@ -663,7 +663,11 @@ pub fn lateral_limit(agent: &Agent, snapshot: &Snapshot, target: f64, pull_in: b
             && if along < 0.0 {
                 other.speed + 1.0 >= agent.speed
             } else {
+                // Slower by a margin, or so near that the driver could not stop short of it
+                // if it pulled in (its reaction distance and a minimum gap).
                 other.speed + 1.0 < agent.speed
+                    || along - (agent.length + other.length) * 0.5
+                        < agent.speed * agent.traits.reaction_s + MIN_GAP
             };
         if target > agent.lateral {
             if side > 0.0 && (beside || near) && side - room < limit {

@@ -284,11 +284,15 @@ fn the_same_inputs_give_the_same_log_hash() {
 // cars, the early right turn across a painted lane, the squeeze past a rider by traits, and
 // the shoulder checks of a vehicle that moves over. Before: 0xe067_d5d5_72b3_7e18,
 // 0x24de_fecd_d144_42ad, 0x84c1_225b_cbec_7160, 0xb0b8_6af5_1771_ac36.
+// Moved on purpose again (W4b fixes, 2026-11-19): the side limit of a vehicle that moves over
+// uses the others' current place; the entry holds for a body of the gate that is in the
+// newcomer's lane; the squeeze takes a tight gap to oncoming traffic; riders look back.
+// Only seed 2, Careless x4 moved (before: 0x3b86_b38d_03ea_13c1).
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
     (1, Population::Mixed, 1.0, 0xa8e9_c655_fd00_0555),
     (2, Population::Mixed, 1.0, 0x6ab2_d79c_4a11_996a),
     (1, Population::Careless, 4.0, 0xd596_0932_0abb_ccac),
-    (2, Population::Careless, 4.0, 0x3b86_b38d_03ea_13c1),
+    (2, Population::Careless, 4.0, 0xe368_c824_c69a_51ef),
 ];
 
 #[test]

@@ -107,7 +107,7 @@ breaks `lane.contacts <= none.contacts`. I did not change the assertion.
 | No facility | 2 | 3 | 0 |
 
 Conflicts (serious + close passes): track 0, lane 2, none 5. W4a: priority 41 serious / 66
-any / 23 contacts; signals 10 / 21 / 5; box and lead 3 / 22 / 1. The replay hashes did not move.
+any / 23 contacts; signals 10 / 21 / 5; box and lead 3 / 22 / 1. One replay hash moved on purpose (seed 2, Careless x4) and was updated with a comment.
 
 ## The 5 move-out events
 
@@ -135,3 +135,44 @@ The lane has 1 contact, none has 0. Options: (a) a rider that is Distracted stil
 > standing in the lane); no facility gives 2 serious conflicts, 3 close passes and 0 contacts.
 > A rider looks back before it moves out, by its attention, and a car does not enter the street
 > behind a slower body of its own gate that it could not stop for.
+
+---
+
+# Update 3: review of ab3cfd9 (the entry guard held for riders in their own lane)
+
+Status: **done, the "done when" test passes with all its assertions.** Nothing was weakened.
+
+## What changed
+
+1. `spawn.rs` (Fix B): the guard holds a newcomer only for a body whose **edge is in the
+   newcomer's first lane** or that is moving into it (`passing`). Sideways position: the lane
+   offset difference plus the body's `min(lateral, lateral_target)`. A rider in its own painted
+   lane no longer holds the entry. The braking distance and headway of update 2 are kept.
+2. `bike.rs`, `lateral_limit`: found with the careful test (seed 1, tick 975, van 12 and rider
+   10, careful population, contact 3.5 km/h). A van pulls over into the painted lane 3 to 4 m
+   **behind** a rider that is only 0.9 m/s slower. The pull-in rule "ahead and slower by more
+   than 1 m/s" did not hold it, so the van swept into the rider's tail. The rule now also holds
+   when the gap is under the reaction distance plus `MIN_GAP` (existing constant). No new constant.
+3. Tests: `riders_in_their_own_lane_do_not_cut_the_car_flow` (1209 cars and vans entered with
+   and without riders, 24 seeds, same number). `Facility` now counts the cars that entered.
+
+## Tables (24 seeds, Mixed)
+
+| Facility | Serious | Close passes | Contacts | Cars entered |
+| --- | --- | --- | --- | --- |
+| Protected track | 0 | 0 | 0 | 1209 |
+| Painted lane | 1 | 0 | 0 | 1209 |
+| No facility | 2 | 3 | 0 | 1209 |
+
+Conflicts: track 0, lane 1, none 5. Contacts 0 / 0 / 0. All assertions of the test pass.
+W4a (24 seeds): priority 38 serious / 60 any / 20 contacts; signals 12 / 20 / 7;
+box and lead 4 / 23 / 1. One replay hash moved on purpose (seed 2, Careless x4) and was updated with a comment.
+
+## Text for the plan (replaces the one in update 2)
+
+> On the test street the protected track gives 0 serious conflicts and 0 contacts; the
+> painted lane gives 1 serious conflict and 0 contacts; no facility gives 2 serious conflicts,
+> 3 close passes and 0 contacts (the same 1209 cars and vans entered in each case). A rider
+> looks back before it moves out, by its attention. A car does not enter the street behind a
+> body of its own gate that is in its lane and that it could not stop for. A van does not pull
+> over into a lane just in front of a rider.
