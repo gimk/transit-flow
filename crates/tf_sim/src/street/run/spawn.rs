@@ -7,7 +7,10 @@
 
 use glam::Vec2;
 
-use super::agent::{Agent, BikeHabits, CARGO_BIKE_SIZE, Traits, body_size, chance, vehicle_class};
+use super::agent::{
+    Agent, BikeHabits, CARGO_BIKE_SIZE, DeliveryStop, Traits, body_size, chance, vehicle_class,
+};
+use super::cross;
 use super::drive::{self, DT, MIN_GAP, World};
 use super::events::StreetEvent;
 use super::kerb;
@@ -20,6 +23,14 @@ use crate::street::ids::AgentId;
 use crate::street::level::{Flow, Gate, Mode};
 use crate::street::model::Street;
 use crate::street::space::Access;
+
+/// The headway a newcomer keeps to a slower body from its own gate in another lane, seconds
+/// (start value: a driver reaction of about 0.8 s plus a 1.2 s margin, applied to the speed it would
+/// gain on that body).
+const ENTRY_GAP_HEADWAY_S: f64 = 2.0;
+/// The braking a newcomer is assumed to use for a slower body of its gate, m/s² (start value: a
+/// comfortable brake, below the hard-brake threshold).
+const ENTRY_BRAKE: f64 = 3.0;
 
 enum Attempt {
     Spawned,
@@ -137,8 +148,39 @@ impl StreetRun {
         // to stay behind it at its speed, with its own headway (a car that came in at full
         // speed behind a slower one would brake hard on its first tick).
         let mut leader: Option<(f64, f64)> = None; // (rear of the leader, its speed)
+        let first_segment = self.street.lanes[&first].segment_id;
+        let first_node = self.street.lanes[&first].from_node;
+        // The speed the newcomer would come in at, at most: the limit of its first lane.
+        let v_spawn = self.street.lanes[&first].speed_limit;
         for other in self.agents.values() {
             if self.routes[other.route].lanes[0] != first {
+                // A slower body from the same gate in another lane of the segment (a rider
+                // that swerves into the car lane in the first metres): the newcomer could not
+                // stop for it, and it does not see it, so it waits at the gate.
+                let other_first = self.routes[other.route].lanes[0];
+                // Same segment and same way (same entry node): not the traffic of the other gate.
+                if first_segment.is_some()
+                    && self.street.lanes[&other_first].segment_id == first_segment
+                    && self.street.lanes[&other_first].from_node == first_node
+                    // Only a body whose edge is in the newcomer's lane, or that is moving into it:
+                    // a rider that stays in its own painted lane does not hold the entry.
+                    && {
+                        let own = &self.street.lanes[&other_first];
+                        let mine = &self.street.lanes[&first];
+                        let side = f64::from(own.lateral - mine.lateral)
+                            + other.lateral.min(other.lateral_target);
+                        other.passing || side - other.width * 0.5 < f64::from(mine.width) * 0.5
+                    }
+                    && other.speed < v_spawn
+                    && other.d - other.length
+                        < length
+                            + MIN_GAP
+                            + 1.0
+                            + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
+                            + (v_spawn - other.speed).powi(2) / (2.0 * ENTRY_BRAKE)
+                {
+                    return Attempt::Blocked;
+                }
                 continue;
             }
             let rear = other.d - other.length;
@@ -159,6 +201,30 @@ impl StreetRun {
         if flow.mode == Mode::Bicycle && archetype.name == "cargo bike" {
             (length, width) = CARGO_BIKE_SIZE;
         }
+        // A delivery stop: a van, or a careless car, pulls over into the painted bicycle
+        // lane beside its lane and stands there (Phase 6 W4b). One draw for every motor
+        // vehicle, so a rider's stream does not move.
+        let stop = if flow.mode == Mode::Bicycle {
+            None
+        } else {
+            let draw = f64::from(rng.randf());
+            let chance = match flow.mode {
+                Mode::Van => cross::VAN_STOP_CHANCE,
+                Mode::Car => cross::CAR_STOP_CHANCE * (1.0 - traits.compliance),
+                _ => 0.0,
+            };
+            if draw < chance {
+                cross::delivery_stop_place(&self.street, &self.routes[route_index], class).map(
+                    |(at_d, lateral)| DeliveryStop {
+                        at_d,
+                        until: self.tick + (cross::STOP_DURATION_S / DT).round() as u64,
+                        lateral,
+                    },
+                )
+            } else {
+                None
+            }
+        };
         let mut agent = Agent {
             id,
             mode: flow.mode,
@@ -196,6 +262,7 @@ impl StreetRun {
             lateral_target: 0.0,
             passing: false,
             bike,
+            stop,
         };
         let route = &self.routes[route_index];
         let world = World {
@@ -206,6 +273,7 @@ impl StreetRun {
             street_speeds: &self.street_speeds,
             time_s: self.tick as f64 * DT,
             peds: None,
+            doors: &self.doors,
         };
         let wanted = drive::desired_speed_at(&agent, first, 0.0, &world);
         // The newcomer decides from the world one reaction time ago, where the leader was
@@ -245,5 +313,76 @@ impl StreetRun {
         });
         self.agents.insert(id, agent);
         Attempt::Spawned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::street::level::{LevelFile, Slice};
+    use crate::street::run::{Population, RunOptions};
+    use crate::street::space::{Direction, StripUse};
+    use crate::street::{Design, DesignCommand};
+
+    fn flow(mode: Mode, per_hour: u32) -> Flow {
+        Flow {
+            mode,
+            from: "west".to_string(),
+            to: "east".to_string(),
+            per_hour,
+        }
+    }
+
+    /// A rider that swerves into the car lane in the first metres holds the next car at the
+    /// gate; a car that is clear of it comes in.
+    #[test]
+    fn a_car_does_not_enter_behind_a_slow_body_of_another_lane_of_its_gate() {
+        let mut level = LevelFile::load("carrefour-ecole").expect("the level loads");
+        level.demand = vec![Slice {
+            name: "test".to_string(),
+            duration_s: 120.0,
+            flows: vec![flow(Mode::Bicycle, 600)],
+        }];
+        let mut design = Design::new(&level.id);
+        design.commands = vec![DesignCommand::SetStripUse {
+            segment: 1,
+            strip: 3,
+            use_: StripUse::BikeLane,
+            direction: Direction::Forward,
+        }];
+        let options = RunOptions {
+            seed: 3,
+            population: Population::Mixed,
+            demand_scale: 1.0,
+        };
+        let mut run = StreetRun::new(&level, &design, options).expect("builds");
+        while run.agents.is_empty() {
+            run.step();
+        }
+        let rider = *run.agents.keys().next().expect("a rider came in");
+        let car = flow(Mode::Car, 600);
+        let car_lane = {
+            let index = run
+                .route_for("west", "east", vehicle_class(Mode::Car).unwrap())
+                .expect("a car route");
+            run.routes[index].lanes[0]
+        };
+        assert_ne!(
+            run.routes[run.agents[&rider].route].lanes[0], car_lane,
+            "the rider and the car must start in different lanes"
+        );
+        // The rider crawls near the gate, moving into the car lane: the car is held back.
+        {
+            let rider = run.agents.get_mut(&rider).expect("the rider");
+            rider.speed = 1.0;
+            rider.passing = true;
+            rider.lateral = -1.5;
+            rider.lateral_target = -1.5;
+            rider.d = rider.length + 3.0;
+        }
+        assert!(matches!(run.try_spawn(&car), Attempt::Blocked));
+        // The rider is far down the street: the entry is free.
+        run.agents.get_mut(&rider).expect("the rider").d = 60.0;
+        assert!(matches!(run.try_spawn(&car), Attempt::Spawned));
     }
 }

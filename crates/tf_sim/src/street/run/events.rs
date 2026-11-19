@@ -150,7 +150,9 @@ pub enum ConflictKind {
     /// `a` had to brake hard for `b`.
     HardBrake,
     /// A motor vehicle passed a rider with little side room at speed (`a` is the driver,
-    /// `b` the rider); the measure is the room in metres.
+    /// `b` the rider); the measure is the room in metres. Also two motor vehicles that meet
+    /// head on with little room (a driver that squeezed past a rider into the lane of the
+    /// other way: `a` is the one furthest off its side position).
     ClosePass,
 }
 
