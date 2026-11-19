@@ -1,12 +1,32 @@
 # Urbanism Pivot — Long-Term Plan
 
-**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). Phase 4 measure fixes merged. **Phase 6 (cyclists) in progress on `pivot-phase-6`: W1, W2, W3, W4a, W6a, W6b merged; W4b done on branch `p6-conflicts` but not merged (fixes owed, user decision of 2026-11-19); then W5. See the progress note of 2026-11-19.**
+**Status (2026-11-16):** approved by the user on 2026-11-16; it replaces [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) as the roadmap (the old plan stays as the record of the city builder). Phase 0 done (tag `city-builder-final`, docs updated, open points of section 12 on their defaults). Phase 1 done (space model, level and design files, test level drawn from its file; see the notes under Phase 1). Phase 2 done (cars: headless core, threaded runner, car view; see the notes under Phase 2). The replay hashes made on Windows are the same on macOS (checked 2026-11-16). Phase 3 done (2026-11-17: pedestrians, crossings, cars against pedestrians, the pedestrian view; see the notes under Phase 3). Direction changed by the user on 2026-11-17: realism first, fun later; each star of a level is a stage with more traffic (section 1, "Direction"). Phase 4 done and merged to `main` (2026-11-17: design, run, report, star stages, two playtests, two design measures; the user accepted the direction). Phase 5 done on branch `pivot-phase-5` (2026-11-17: the old city builder, its goldens and `migration/` are deleted; UI approach `bevy_ui` only). Phase 4 measure fixes merged. **Phase 6 (cyclists) in progress on `pivot-phase-6`: W1, W2, W3, W4a, W4b, W6a, W6b merged (W4b with its fixes, 2026-11-19 on Windows); next W5. See the progress notes of 2026-11-19.**
 
 **Working title:** to be chosen (section 12). The crates keep the names `tf_sim` and `tf_game` until then.
 
 ## Progress notes
 
 The newest entry is first. Each entry tells what was done, where, and what to do next. Keep only the entries that are still useful; the phase notes in section 8 are the record.
+
+### 2026-11-19 (Windows): W4b fixed and merged
+
+**State.** `p6-conflicts` is merged into `pivot-phase-6` (d755433). `scripts/check.sh` passed on Windows after the merge (exit 0, 11 min). Review: [phase6/tf-p6-vans-REVIEW.md](phase6/tf-p6-vans-REVIEW.md). Fixes: [phase6/tf-p6-conflicts-fix-REPORT.md](phase6/tf-p6-conflicts-fix-REPORT.md) (update 3 is the final state; its "Text for the plan" replaces section 9 of the W4b report).
+
+**What the review found.** No contact was a rider against a van that stands still. 4 contacts: a van or car that pulls over to its stop swept into a rider it was passing (`lateral_limit` used the rider's place one reaction time old). 3 contacts: a rider moved out round a standing van and a car entered at the gate just behind it (the entry check looked only at the same first lane).
+
+**What changed.** `lateral_limit` moves the others forward by one reaction time; a van does not pull in just ahead of a rider. A car does not enter behind a body of its own gate that is in its lane and that it could not stop for (`ENTRY_GAP_HEADWAY_S` 2.0 s, `ENTRY_BRAKE` 3 m/s², start values; a rider in its own lane does not hold the entry: test `riders_in_their_own_lane_do_not_cut_the_car_flow`). A rider looks back before it moves out, by its attention (user decision). Option (b): a driver who squeezes past a rider also accepts a tight gap to oncoming traffic, and a tight head-on meet is a `ClosePass`. The "done when" test checks contacts too (no `lane.contacts > 0` any more) and counts the cars that entered.
+
+**Measured (24 seeds, Mixed, 1209 cars and vans entered in each case):**
+
+| Facility | Serious | Close passes | Contacts |
+| --- | --- | --- | --- |
+| Protected track | 0 | 0 | 0 |
+| Painted lane | 1 | 0 | 0 |
+| No facility | 2 | 3 | 0 |
+
+W4a on the same file: priority 38 serious / 60 conflicts with a rider / 20 contacts; signals 12 / 20 / 7; bicycle box and leading green 4 / 23 / 1. One replay hash moved on purpose (seed 2, Careless x4); it was made on Windows: **check it on the Mac** (`cargo test -p tf_sim --test street_run`).
+
+**To resume:** on the Mac, `git pull`, run the replay hash test. Then W5 (swerving), the rider behaviour package from the review (F3, F5, F6, F7), the `drive.rs` splits, close Phase 6. The remote branches `p6-conflicts` and `p6-views2` are no longer needed.
 
 ### 2026-11-19: Phase 6 on the Mac, W6b merged, W4b waits for fixes
 
