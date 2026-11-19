@@ -632,7 +632,11 @@ pub fn lateral_limit(agent: &Agent, snapshot: &Snapshot, target: f64, pull_in: b
         if other.id == agent.id {
             continue;
         }
-        let rel = other.pos - agent.pos;
+        // The snapshot is one reaction time old: the other body is moved forward to where it
+        // is now, as `hold_if_blocked` does. Without it a van that overtakes a rider loses
+        // the limit while its tail still covers the rider.
+        let centre = other.pos + other.dir * (other.speed * agent.traits.reaction_s) as f32;
+        let rel = centre - agent.pos;
         let along = f64::from(rel.dot(agent.dir));
         let side = f64::from(rel.dot(perp));
         let room = (agent.width + other.width) * 0.5 + SIDE_MARGIN;

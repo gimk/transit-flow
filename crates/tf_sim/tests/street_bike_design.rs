@@ -309,3 +309,85 @@ fn a_track_gives_fewer_serious_conflicts_than_a_lane_and_a_lane_fewer_than_none(
         "track {track:?} against lane {lane:?}"
     );
 }
+
+/// The painted lane on both arms of the school street (the "done when" street).
+fn lane_on_both_arms() -> Vec<DesignCommand> {
+    [1, 2]
+        .into_iter()
+        .map(|segment| DesignCommand::SetStripUse {
+            segment,
+            strip: 3,
+            use_: StripUse::BikeLane,
+            direction: Direction::Forward,
+        })
+        .collect()
+}
+
+/// Contacts between a motor vehicle and a rider, with the speed of the vehicle and whether
+/// it has reached its stop place, read tick by tick.
+fn moving_contacts(level: &LevelFile, commands: &[DesignCommand]) -> Vec<(u64, u64, f64, bool)> {
+    let mut design = Design::new(&level.id);
+    design.commands = commands.to_vec();
+    let mut found = Vec::new();
+    for seed in SEEDS {
+        let options = RunOptions {
+            seed,
+            population: Population::Mixed,
+            demand_scale: 1.0,
+        };
+        let mut run = StreetRun::new(level, &design, options).expect("builds");
+        let mut seen = 0;
+        while !run.finished() {
+            run.step();
+            let events = run.events();
+            for e in &events[seen..] {
+                if let StreetEvent::Contact { a, b, .. } = &e.event {
+                    let motor = [a, b].into_iter().find(|id| {
+                        run.agents
+                            .get(*id)
+                            .is_some_and(|agent| agent.mode != Mode::Bicycle)
+                    });
+                    let rider = [a, b].into_iter().any(|id| {
+                        run.agents
+                            .get(id)
+                            .is_some_and(|agent| agent.mode == Mode::Bicycle)
+                    });
+                    if let (Some(motor), true) = (motor, rider) {
+                        let agent = &run.agents[motor];
+                        let at_stop = agent.stop.as_ref().is_some_and(|s| agent.d >= s.at_d);
+                        found.push((seed, e.tick, agent.speed, at_stop));
+                    }
+                }
+            }
+            seen = events.len();
+        }
+    }
+    found
+}
+
+/// Cause A of the W4b review: a van that pulls over into the painted lane for its delivery
+/// stop sweeps into the rider it overtakes, because the side limit compared the rider's
+/// old position with its own. No vehicle that moves hits a rider on its way to its stop.
+#[test]
+fn a_van_that_pulls_over_does_not_sweep_into_a_rider_it_overtakes() {
+    let level = facility_level(0, 120, 400);
+    let found = moving_contacts(&level, &lane_on_both_arms());
+    let bad: Vec<_> = found
+        .iter()
+        .filter(|(_, _, speed, at_stop)| *speed > 1.0 && !*at_stop)
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// Cause B of the W4b review: a rider swerves into the car lane in the first metres of the
+/// street and a car comes in right behind it. The gate holds the car back.
+#[test]
+fn a_car_does_not_come_in_behind_a_rider_that_swerves_at_the_gate() {
+    let level = facility_level(1200, 0, 400);
+    // A car that stands in a jam and a rider that rides into it is another matter.
+    let found: Vec<_> = moving_contacts(&level, &lane_on_both_arms())
+        .into_iter()
+        .filter(|(_, _, speed, _)| *speed > 1.0)
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+}

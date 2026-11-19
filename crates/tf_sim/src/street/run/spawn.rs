@@ -24,6 +24,11 @@ use crate::street::level::{Flow, Gate, Mode};
 use crate::street::model::Street;
 use crate::street::space::Access;
 
+/// The headway a newcomer keeps to a slower body from its own gate in another lane, seconds
+/// (start value: the car-following headway of about 1.2 s, applied to the speed it would
+/// gain on that body).
+const ENTRY_GAP_HEADWAY_S: f64 = 1.2;
+
 enum Attempt {
     Spawned,
     Blocked,
@@ -140,8 +145,26 @@ impl StreetRun {
         // to stay behind it at its speed, with its own headway (a car that came in at full
         // speed behind a slower one would brake hard on its first tick).
         let mut leader: Option<(f64, f64)> = None; // (rear of the leader, its speed)
+        let first_segment = self.street.lanes[&first].segment_id;
+        // The speed the newcomer would come in at, at most: the limit of its first lane.
+        let v_spawn = self.street.lanes[&first].speed_limit;
         for other in self.agents.values() {
             if self.routes[other.route].lanes[0] != first {
+                // A slower body from the same gate in another lane of the segment (a rider
+                // that swerves into the car lane in the first metres): the newcomer could not
+                // stop for it, and it does not see it, so it waits at the gate.
+                let other_first = self.routes[other.route].lanes[0];
+                if first_segment.is_some()
+                    && self.street.lanes[&other_first].segment_id == first_segment
+                    && other.speed < v_spawn
+                    && other.d - other.length
+                        < length
+                            + MIN_GAP
+                            + 1.0
+                            + (v_spawn - other.speed) * ENTRY_GAP_HEADWAY_S
+                {
+                    return Attempt::Blocked;
+                }
                 continue;
             }
             let rear = other.d - other.length;
@@ -274,5 +297,73 @@ impl StreetRun {
         });
         self.agents.insert(id, agent);
         Attempt::Spawned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::street::level::{LevelFile, Slice};
+    use crate::street::run::{Population, RunOptions};
+    use crate::street::space::{Direction, StripUse};
+    use crate::street::{Design, DesignCommand};
+
+    fn flow(mode: Mode, per_hour: u32) -> Flow {
+        Flow {
+            mode,
+            from: "west".to_string(),
+            to: "east".to_string(),
+            per_hour,
+        }
+    }
+
+    /// A rider that swerves into the car lane in the first metres holds the next car at the
+    /// gate; a car that is clear of it comes in.
+    #[test]
+    fn a_car_does_not_enter_behind_a_slow_body_of_another_lane_of_its_gate() {
+        let mut level = LevelFile::load("carrefour-ecole").expect("the level loads");
+        level.demand = vec![Slice {
+            name: "test".to_string(),
+            duration_s: 120.0,
+            flows: vec![flow(Mode::Bicycle, 600)],
+        }];
+        let mut design = Design::new(&level.id);
+        design.commands = vec![DesignCommand::SetStripUse {
+            segment: 1,
+            strip: 3,
+            use_: StripUse::BikeLane,
+            direction: Direction::Forward,
+        }];
+        let options = RunOptions {
+            seed: 3,
+            population: Population::Mixed,
+            demand_scale: 1.0,
+        };
+        let mut run = StreetRun::new(&level, &design, options).expect("builds");
+        while run.agents.is_empty() {
+            run.step();
+        }
+        let rider = *run.agents.keys().next().expect("a rider came in");
+        let car = flow(Mode::Car, 600);
+        let car_lane = {
+            let index = run
+                .route_for("west", "east", vehicle_class(Mode::Car).unwrap())
+                .expect("a car route");
+            run.routes[index].lanes[0]
+        };
+        assert_ne!(
+            run.routes[run.agents[&rider].route].lanes[0], car_lane,
+            "the rider and the car must start in different lanes"
+        );
+        // The rider crawls near the gate: the car is held back.
+        {
+            let rider = run.agents.get_mut(&rider).expect("the rider");
+            rider.speed = 1.0;
+            rider.d = rider.length + 3.0;
+        }
+        assert!(matches!(run.try_spawn(&car), Attempt::Blocked));
+        // The rider is far down the street: the entry is free.
+        run.agents.get_mut(&rider).expect("the rider").d = 60.0;
+        assert!(matches!(run.try_spawn(&car), Attempt::Spawned));
     }
 }
