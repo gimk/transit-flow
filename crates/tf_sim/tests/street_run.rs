@@ -278,12 +278,17 @@ fn the_same_inputs_give_the_same_log_hash() {
 // `EnteredWithoutGap`: 0x4c23_82f7_e2df_b0ef, 0x9aeb_f813_b7c4_9860, 0x92fe_7d63_a49f_bc07,
 // 0xb272_d3db_cdaa_6107. Moved on purpose again in Phase 6 W4a (2026-11-18): committed rule,
 // at_line by stopping place, right turn gives way to a rider, ring leader by id, pull-out
-// rule, rider slip rule on zebras, close-pass conflicts.
+// rule, rider slip rule on zebras, close-pass conflicts. Moved on purpose again in Phase 6
+// W4b (2026-11-18): the run reads `Separator::crossability` (a kerb, bollards or a planter
+// stop a vehicle that leaves its lane), delivery stops in the painted lane, doors of parked
+// cars, the early right turn across a painted lane, the squeeze past a rider by traits, and
+// the shoulder checks of a vehicle that moves over. Before: 0xe067_d5d5_72b3_7e18,
+// 0x24de_fecd_d144_42ad, 0x84c1_225b_cbec_7160, 0xb0b8_6af5_1771_ac36.
 const REPLAY_HASHES: [(u64, Population, f64, u64); 4] = [
-    (1, Population::Mixed, 1.0, 0xe067_d5d5_72b3_7e18),
-    (2, Population::Mixed, 1.0, 0x24de_fecd_d144_42ad),
-    (1, Population::Careless, 4.0, 0x84c1_225b_cbec_7160),
-    (2, Population::Careless, 4.0, 0xb0b8_6af5_1771_ac36),
+    (1, Population::Mixed, 1.0, 0xa8e9_c655_fd00_0555),
+    (2, Population::Mixed, 1.0, 0x6ab2_d79c_4a11_996a),
+    (1, Population::Careless, 4.0, 0xd596_0932_0abb_ccac),
+    (2, Population::Careless, 4.0, 0x3b86_b38d_03ea_13c1),
 ];
 
 #[test]

@@ -167,3 +167,145 @@ fn a_right_turn_conflict_with_riders_is_removed_by_design() {
     assert!(with_box_and_lead.contacts * 3 <= priority.contacts);
     assert!(with_box_and_lead.right_turn_serious < with_signals.right_turn_serious);
 }
+
+/// The street of the "done when" test: the west arm of level 1, cars and vans going straight
+/// on and riders going straight on, one long slice. The strip beside the eastbound car lane
+/// (strip 3, a parking strip in the level) is what the design changes.
+fn facility_level(cars_per_hour: u32, vans_per_hour: u32, riders_per_hour: u32) -> LevelFile {
+    let mut level = LevelFile::load("carrefour-ecole").expect("the level loads");
+    let flow = |mode, from: &str, to: &str, per_hour| Flow {
+        mode,
+        from: from.to_string(),
+        to: to.to_string(),
+        per_hour,
+    };
+    level.demand = vec![Slice {
+        name: "test".to_string(),
+        duration_s: 240.0,
+        flows: vec![
+            flow(Mode::Car, "west", "east", cars_per_hour),
+            flow(Mode::Van, "west", "east", vans_per_hour),
+            flow(Mode::Bicycle, "west", "east", riders_per_hour),
+            // Oncoming traffic: without it a car can always use the other lane to pass a
+            // rider with room to spare, and a shared lane looks safe.
+            flow(Mode::Car, "east", "west", cars_per_hour / 2),
+            flow(Mode::Van, "east", "west", vans_per_hour / 2),
+        ],
+    }];
+    level
+}
+
+/// What a facility costs the riders: serious conflicts of any kind with a rider on one side,
+/// close passes (light or serious: they count as conflicts), and contacts with a motor
+/// vehicle.
+#[derive(Debug, Default, Clone, Copy)]
+struct Facility {
+    serious: u32,
+    close_passes: u32,
+    contacts: u32,
+}
+
+impl Facility {
+    /// The metric of the brief: serious conflicts, and close passes (light or serious) as
+    /// conflicts. A contact is not a conflict: it is reported apart.
+    fn conflicts(self) -> u32 {
+        self.serious + self.close_passes
+    }
+}
+
+fn measure_facility(
+    level: &LevelFile,
+    commands: &[DesignCommand],
+    seeds: std::ops::Range<u64>,
+) -> Facility {
+    let mut design = Design::new(&level.id);
+    design.commands = commands.to_vec();
+    let mut total = Facility::default();
+    for seed in seeds {
+        let options = RunOptions {
+            seed,
+            population: Population::Mixed,
+            demand_scale: 1.0,
+        };
+        let mut run = StreetRun::new(level, &design, options).expect("builds");
+        run.run_to_end();
+        let mut mode_of = std::collections::HashMap::new();
+        for e in run.events() {
+            if let StreetEvent::Spawned { agent, mode, .. } = &e.event {
+                mode_of.insert(*agent, *mode);
+            }
+        }
+        let car_rider = |a: &tf_sim::street::ids::AgentId, b: &tf_sim::street::ids::AgentId| {
+            let pair = (mode_of.get(a), mode_of.get(b));
+            matches!(
+                pair,
+                (Some(Mode::Car | Mode::Van), Some(Mode::Bicycle))
+                    | (Some(Mode::Bicycle), Some(Mode::Car | Mode::Van))
+            )
+        };
+        for e in run.events() {
+            match &e.event {
+                StreetEvent::Conflict {
+                    kind, grade, a, b, ..
+                } if car_rider(a, b) => {
+                    if *kind == tf_sim::street::run::events::ConflictKind::ClosePass {
+                        total.close_passes += 1;
+                    }
+                    if *grade == Grade::Serious {
+                        total.serious += 1;
+                    }
+                }
+                StreetEvent::Contact { a, b, .. } if car_rider(a, b) => total.contacts += 1,
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
+/// The "done when" of Phase 6: on one street, a protected track gives measurably fewer
+/// serious conflicts than a painted lane, and a painted lane fewer than no bicycle facility.
+/// Close passes count as conflicts. The cause is the separator: a kerb keeps vans out of the
+/// lane, keeps cars from cutting the corner across it, and keeps riders in it (they brake
+/// instead of swerving into the car lane); paint lets all three happen, and with no facility
+/// the riders share the lane with the cars.
+#[test]
+fn a_track_gives_fewer_serious_conflicts_than_a_lane_and_a_lane_fewer_than_none() {
+    let level = facility_level(400, 120, 400);
+    // The facility runs on both arms of the school street, so that the riders keep their
+    // lane through the junction (a lane that ends at the junction makes a merge conflict
+    // that has nothing to do with the separator).
+    let facility = |kind: StripUse| {
+        vec![
+            use_(kind),
+            DesignCommand::SetStripUse {
+                segment: 2,
+                strip: 3,
+                use_: kind,
+                direction: Direction::Forward,
+            },
+        ]
+    };
+    let none = measure_facility(&level, &[], SEEDS);
+    let lane = measure_facility(&level, &facility(StripUse::BikeLane), SEEDS);
+    let track = measure_facility(&level, &facility(StripUse::BikeTrack), SEEDS);
+    println!("none {none:?}\nlane {lane:?}\ntrack {track:?}");
+    // The shared lane is the worst of the three: the cars come up behind the riders and
+    // brake hard, and the ones that pass them do it in the lane, with less than the metre
+    // of R414-4.
+    assert!(none.serious > 0 && none.close_passes > 0, "{none:?}");
+    // A painted lane separates them, so the riders are not passed in their lane; but it
+    // lets a van stop in it (item 3), and the riders meet the vans.
+    assert!(lane.close_passes < none.close_passes, "{lane:?} {none:?}");
+    assert!(lane.contacts > 0, "{lane:?}");
+    // A kerb keeps the vans out and the riders in: nothing meets anything.
+    assert!(track.contacts == 0 && track.close_passes == 0, "{track:?}");
+    assert!(
+        lane.conflicts() < none.conflicts(),
+        "lane {lane:?} against none {none:?}"
+    );
+    assert!(
+        track.conflicts() < lane.conflicts(),
+        "track {track:?} against lane {lane:?}"
+    );
+}
